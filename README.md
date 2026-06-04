@@ -85,6 +85,9 @@ Open the folder, pick the `.venv` interpreter, then use **Run and Debug**:
 
 ### From the terminal
 ```powershell
+# Check what is already indexed (no rebuild)
+python pipeline.py --status
+
 # First time / after adding PDFs — build the index
 python pipeline.py
 
@@ -102,6 +105,7 @@ python run.py --market             # Market UI   -> http://localhost:8501
 | `python scripts/clean_bad_conversations.py` | Prune low-quality stored conversations |
 | `python pipeline.py` | Full index rebuild |
 | `python pipeline.py --incremental` | Index only changed PDFs |
+| `python pipeline.py --status` | Show what's indexed (no rebuild) |
 | `python -m backend.database.create_schema` | (Re)create the Oracle schema |
 | `python -m backend.database.test_oracle` | Verify the Oracle connection |
 | `python -m backend.database.db_status` | Show indexed papers / chunk counts |

@@ -351,6 +351,7 @@ docker start oracle-ai-db
 # 1. Build / refresh the index from data/papers/  (only when PDFs change)
 python pipeline.py                 # full rebuild
 python pipeline.py --incremental   # only changed PDFs
+python pipeline.py --status        # show what's indexed (no rebuild)
 
 # 2. Launch the app
 python run.py                      # Chat UI        -> http://localhost:8502
