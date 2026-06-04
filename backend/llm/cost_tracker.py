@@ -22,7 +22,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 
 # Database lives in data/ alongside memory.db

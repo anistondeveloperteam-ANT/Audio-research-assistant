@@ -28,20 +28,17 @@ Export bundle layout (.tar.gz):
 
 from __future__ import annotations
 
-import gzip
 import hashlib
 import io
 import json
-import os
 import re
 import shutil
 import sqlite3
-import sys
 import tarfile
 import time
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 # ----------------------------------------------------------------------
@@ -408,7 +405,7 @@ def import_memory(
         raise ValueError(f"mode must be 'merge' or 'replace', got {mode!r}")
 
     # Validate the bundle first
-    manifest = inspect_export(bundle_path)
+    inspect_export(bundle_path)
 
     # Read payloads
     payloads: Dict[str, bytes] = {}

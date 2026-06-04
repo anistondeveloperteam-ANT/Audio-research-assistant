@@ -32,8 +32,8 @@ if str(ROOT) not in sys.path:
 try:
     from backend.answering.query_sanity import check_query_sanity
 except ImportError:
-    print("ERROR: backend/query_sanity.py not found.")
-    print("Install v8 first: INSTALL_AUDIOLAB_V8.bat")
+    print("ERROR: backend.answering.query_sanity not found.")
+    print("Run from the project root so the `backend` package is importable.")
     sys.exit(2)
 
 

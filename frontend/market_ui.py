@@ -17,7 +17,6 @@ Run:
 
 from __future__ import annotations
 
-import base64
 
 import hashlib
 import json
@@ -48,7 +47,7 @@ for path in [ROOT, BACKEND]:
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from backend.answering.research_modes import apply_research_mode as apply_mode_profile, get_mode_settings
+from backend.answering.research_modes import apply_research_mode as apply_mode_profile
 from backend.answering.prompt_quality import enhance_result_prompt
 
 load_dotenv(ROOT / ".env")

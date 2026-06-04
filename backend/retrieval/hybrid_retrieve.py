@@ -34,7 +34,6 @@ from collections import defaultdict
 
 from dotenv import load_dotenv
 import oracledb
-import torch
 from sentence_transformers import CrossEncoder
 
 from backend.retrieval.vector_retriever import vector_search

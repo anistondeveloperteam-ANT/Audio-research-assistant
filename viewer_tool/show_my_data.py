@@ -25,7 +25,6 @@ READ-ONLY. Does not modify any data anywhere.
 from __future__ import annotations
 
 import os
-import sys
 import time
 from collections import Counter
 from pathlib import Path
@@ -287,7 +286,7 @@ section("8. MEMORY DATABASE  (data/memory.db -- conversations + facts)")
 mem_path = ROOT / "data" / "memory.db"
 if not mem_path.exists():
     print(f"NOTE: {mem_path} not found. Memory layer is created on the first")
-    print("      run of RUN_CHAT_UI.bat (after Batch 9 is installed).")
+    print("      run of the app (`python run.py`).")
 else:
     print(f"Location: {mem_path}")
     print(f"File size: {humanize_bytes(mem_path.stat().st_size)}")

@@ -34,7 +34,7 @@ Backward compatible:
     fires on equation / algorithm / table_or_metrics)
   - chunk_parsed_document(parsed) signature unchanged
 
-To take effect on existing papers: re-ingest. See REINGEST_ALL.bat.
+To take effect on existing papers: re-ingest with `python pipeline.py`.
 """
 
 import os
@@ -409,7 +409,7 @@ def chunk_parsed_document(parsed):
         last_page = 1
 
         def flush():
-            nonlocal section_buffer, start_page, last_page, current_section
+            nonlocal section_buffer  # the other names are only read, not reassigned here
             section_text = "\n".join(section_buffer).strip()
             if section_text:
                 all_chunks.extend(
