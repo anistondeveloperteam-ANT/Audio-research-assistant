@@ -20,8 +20,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 APPS = {
-    "chat":   (ROOT / "frontend" / "chat_ui.py", 8502),
-    "market": (ROOT / "frontend" / "streamlit_app.py", 8501),
+    "chat":      (ROOT / "frontend" / "chat_ui.py", 8502),
+    "market":    (ROOT / "frontend" / "market_ui.py", 8501),
+    "dashboard": (ROOT / "frontend" / "quality_dashboard.py", 8503),
 }
 
 
@@ -29,11 +30,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Launch the Audio Research Assistant app.")
     parser.add_argument("--market", action="store_true",
                         help="Launch the Market UI instead of the Chat UI.")
+    parser.add_argument("--dashboard", action="store_true",
+                        help="Launch the retrieval-quality dashboard.")
     parser.add_argument("--port", type=int, default=None,
                         help="Override the server port.")
     args = parser.parse_args()
 
-    app_key = "market" if args.market else "chat"
+    app_key = "dashboard" if args.dashboard else "market" if args.market else "chat"
     app_path, default_port = APPS[app_key]
     port = args.port or default_port
 

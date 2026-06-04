@@ -1,6 +1,6 @@
 
 """
-streamlit_app.py — Market-ready UI v5
+market_ui.py — Market UI (formerly streamlit_app.py)
 Audio Research Paper Assistant
 
 User workflow:
@@ -11,13 +11,8 @@ User workflow:
 5. Previous sources/results clear automatically when the question changes or new PDF is uploaded.
 6. Similar-question memory works silently in backend; it is not shown to normal users.
 
-Drop-in replacement:
-    C:\AI\audio-research-assistant\frontend\streamlit_app.py
-
 Run:
-    cd /d C:\AI\audio-research-assistant
-    .venv\Scripts\activate
-    RUN_MARKET_UI_V5.bat
+    python run.py --market          # http://localhost:8501
 """
 
 from __future__ import annotations

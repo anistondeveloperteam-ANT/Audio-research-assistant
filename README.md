@@ -35,7 +35,7 @@ Audio-research-assistant/
 │   ├── memory/             # store (conversation memory), memory_io (import/export)
 │   ├── tools/              # web_search, code_executor, sandbox_runner, dsp_toolkit
 │   └── evaluation/         # evaluate_retrieval, quality_test
-├── frontend/           # Streamlit UIs (chat_ui.py :8502, streamlit_app.py :8501) + helpers
+├── frontend/           # Streamlit UIs (chat_ui.py :8502, market_ui.py :8501, quality_dashboard.py) + helpers
 ├── scripts/            # CLI maintenance tools (memory import/export, chat cleanup)
 ├── viewer_tool/        # show_my_data.py — inspect indexed data & memory
 ├── data/               # Papers, extracted text, SQLite memory/cost DBs (gitignored)

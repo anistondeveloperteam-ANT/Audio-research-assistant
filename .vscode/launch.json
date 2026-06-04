@@ -43,7 +43,7 @@
       "module": "streamlit",
       "args": [
         "run",
-        "frontend/streamlit_app.py",
+        "frontend/market_ui.py",
         "--server.port",
         "8501"
       ],
