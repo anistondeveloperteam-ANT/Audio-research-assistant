@@ -86,24 +86,25 @@ Open the folder, pick the `.venv` interpreter, then use **Run and Debug**:
 ### From the terminal
 ```powershell
 # First time / after adding PDFs — build the index
-python pipeline.py                 # or:  .\build_index.bat
+python pipeline.py
 
 # Launch the app
 python run.py                      # Chat UI    -> http://localhost:8502
 python run.py --market             # Market UI   -> http://localhost:8501
-# .bat shortcuts: run_chat_ui.bat / run_market_ui.bat
 ```
 
 ## Maintenance tools
 
 | Command | Purpose |
 |---------|---------|
-| `.\show_my_data.bat` | Inspect indexed PDFs, chunks, embeddings, memory |
-| `.\export_memory.bat` / `.\import_memory.bat` | Back up / restore conversation memory |
-| `.\clean_bad_chats.bat` | Prune low-quality stored conversations |
+| `python viewer_tool/show_my_data.py` | Inspect indexed PDFs, chunks, embeddings, memory |
+| `python scripts/export_memory_cli.py` / `python scripts/import_memory_cli.py` | Back up / restore conversation memory |
+| `python scripts/clean_bad_conversations.py` | Prune low-quality stored conversations |
 | `python pipeline.py` | Full index rebuild |
 | `python pipeline.py --incremental` | Index only changed PDFs |
 | `python -m backend.database.create_schema` | (Re)create the Oracle schema |
+| `python -m backend.database.test_oracle` | Verify the Oracle connection |
+| `python -m backend.database.db_status` | Show indexed papers / chunk counts |
 | `python -m backend.evaluation.evaluate_retrieval` | Score retrieval quality |
 
 ## Notes
