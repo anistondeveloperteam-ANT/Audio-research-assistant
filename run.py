@@ -47,7 +47,12 @@ def main() -> int:
     ]
     print(f"Starting {app_key} UI on http://localhost:{port}  (Ctrl+C to stop)")
     # Run from the project root so `import backend.*` resolves inside the app.
-    return subprocess.call(cmd, cwd=str(ROOT))
+    try:
+        return subprocess.call(cmd, cwd=str(ROOT))
+    except KeyboardInterrupt:
+        # User pressed Ctrl+C — Streamlit already shut itself down. Exit quietly.
+        print("\nStopped.")
+        return 0
 
 
 if __name__ == "__main__":
