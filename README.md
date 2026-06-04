@@ -121,6 +121,18 @@ The default config runs **embeddings on the GPU and the heavier reranker on the 
 which avoids out-of-memory on a small GPU (e.g. a 6 GB laptop card shared with a local
 Ollama LLM). If you have VRAM to spare (or use a cloud LLM), set `RERANKER_DEVICE=cuda`.
 
+## Development & tests
+
+Install dev tooling and run the fast unit suite (no DB / models / network needed):
+
+```powershell
+pip install -r requirements-dev.txt
+pytest                          # tests/ — retrieval fusion, query sanity,
+                                #   device selection, env helpers, etc.
+pyflakes backend frontend       # lint: unused imports / undefined names
+vulture backend frontend        # find dead code
+```
+
 ## Notes
 - Large/generated artifacts (`data/papers`, `data/extracted`, `*.db`, `.venv`) are
   gitignored. Source PDFs and the index are machine-local.

@@ -1,0 +1,9 @@
+# Developer / CI tooling (not needed to run the app).
+#   pip install -r requirements-dev.txt
+#   pytest          # run the test suite
+#   pyflakes backend frontend   # lint for unused imports / undefined names
+#   vulture backend frontend    # find dead code
+pytest==9.0.3
+pyflakes==3.4.0
+autoflake==2.3.3
+vulture==2.16
