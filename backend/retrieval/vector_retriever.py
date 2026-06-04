@@ -51,7 +51,8 @@ def get_model():
     global _model
 
     if _model is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        from backend.common.device import resolve_device
+        device = resolve_device("EMBEDDING_DEVICE")
         _model = SentenceTransformer(EMBEDDING_MODEL, device=device)
 
     return _model

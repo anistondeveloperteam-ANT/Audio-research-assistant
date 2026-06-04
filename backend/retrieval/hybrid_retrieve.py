@@ -100,8 +100,9 @@ def connect():
 def get_reranker():
     global _reranker
     if _reranker is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        debug_print("Loading reranker:", RERANKER_MODEL)
+        from backend.common.device import resolve_device
+        device = resolve_device("RERANKER_DEVICE")
+        debug_print("Loading reranker:", RERANKER_MODEL, "on", device)
         _reranker = CrossEncoder(RERANKER_MODEL, device=device)
     return _reranker
 

@@ -52,10 +52,11 @@ def connect():
     )
 
 def main():
+    from backend.common.device import resolve_device
     print("Embedding model:", MODEL_NAME)
     print("CUDA available:", torch.cuda.is_available())
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = resolve_device("EMBEDDING_DEVICE")
     print("Using device:", device)
 
     if torch.cuda.is_available():

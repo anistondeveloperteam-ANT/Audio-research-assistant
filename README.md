@@ -107,6 +107,20 @@ python run.py --market             # Market UI   -> http://localhost:8501
 | `python -m backend.database.db_status` | Show indexed papers / chunk counts |
 | `python -m backend.evaluation.evaluate_retrieval` | Score retrieval quality |
 
+## GPU / CPU
+
+The embedding and reranker models pick their device from `.env`:
+
+| Var | Meaning |
+|-----|---------|
+| `DEVICE` | global default — `auto` (GPU if available, else CPU), `cuda`, or `cpu` |
+| `EMBEDDING_DEVICE` | override for the embedding model (falls back to `DEVICE`) |
+| `RERANKER_DEVICE` | override for the reranker (falls back to `DEVICE`) |
+
+The default config runs **embeddings on the GPU and the heavier reranker on the CPU**,
+which avoids out-of-memory on a small GPU (e.g. a 6 GB laptop card shared with a local
+Ollama LLM). If you have VRAM to spare (or use a cloud LLM), set `RERANKER_DEVICE=cuda`.
+
 ## Notes
 - Large/generated artifacts (`data/papers`, `data/extracted`, `*.db`, `.venv`) are
   gitignored. Source PDFs and the index are machine-local.
