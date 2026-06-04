@@ -18,11 +18,11 @@ from typing import Optional
 import streamlit as st
 
 try:
-    from . import _theme as T
+    from . import theme as T
     from ._logo import logo_with_wordmark_html, logo_svg, logo_header_html
 except ImportError:
-    import _theme as T
-    from _logo import logo_with_wordmark_html, logo_svg, logo_header_html
+    import theme as T
+    from logo import logo_with_wordmark_html, logo_svg, logo_header_html
 
 
 def _e(s: Optional[str]) -> str:

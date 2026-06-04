@@ -12,9 +12,9 @@ v3 changes from v2:
 
 import streamlit as st
 try:
-    from . import _theme as T
+    from . import theme as T
 except ImportError:
-    import _theme as T
+    import theme as T
 
 
 _FONT_IMPORT = """

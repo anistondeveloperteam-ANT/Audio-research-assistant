@@ -1,5 +1,5 @@
 """
-_chat_ui_utils.py  --  Batch 8B (Phase 2)
+chat_ui_utils.py  --  Batch 8B (Phase 2)
 
 Non-Streamlit helpers used by chat_ui.py:
   - PDF hashing + dedup against existing library

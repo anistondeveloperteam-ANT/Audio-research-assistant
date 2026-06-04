@@ -70,7 +70,7 @@ def show_status() -> int:
 
     ok, err = oracle_reachable()
     if not ok:
-        print(f"Oracle               : NOT reachable")
+        print("Oracle               : NOT reachable")
         print(f"  reason: {err}")
         print("  fix:    start the database, e.g.  docker start oracle-ai-db")
         return 1

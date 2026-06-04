@@ -1,7 +1,7 @@
-"""Unit tests for frontend/_chat_ui_utils.py (pure helpers, no Streamlit)."""
+"""Unit tests for frontend/chat_ui_utils.py (pure helpers, no Streamlit)."""
 import hashlib
 
-from _chat_ui_utils import (
+from chat_ui_utils import (
     compute_file_hash,
     parse_ollama_tags_response,
     patch_env_text,

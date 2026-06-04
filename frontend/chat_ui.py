@@ -18,7 +18,7 @@ from pathlib import Path
 import streamlit as st
 
 # Path setup: ROOT must be importable so `import backend.*` resolves; THIS_DIR
-# so the local `_chat_ui_utils` / `_components` helpers load by bare name.
+# so the local `chat_ui_utils` / `components` helpers load by bare name.
 ROOT = Path(__file__).resolve().parent.parent
 THIS_DIR = Path(__file__).resolve().parent
 for _p in (ROOT, THIS_DIR):
@@ -31,7 +31,7 @@ try:
 except Exception:
     pass
 
-from _chat_ui_utils import (
+from chat_ui_utils import (
     compute_file_hash,
     list_existing_pdf_hashes,
     safe_pdf_target,
@@ -54,7 +54,7 @@ def _load_brand_module(name: str):
     Some Streamlit configurations were treating frontend/ as a package
     via stale __pycache__, causing 'attempted relative import with no
     known parent package' errors. Setting __package__ = '' makes the
-    try/except fallback in _components.py reliably take the absolute path.
+    try/except fallback in components.py reliably take the absolute path.
     """
     path = THIS_DIR / f"{name}.py"
     if not path.exists():
@@ -81,10 +81,10 @@ def _load_brand_module(name: str):
     return mod
 
 
-_theme = _load_brand_module("_theme")
-_styles = _load_brand_module("_styles")
-_logo = _load_brand_module("_logo")
-_components = _load_brand_module("_components")
+_theme = _load_brand_module("theme")
+_styles = _load_brand_module("styles")
+_logo = _load_brand_module("logo")
+_components = _load_brand_module("components")
 
 
 # ----------------------------------------------------------------------
