@@ -15,6 +15,10 @@
 streamlit==1.57.0
 python-dotenv==1.2.2
 
+# --- Web UI (new FastAPI front end: python run.py --web) ---
+fastapi==0.136.1
+uvicorn==0.46.0
+
 # --- Data / numerics ---
 numpy==2.3.5
 scipy==1.17.1

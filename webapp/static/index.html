@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Audio Research Assistant</title>
+  <meta name="description" content="Ask questions about your audio & speech research papers — grounded, cited answers." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;550;600;650;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%234f46e5'%3E%3Cpath d='M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zm7 9a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12h-2z'/%3E%3C/svg%3E" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <div class="app" id="app">
+
+    <!-- ============ Sidebar ============ -->
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zm7 9a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12h-2z"/></svg>
+        </span>
+        <div>
+          <div class="title">Audio Research</div>
+          <div class="subtitle">Paper Assistant</div>
+        </div>
+      </div>
+
+      <button class="new-chat" id="newChatBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        New chat
+      </button>
+
+      <div class="sessions-label">Conversations</div>
+      <div class="sessions" id="sessions"></div>
+
+      <div class="sidebar-foot">
+        <span class="dot" id="provDot"></span>
+        <span id="provLabel">connecting…</span>
+      </div>
+    </aside>
+
+    <!-- ============ Main ============ -->
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn menu-btn" id="menuBtn" aria-label="Menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        </button>
+        <div class="convo-title" id="convoTitle">New chat</div>
+        <span class="spacer"></span>
+
+        <span class="control">
+          <label for="modeSel">Mode</label>
+          <select class="select" id="modeSel" title="Retrieval depth: Fast is quickest, Deep uses the most evidence"></select>
+        </span>
+        <span class="control">
+          <label for="topkSel">Sources</label>
+          <select class="topk" id="topkSel" title="How many source passages to retrieve"></select>
+        </span>
+        <button class="ghost-btn" id="sourcesBtn" title="Show the sources behind the last answer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
+          Sources
+        </button>
+      </header>
+
+      <div class="transcript" id="transcript">
+        <div class="transcript-inner" id="transcriptInner">
+          <!-- welcome / messages injected here -->
+        </div>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="composer">
+          <textarea id="input" rows="1" placeholder="Ask about your audio research papers…" autofocus></textarea>
+          <button class="send" id="sendBtn" aria-label="Send" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11l5-5 5 5M12 6v13"/></svg>
+          </button>
+        </div>
+        <div class="composer-hint"><kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line · <kbd>Ctrl</kbd>+<kbd>K</kbd> new chat</div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ============ Sources drawer ============ -->
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-label="Sources">
+    <div class="drawer-head">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <h3>Sources</h3>
+      <span class="count" id="srcCount">0</span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="icon-btn" id="drawerClose" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body" id="drawerBody">
+      <div class="drawer-empty">Ask a question and the papers used to answer it will appear here — with section and page references.</div>
+    </div>
+  </aside>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

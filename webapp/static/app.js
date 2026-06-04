@@ -1,0 +1,436 @@
+/* Audio Research Assistant — web UI logic (vanilla JS, no build step). */
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const api = {
+    config: () => fetch("/api/config").then((r) => r.json()),
+    sessions: () => fetch("/api/sessions").then((r) => r.json()),
+    createSession: () => fetch("/api/sessions", { method: "POST" }).then((r) => r.json()),
+    renameSession: (id, title) =>
+      fetch(`/api/sessions/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }),
+    deleteSession: (id) => fetch(`/api/sessions/${id}`, { method: "DELETE" }),
+    turns: (id) => fetch(`/api/sessions/${id}/turns`).then((r) => r.json()),
+  };
+
+  const state = {
+    cfg: { modes: ["Fast", "Balanced", "Deep"], default_mode: "Balanced", default_top_k: 8, provider: "" },
+    sessions: [],
+    currentId: null,
+    streaming: false,
+    currentSources: [],
+  };
+
+  const EXAMPLES = [
+    ["How does MVDR beamforming reduce noise?", "Compare it with delay-and-sum."],
+    ["What is HyDE in retrieval?", "And why does it help recall?"],
+    ["Explain acoustic echo cancellation", "with the key signal-processing steps."],
+    ["Which metrics evaluate speech enhancement?", "PESQ, STOI, SDR — what do they mean?"],
+  ];
+
+  const esc = (s) => (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // ---------- Toasts ----------
+  function toast(msg, kind) {
+    const t = document.createElement("div");
+    t.className = "toast" + (kind ? " " + kind : "");
+    t.textContent = msg;
+    $("toasts").appendChild(t);
+    setTimeout(() => { t.style.opacity = "0"; t.style.transition = "opacity .3s"; setTimeout(() => t.remove(), 320); }, 3400);
+  }
+
+  // ---------- Markdown + citations ----------
+  function renderMarkdown(el, text) {
+    el.innerHTML = marked.parse(text || "", { breaks: true, gfm: true });
+    linkifyCitations(el);
+  }
+  function linkifyCitations(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => {
+        const p = n.parentElement;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        if (p.closest("pre, code, a, .cite")) return NodeFilter.FILTER_REJECT;
+        return /\[\d+\]/.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      },
+    });
+    const targets = [];
+    while (walker.nextNode()) targets.push(walker.currentNode);
+    for (const node of targets) {
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      const s = node.nodeValue;
+      s.replace(/\[(\d+)\]/g, (m, n, idx) => {
+        if (idx > last) frag.appendChild(document.createTextNode(s.slice(last, idx)));
+        const b = document.createElement("button");
+        b.className = "cite"; b.textContent = n; b.dataset.n = n;
+        b.title = "View source " + n;
+        b.addEventListener("click", () => focusSource(parseInt(n, 10)));
+        frag.appendChild(b);
+        last = idx + m.length;
+        return m;
+      });
+      if (last < s.length) frag.appendChild(document.createTextNode(s.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    }
+  }
+
+  // ---------- Transcript rendering ----------
+  const inner = () => $("transcriptInner");
+
+  function showWelcome() {
+    inner().innerHTML = `
+      <div class="welcome">
+        <div class="hero-mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zm7 9a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12h-2z"/></svg></div>
+        <h1>Ask your audio research papers</h1>
+        <p>Get clear, technical answers grounded only in your indexed papers — every claim cited back to its source, section, and page.</p>
+        <div class="examples" id="examples"></div>
+      </div>`;
+    const box = $("examples");
+    EXAMPLES.forEach(([k, sub]) => {
+      const b = document.createElement("button");
+      b.className = "example";
+      b.innerHTML = `<span class="ex-k">${esc(k)}</span><span>${esc(sub)}</span>`;
+      b.addEventListener("click", () => { $("input").value = k + " " + sub; autosize(); send(); });
+      box.appendChild(b);
+    });
+  }
+
+  function addUserMessage(text) {
+    const m = document.createElement("div");
+    m.className = "msg user";
+    m.innerHTML = `<div class="bubble"></div>`;
+    m.querySelector(".bubble").textContent = text;
+    inner().appendChild(m);
+    scrollToBottom();
+  }
+
+  // Returns handles to drive a streaming assistant message.
+  function addAssistantMessage() {
+    const m = document.createElement("div");
+    m.className = "msg assistant";
+    m.innerHTML = `
+      <div class="avatar">AI</div>
+      <div class="body">
+        <div class="bubble assistant">
+          <div class="statusline"><span class="typing"><span></span><span></span><span></span></span><span class="status-text">Thinking…</span></div>
+          <div class="md" style="display:none"></div>
+        </div>
+        <div class="msg-tools" style="display:none"></div>
+      </div>`;
+    inner().appendChild(m);
+    scrollToBottom();
+    return {
+      el: m,
+      statusEl: m.querySelector(".statusline"),
+      statusText: m.querySelector(".status-text"),
+      md: m.querySelector(".md"),
+      tools: m.querySelector(".msg-tools"),
+    };
+  }
+
+  function renderHistoryMessage(turn) {
+    if (turn.role === "user") { addUserMessage(turn.content); return; }
+    const h = addAssistantMessage();
+    h.statusEl.style.display = "none";
+    h.md.style.display = "";
+    renderMarkdown(h.md, turn.content);
+    finalizeTools(h, turn.sources || []);
+  }
+
+  function finalizeTools(h, sources) {
+    h.tools.style.display = "flex";
+    h.tools.innerHTML = "";
+    const copy = document.createElement("button");
+    copy.className = "tool-btn";
+    copy.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg> Copy`;
+    copy.addEventListener("click", () => {
+      navigator.clipboard.writeText(h.md.innerText).then(() => toast("Answer copied"));
+    });
+    h.tools.appendChild(copy);
+    if (sources && sources.length) {
+      const sc = document.createElement("button");
+      sc.className = "src-count";
+      sc.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> ${sources.length} source${sources.length > 1 ? "s" : ""}`;
+      sc.addEventListener("click", () => { state.currentSources = sources; renderSources(sources); openDrawer(); });
+      h.tools.appendChild(sc);
+    }
+  }
+
+  // ---------- Sources drawer ----------
+  function renderSources(sources) {
+    state.currentSources = sources || [];
+    $("srcCount").textContent = String(state.currentSources.length);
+    const body = $("drawerBody");
+    if (!state.currentSources.length) {
+      body.innerHTML = `<div class="drawer-empty">No sources for this answer.</div>`;
+      return;
+    }
+    body.innerHTML = "";
+    state.currentSources.forEach((s) => {
+      const pages = s.page_start ? `pp. ${s.page_start}${s.page_end && s.page_end !== s.page_start ? "–" + s.page_end : ""}` : "";
+      const card = document.createElement("div");
+      card.className = "source-card";
+      card.id = "src-card-" + s.n;
+      card.innerHTML = `
+        <div class="sc-head">
+          <span class="sc-n">${s.n}</span>
+          <span class="sc-title">${esc(s.title)}</span>
+        </div>
+        <div class="sc-meta">
+          ${s.section ? `<span class="chip">${esc(s.section)}</span>` : ""}
+          ${pages ? `<span class="chip">${pages}</span>` : ""}
+          ${s.score ? `<span class="chip">score ${s.score}</span>` : ""}
+        </div>
+        <div class="sc-text">${esc(s.text)}</div>
+        ${s.text && s.text.length > 240 ? `<span class="sc-more">Show more</span>` : ""}`;
+      const more = card.querySelector(".sc-more");
+      if (more) more.addEventListener("click", () => {
+        const t = card.querySelector(".sc-text");
+        const ex = t.classList.toggle("expanded");
+        more.textContent = ex ? "Show less" : "Show more";
+      });
+      body.appendChild(card);
+    });
+  }
+  function openDrawer() { $("drawer").classList.add("open"); $("scrim").classList.add("show"); }
+  function closeDrawer() { $("drawer").classList.remove("open"); $("scrim").classList.remove("show"); }
+  function focusSource(n) {
+    renderSources(state.currentSources);
+    openDrawer();
+    const card = $("src-card-" + n);
+    if (card) {
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+      card.classList.add("flash");
+      setTimeout(() => card.classList.remove("flash"), 1400);
+    }
+  }
+
+  // ---------- Sessions ----------
+  function renderSessions() {
+    const box = $("sessions");
+    box.innerHTML = "";
+    state.sessions.forEach((s) => {
+      const item = document.createElement("div");
+      item.className = "session" + (s.id === state.currentId ? " active" : "");
+      item.innerHTML = `
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none;opacity:.6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="s-title">${esc(s.title || "Untitled")}</span>
+        <span class="s-actions">
+          <button class="icon-btn" data-act="rename" title="Rename"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+          <button class="icon-btn danger" data-act="delete" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button>
+        </span>`;
+      item.addEventListener("click", (e) => {
+        const act = e.target.closest("[data-act]");
+        if (act) { e.stopPropagation(); act.dataset.act === "rename" ? renameSession(s) : deleteSession(s); return; }
+        selectSession(s.id);
+      });
+      box.appendChild(item);
+    });
+  }
+
+  async function loadSessions(selectId) {
+    state.sessions = await api.sessions();
+    if (!state.sessions.length) { await newChat(); return; }
+    renderSessions();
+    await selectSession(selectId || state.sessions[0].id);
+  }
+
+  async function selectSession(id) {
+    if (state.streaming) return;
+    state.currentId = id;
+    const s = state.sessions.find((x) => x.id === id);
+    $("convoTitle").textContent = (s && s.title) || "New chat";
+    renderSessions();
+    const turns = await api.turns(id);
+    inner().innerHTML = "";
+    if (!turns.length) { showWelcome(); state.currentSources = []; renderSources([]); }
+    else {
+      turns.forEach(renderHistoryMessage);
+      const lastAssist = [...turns].reverse().find((t) => t.role === "assistant" && t.sources);
+      renderSources(lastAssist ? lastAssist.sources : []);
+      scrollToBottom();
+    }
+    if (window.innerWidth <= 880) $("sidebar").classList.remove("open");
+  }
+
+  async function newChat() {
+    if (state.streaming) return;
+    const s = await api.createSession();
+    state.sessions.unshift(s);
+    renderSessions();
+    await selectSession(s.id);
+    $("input").focus();
+  }
+
+  async function renameSession(s) {
+    const title = prompt("Rename conversation:", s.title || "");
+    if (title == null) return;
+    await api.renameSession(s.id, title.trim() || "Untitled");
+    s.title = title.trim() || "Untitled";
+    if (s.id === state.currentId) $("convoTitle").textContent = s.title;
+    renderSessions();
+  }
+  async function deleteSession(s) {
+    if (!confirm(`Delete "${s.title || "this conversation"}"? This cannot be undone.`)) return;
+    await api.deleteSession(s.id);
+    state.sessions = state.sessions.filter((x) => x.id !== s.id);
+    if (s.id === state.currentId) {
+      state.currentId = null;
+      if (state.sessions.length) await selectSession(state.sessions[0].id);
+      else await newChat();
+    } else renderSessions();
+  }
+
+  // ---------- Sending + streaming ----------
+  function setStreaming(on) {
+    state.streaming = on;
+    $("sendBtn").disabled = on || !$("input").value.trim();
+    $("input").disabled = on;
+  }
+
+  async function send() {
+    const text = $("input").value.trim();
+    if (!text || state.streaming || !state.currentId) return;
+
+    // First message in a fresh session -> title it from the question.
+    const sess = state.sessions.find((s) => s.id === state.currentId);
+    const wasEmpty = sess && (sess.title === "New conversation" || !sess.title);
+
+    if (inner().querySelector(".welcome")) inner().innerHTML = "";
+    $("input").value = ""; autosize();
+    addUserMessage(text);
+    setStreaming(true);
+    const h = addAssistantMessage();
+
+    let answer = "";
+    let renderScheduled = false;
+    const scheduleRender = () => {
+      if (renderScheduled) return;
+      renderScheduled = true;
+      requestAnimationFrame(() => {
+        renderScheduled = false;
+        if (h.md.style.display === "none") { h.md.style.display = ""; h.statusEl.style.display = "none"; }
+        renderMarkdown(h.md, answer + " ▍");
+        scrollToBottom();
+      });
+    };
+
+    try {
+      const resp = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: state.currentId, question: text, mode: $("modeSel").value, top_k: parseInt($("topkSel").value, 10) }),
+      });
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let ev; try { ev = JSON.parse(line); } catch { continue; }
+          handleEvent(ev, h, () => answer, (v) => { answer = v; }, scheduleRender);
+        }
+      }
+    } catch (err) {
+      toast("Connection error: " + err.message, "error");
+      h.statusEl.style.display = "none";
+      h.md.style.display = "";
+      renderMarkdown(h.md, answer || "_Something went wrong. Please try again._");
+    } finally {
+      // Final clean render (drop the streaming caret).
+      h.md.style.display = ""; h.statusEl.style.display = "none";
+      renderMarkdown(h.md, answer || "_(no answer)_");
+      finalizeTools(h, state.currentSources);
+      setStreaming(false);
+      scrollToBottom();
+      $("input").focus();
+      if (wasEmpty) {
+        const title = text.length > 48 ? text.slice(0, 48) + "…" : text;
+        await api.renameSession(state.currentId, title);
+        if (sess) sess.title = title;
+        $("convoTitle").textContent = title;
+        renderSessions();
+      }
+    }
+  }
+
+  function handleEvent(ev, h, getAns, setAns, scheduleRender) {
+    switch (ev.type) {
+      case "status":
+        h.statusText.textContent = ev.message || "Working…";
+        break;
+      case "sanity":
+        h.statusEl.style.display = "none"; h.md.style.display = "";
+        renderMarkdown(h.md, "⚠️ " + (ev.message || "Please rephrase your question."));
+        break;
+      case "sources":
+        renderSources(ev.sources || []);
+        break;
+      case "token":
+        setAns(getAns() + (ev.text || ""));
+        scheduleRender();
+        break;
+      case "error":
+        toast(ev.message || "Error", "error");
+        setAns(getAns() + "\n\n_" + (ev.message || "error") + "_");
+        scheduleRender();
+        break;
+      case "done":
+        break;
+    }
+  }
+
+  // ---------- Composer behaviour ----------
+  function autosize() {
+    const t = $("input");
+    t.style.height = "auto";
+    t.style.height = Math.min(t.scrollHeight, 200) + "px";
+  }
+  function scrollToBottom() {
+    const tr = $("transcript");
+    tr.scrollTop = tr.scrollHeight;
+  }
+
+  // ---------- Init ----------
+  async function init() {
+    try { state.cfg = await api.config(); } catch {}
+    const modeSel = $("modeSel");
+    (state.cfg.modes || ["Fast", "Balanced", "Deep"]).forEach((m) => {
+      const o = document.createElement("option"); o.value = m; o.textContent = m; modeSel.appendChild(o);
+    });
+    modeSel.value = state.cfg.default_mode || "Balanced";
+    const topk = $("topkSel");
+    [4, 6, 8, 10, 12, 15].forEach((n) => { const o = document.createElement("option"); o.value = n; o.textContent = n; topk.appendChild(o); });
+    topk.value = String(state.cfg.default_top_k || 8);
+    $("provLabel").textContent = state.cfg.provider || "ready";
+    if (!state.cfg.provider || state.cfg.provider === "unknown") $("provDot").style.background = "var(--amber)";
+
+    await loadSessions();
+
+    // Events
+    $("newChatBtn").addEventListener("click", newChat);
+    $("sendBtn").addEventListener("click", send);
+    $("sourcesBtn").addEventListener("click", () => { renderSources(state.currentSources); openDrawer(); });
+    $("drawerClose").addEventListener("click", closeDrawer);
+    $("scrim").addEventListener("click", closeDrawer);
+    $("menuBtn").addEventListener("click", () => $("sidebar").classList.toggle("open"));
+
+    const input = $("input");
+    input.addEventListener("input", () => { autosize(); $("sendBtn").disabled = state.streaming || !input.value.trim(); });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+    document.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); newChat(); }
+      if (e.key === "Escape") closeDrawer();
+    });
+  }
+
+  init();
+})();
