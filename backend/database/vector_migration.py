@@ -7,7 +7,9 @@ import oracledb
 
 load_dotenv()
 
-EXPECTED_DIM = 384
+# Must match the embedding model's output dimension (EMBEDDING_DIM in .env).
+# bge-base-en-v1.5 = 768, bge-small-en-v1.5 = 384.
+EXPECTED_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
 
 conn = oracledb.connect(
     user=os.getenv("ORACLE_USER"),
