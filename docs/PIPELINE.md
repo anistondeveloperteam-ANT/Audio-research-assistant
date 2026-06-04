@@ -208,7 +208,7 @@ flowchart LR
    - **`claude`** — calls the **Anthropic** API (Claude).
    - **`openai`** — calls the **OpenAI** API.
 3. **Chat model** (chat UI) — the conversational UI additionally uses
-   `backend/llm/multi_provider.py`, a provider abstraction over **OpenAI** and a
+   `backend/llm/fallback_provider.py`, a provider abstraction over **OpenAI** and a
    local **Ollama** model (`qwen2.5:7b-instruct`) with automatic fallback.
 
 ---
@@ -218,7 +218,7 @@ flowchart LR
 | Capability | Module | What it does |
 |------------|--------|--------------|
 | **Conversation memory** | `memory/store.py` | Three-tier memory in SQLite (`data/memory.db`); remembers chats & facts. Thread-safe for Streamlit. |
-| **Memory backup** | `memory/memory_io.py` | Human-readable, checksummed, secret-masked export/import of memory to `.tar.gz`. |
+| **Memory backup** | `memory/memory_backup.py` | Human-readable, checksummed, secret-masked export/import of memory to `.tar.gz`. |
 | **Cost tracking** | `llm/cost_tracker.py` | Logs every paid API call (tokens + USD) to `data/llm_costs.db`. |
 | **Web search** | `tools/web_search.py` | Finds *external* papers via **arXiv** + **Semantic Scholar** (free, no key). |
 | **Code sandbox** | `tools/code_executor.py` + `sandbox_runner.py` | Runs LLM-written Python in a locked-down subprocess (import allowlist, timeout, no file/network). |
@@ -381,9 +381,9 @@ Audio-research-assistant/
 │   │                       #   query_planner, hyde_generator
 │   ├── answering/          # answer_orchestrator, evidence_builder,
 │   │                       #   prompt_quality, research_modes, query_sanity
-│   ├── llm/                # provider, multi_provider, router, cost_tracker
+│   ├── llm/                # streaming_provider, fallback_provider, router, cost_tracker
 │   ├── database/           # oracle_db, create_schema, vector_migration, ...
-│   ├── memory/             # store, memory_io
+│   ├── memory/             # store, memory_backup
 │   ├── tools/              # web_search, code_executor, sandbox_runner, dsp_toolkit
 │   └── evaluation/         # evaluate_retrieval
 ├── frontend/               # chat_ui.py, market_ui.py, quality_dashboard.py (+ helpers)

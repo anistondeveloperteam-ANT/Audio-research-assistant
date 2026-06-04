@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.memory.memory_io import cli_export
+from backend.memory.memory_backup import cli_export
 
 
 def main():

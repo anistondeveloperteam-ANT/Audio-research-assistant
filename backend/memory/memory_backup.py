@@ -1,5 +1,5 @@
 """
-memory_io.py  --  AudioLab AI memory export/import
+memory_backup.py  --  AudioLab AI memory export/import
 
 A portable, defensive backup system for the memory.db SQLite database
 plus optional auxiliary files (.env config, eval reports).

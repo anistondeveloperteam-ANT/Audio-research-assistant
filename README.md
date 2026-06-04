@@ -29,10 +29,10 @@ Audio-research-assistant/
 │   │                       #   query_planner, hyde_generator, multi_query_retrieve, ...
 │   ├── answering/          # answer_orchestrator, manual_answer_engine, evidence_builder,
 │   │                       #   prompt_builder, prompt_quality, research_modes, query_sanity, ...
-│   ├── llm/                # provider, multi_provider, router, cost_tracker
+│   ├── llm/                # streaming_provider, fallback_provider, router, cost_tracker
 │   ├── database/           # oracle_db, create_schema, create_user, vector_migration,
 │   │                       #   reset_index, reset_embeddings, inspect_schema, db_status
-│   ├── memory/             # store (conversation memory), memory_io (import/export)
+│   ├── memory/             # store (conversation memory), memory_backup (import/export)
 │   ├── tools/              # web_search, code_executor, sandbox_runner, dsp_toolkit
 │   └── evaluation/         # evaluate_retrieval, quality_test
 ├── frontend/           # Streamlit UIs (chat_ui.py :8502, market_ui.py :8501, quality_dashboard.py) + helpers

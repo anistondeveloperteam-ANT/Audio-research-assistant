@@ -119,7 +119,7 @@ def get_llm():
         load_dotenv(override=True)
     except Exception:
         pass
-    from backend.llm.provider import get_provider
+    from backend.llm.streaming_provider import get_provider
     return get_provider()
 
 
@@ -505,7 +505,7 @@ with st.sidebar:
     # --- OpenAI model selector (only shown when provider is openai) ---
     if _new_provider == "openai":
         try:
-            from backend.llm.multi_provider import (
+            from backend.llm.fallback_provider import (
                 OPENAI_AVAILABLE_MODELS,
                 OPENAI_DEFAULT_MODEL,
                 get_provider as _get_provider,
@@ -518,7 +518,7 @@ with st.sidebar:
             _12c_ok = True
         except ImportError:
             try:
-                from backend.llm.multi_provider import (
+                from backend.llm.fallback_provider import (
                     OPENAI_AVAILABLE_MODELS,
                     OPENAI_DEFAULT_MODEL,
                     get_provider as _get_provider,
@@ -986,10 +986,10 @@ if question:
             if _provider_label == "openai":
                 # NEW: OpenAI path via provider abstraction
                 try:
-                    from backend.llm.multi_provider import generate_with_fallback
+                    from backend.llm.fallback_provider import generate_with_fallback
                 except ImportError:
                     try:
-                        from backend.llm.multi_provider import generate_with_fallback
+                        from backend.llm.fallback_provider import generate_with_fallback
                     except ImportError:
                         generate_with_fallback = None
 
