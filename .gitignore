@@ -26,6 +26,9 @@ data/logs/
 data/audio_samples/
 data/code_repos/
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
 
