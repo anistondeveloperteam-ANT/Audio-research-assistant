@@ -1,0 +1,46 @@
+# ===== Secrets =====
+.env
+.env.*
+!.env.example
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ===== Virtual environments =====
+.venv/
+venv/
+env/
+
+# ===== Data, models, generated artifacts =====
+# Source PDFs and derived/extracted data are large and machine-local.
+data/papers/
+data/extracted/
+data/logs/
+data/audio_samples/
+data/code_repos/
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== Local backups / archives =====
+backups/
+archive/
+*.zip
+*.bak
+
+# ===== Editor / OS =====
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# ===== Streamlit =====
+.streamlit/secrets.toml

@@ -1,0 +1,28 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+  "python.terminal.activateEnvironment": true,
+  "python.envFile": "${workspaceFolder}/.env",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/backend",
+    "${workspaceFolder}/frontend"
+  ],
+  "python.analysis.typeCheckingMode": "basic",
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true
+  },
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/data/**": true,
+    "**/backups/**": true
+  },
+  "search.exclude": {
+    "**/.venv": true,
+    "**/data/papers": true,
+    "**/data/extracted": true
+  },
+  "editor.formatOnSave": false,
+  "[python]": {
+    "editor.rulers": [100]
+  }
+}

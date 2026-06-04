@@ -1,0 +1,82 @@
+[
+  {
+    "question": "What are the latest methods for DOA estimation?",
+    "expected_terms": [
+      "DOA",
+      "direction of arrival",
+      "microphone array",
+      "beamforming",
+      "source localization"
+    ]
+  },
+  {
+    "question": "What are the best algorithms for noise suppression?",
+    "expected_terms": [
+      "noise suppression",
+      "denoising",
+      "speech enhancement",
+      "SNR",
+      "PESQ"
+    ]
+  },
+  {
+    "question": "Which methods are suitable for real-time speech enhancement?",
+    "expected_terms": [
+      "real-time",
+      "speech enhancement",
+      "latency",
+      "low complexity",
+      "RNN"
+    ]
+  },
+  {
+    "question": "Compare MVDR, LCMV and GSC beamforming.",
+    "expected_terms": [
+      "MVDR",
+      "LCMV",
+      "GSC",
+      "beamforming",
+      "steering vector"
+    ]
+  },
+  {
+    "question": "What are the limitations of deep-learning based speech enhancement?",
+    "expected_terms": [
+      "limitations",
+      "robustness",
+      "complexity",
+      "generalization",
+      "noise"
+    ]
+  },
+  {
+    "question": "What metrics are used to evaluate speech enhancement?",
+    "expected_terms": [
+      "PESQ",
+      "STOI",
+      "SNR",
+      "SDR",
+      "MOS"
+    ]
+  },
+  {
+    "question": "What are the main methods for dereverberation?",
+    "expected_terms": [
+      "dereverberation",
+      "reverberation",
+      "WPE",
+      "speech enhancement",
+      "room"
+    ]
+  },
+  {
+    "question": "How do microphone arrays help speech enhancement?",
+    "expected_terms": [
+      "microphone array",
+      "beamforming",
+      "DOA",
+      "spatial",
+      "speech enhancement"
+    ]
+  }
+]
