@@ -139,32 +139,25 @@ def update_env_var(env_path: Path, key: str, value: str) -> None:
 # Ingestion pipeline  (subprocess + line streaming)
 # ----------------------------------------------------------------------
 
-INGEST_CANDIDATES = (
-    "backend/ingest_papers.py",
-    "backend/ingest.py",
-)
-EMBED_CANDIDATES = (
-    "backend/embed_chunks.py",
-)
+INGEST_MODULE = "backend.ingestion.ingest_papers"
+EMBED_MODULE = "backend.ingestion.embed_chunks"
 
 
-def find_script(project_root: Path, candidates: Tuple[str, ...]) -> Optional[Path]:
-    for rel in candidates:
-        p = project_root / rel
-        if p.exists():
-            return p
-    return None
+def _module_file(project_root: Path, module: str) -> Optional[Path]:
+    """Resolve a dotted module to its .py file under project_root (or None)."""
+    p = project_root / (module.replace(".", "/") + ".py")
+    return p if p.exists() else None
 
 
 def _stream_subprocess(
-    script_path: Path,
+    module: str,
     cwd: Path,
     on_line: Optional[Callable[[str], None]] = None,
 ) -> Tuple[int, List[str]]:
-    """Run script_path with the current Python; stream stdout+stderr.
+    """Run `python -m <module>` from cwd; stream stdout+stderr.
     Returns (return_code, captured_lines)."""
     proc = subprocess.Popen(
-        [sys.executable, str(script_path)],
+        [sys.executable, "-m", module],
         cwd=str(cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -191,26 +184,26 @@ def run_ingestion(
     project_root: Path,
     on_line: Optional[Callable[[str], None]] = None,
 ) -> Tuple[int, str, List[str]]:
-    """Run ingest_papers.py then embed_chunks.py, streaming lines.
+    """Run the ingest then embed stages as `python -m`, streaming lines.
     Returns (return_code, summary_message, all_lines).
     summary_message describes which step failed (or success)."""
-    ingest = find_script(project_root, INGEST_CANDIDATES)
-    embed = find_script(project_root, EMBED_CANDIDATES)
-    if ingest is None:
-        return 1, "Could not find an ingest script in backend/", []
-    if embed is None:
-        return 1, "Could not find backend/embed_chunks.py", []
+    if _module_file(project_root, INGEST_MODULE) is None:
+        return 1, "Could not find backend/ingestion/ingest_papers.py", []
+    if _module_file(project_root, EMBED_MODULE) is None:
+        return 1, "Could not find backend/ingestion/embed_chunks.py", []
 
+    ingest_name = INGEST_MODULE.rsplit(".", 1)[-1]
     if on_line:
-        on_line(f"--- Running {ingest.name} ---")
-    code, ingest_lines = _stream_subprocess(ingest, project_root, on_line)
+        on_line(f"--- Running {ingest_name} ---")
+    code, ingest_lines = _stream_subprocess(INGEST_MODULE, project_root, on_line)
     if code != 0:
-        return code, f"{ingest.name} exited with code {code}", ingest_lines
+        return code, f"{ingest_name} exited with code {code}", ingest_lines
 
+    embed_name = EMBED_MODULE.rsplit(".", 1)[-1]
     if on_line:
-        on_line(f"--- Running {embed.name} ---")
-    code, embed_lines = _stream_subprocess(embed, project_root, on_line)
+        on_line(f"--- Running {embed_name} ---")
+    code, embed_lines = _stream_subprocess(EMBED_MODULE, project_root, on_line)
     if code != 0:
-        return code, f"{embed.name} exited with code {code}", ingest_lines + embed_lines
+        return code, f"{embed_name} exited with code {code}", ingest_lines + embed_lines
 
     return 0, "Ingestion + embedding completed", ingest_lines + embed_lines

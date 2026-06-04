@@ -12,5 +12,4 @@ if not exist frontend\chat_ui.py (
     exit /b 1
 )
 
-echo Starting Chat UI on http://localhost:8502  (Ctrl+C to stop)
-.venv\Scripts\python.exe -m streamlit run frontend\chat_ui.py --server.port 8502
+.venv\Scripts\python.exe run.py

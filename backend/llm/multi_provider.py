@@ -29,12 +29,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Optional
 
-# Make sure backend/ is importable for cost_tracker
-_HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
-
-
 # ----------------------------------------------------------------------
 # Result type
 # ----------------------------------------------------------------------
@@ -309,7 +303,7 @@ class OpenAIProvider(LLMProvider):
 
             # Record cost (lazy import to avoid circular dep at module load)
             try:
-                from cost_tracker import record_call
+                from backend.llm.cost_tracker import record_call
                 record_call(provider="openai", model=model,
                             tokens_in=tokens_in, tokens_out=tokens_out,
                             cost_usd=cost)

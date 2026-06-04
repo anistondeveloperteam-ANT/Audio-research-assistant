@@ -30,7 +30,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 try:
-    from backend.query_sanity import check_query_sanity
+    from backend.answering.query_sanity import check_query_sanity
 except ImportError:
     print("ERROR: backend/query_sanity.py not found.")
     print("Install v8 first: INSTALL_AUDIOLAB_V8.bat")

@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.memory_io import cli_import
+from backend.memory.memory_io import cli_import
 
 
 def main():

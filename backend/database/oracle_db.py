@@ -1,5 +1,5 @@
 import oracledb
-from config import ORACLE_USER, ORACLE_PASSWORD, ORACLE_DSN
+from backend.config import ORACLE_USER, ORACLE_PASSWORD, ORACLE_DSN
 
 
 def connect():

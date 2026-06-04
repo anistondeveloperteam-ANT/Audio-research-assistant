@@ -60,7 +60,7 @@ st.markdown(
 
 def run_eval() -> tuple[bool, str]:
     result = subprocess.run(
-        [sys.executable, "backend\\evaluate_retrieval.py"],
+        [sys.executable, "-m", "backend.evaluation.evaluate_retrieval"],
         cwd=str(ROOT),
         capture_output=True,
         text=True,

@@ -1,5 +1,5 @@
 from collections import defaultdict
-from hybrid_retrieve import hybrid_retrieve
+from backend.retrieval.hybrid_retrieve import hybrid_retrieve
 
 SUBQUERIES = [
     {

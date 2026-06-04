@@ -26,7 +26,7 @@ from typing import List, Dict, Optional
 
 
 # Database lives in data/ alongside memory.db
-_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 _DB_PATH = _DATA_DIR / "llm_costs.db"
 
 

@@ -43,11 +43,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-BACKEND_DIR = Path(__file__).resolve().parent
-ROOT = BACKEND_DIR.parent
+ROOT = Path(__file__).resolve().parents[2]
 
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
+# Ensure project root is importable so `import backend.*` resolves when this
+# module is run directly (e.g. `python -m backend.evaluation.evaluate_retrieval`).
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 QUESTIONS_FILE = ROOT / "data" / "evaluation_questions.json"
 REPORT_FILE = ROOT / "data" / "extracted" / "retrieval_eval_report.json"
@@ -60,7 +61,7 @@ MODES_REPORT_FILE = ROOT / "data" / "extracted" / "retrieval_eval_modes_report.j
 
 def import_retriever():
     try:
-        from hybrid_retrieve import hybrid_retrieve
+        from backend.retrieval.hybrid_retrieve import hybrid_retrieve
         return hybrid_retrieve
     except Exception as exc:
         raise RuntimeError(
@@ -72,7 +73,7 @@ def import_retriever():
 def try_import_mode_binding():
     """Optional. Used only with --compare-modes or --mode flags."""
     try:
-        from research_modes import apply_research_mode
+        from backend.answering.research_modes import apply_research_mode
         return apply_research_mode
     except Exception:
         return None
@@ -574,7 +575,7 @@ def run_mode_comparison(retriever,
 
         # Bust caches so each mode starts fresh
         try:
-            import hybrid_retrieve as hr  # type: ignore
+            import backend.retrieval.hybrid_retrieve as hr  # type: ignore
             hr._chunks_cache = None  # noqa: SLF001
             hr._bm25_cache = None    # noqa: SLF001
         except Exception:

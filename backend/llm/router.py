@@ -1,5 +1,5 @@
 from pathlib import Path
-from config import (
+from backend.config import (
     ANSWER_PROVIDER,
     ANTHROPIC_API_KEY,
     ANTHROPIC_MODEL,

@@ -53,8 +53,8 @@ for path in [ROOT, BACKEND]:
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from research_modes import apply_research_mode as apply_mode_profile, get_mode_settings
-from prompt_quality import enhance_result_prompt
+from backend.answering.research_modes import apply_research_mode as apply_mode_profile, get_mode_settings
+from backend.answering.prompt_quality import enhance_result_prompt
 
 load_dotenv(ROOT / ".env")
 
@@ -293,7 +293,7 @@ def run_index_pipeline(progress_container=None) -> Dict[str, Any]:
     if progress:
         progress.progress(15)
 
-    ok, output = run_cmd([sys.executable, "backend\incremental_index.py"], timeout=7200)
+    ok, output = run_cmd([sys.executable, "-m", "backend.ingestion.incremental_index"], timeout=7200)
 
     if progress:
         progress.progress(100)
@@ -445,7 +445,7 @@ def ask_backend(question: str, mode: str, use_cache: bool = True) -> Dict[str, A
             return cached
 
     try:
-        from answer_orchestrator import run_research_question
+        from backend.answering.answer_orchestrator import run_research_question
         result = run_research_question(question)
         if isinstance(result, dict):
             result["time_seconds"] = round(time.time() - started, 2)
@@ -458,7 +458,7 @@ def ask_backend(question: str, mode: str, use_cache: bool = True) -> Dict[str, A
         orchestrator_error = ""
 
     try:
-        from evidence_builder import build_evidence_for_question
+        from backend.answering.evidence_builder import build_evidence_for_question
         result = build_evidence_for_question(question)
         if isinstance(result, dict):
             result["time_seconds"] = round(time.time() - started, 2)

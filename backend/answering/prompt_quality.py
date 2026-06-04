@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 EXTRACTED_DIR = ROOT / "data" / "extracted"
 LATEST_PROMPT = EXTRACTED_DIR / "latest_manual_prompt.txt"
 LATEST_CONTEXT = EXTRACTED_DIR / "latest_context.txt"

@@ -37,13 +37,13 @@ import oracledb
 import torch
 from sentence_transformers import CrossEncoder
 
-from oracle_vector_retriever import vector_search
-from retrieval_fusion import (
+from backend.retrieval.vector_retriever import vector_search
+from backend.retrieval.retrieval_fusion import (
     field_weighted_bm25,
     reciprocal_rank_fusion,
     mmr_diversify,
 )
-from hyde_generator import hyde_expand
+from backend.retrieval.hyde_generator import hyde_expand
 
 # ---------------------------------------------------------------------
 # Quiet backend output

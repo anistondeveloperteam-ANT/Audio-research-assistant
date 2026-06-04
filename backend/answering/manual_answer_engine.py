@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from evidence_builder import build_evidence, build_context_text
-from logger_config import debug_print
+from backend.answering.evidence_builder import build_evidence, build_context_text
+from backend.common.logger_config import debug_print
 
 
 SYSTEM_RULES = """

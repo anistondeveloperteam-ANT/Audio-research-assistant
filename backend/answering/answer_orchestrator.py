@@ -1,6 +1,6 @@
 from pathlib import Path
-from evidence_builder import build_evidence, build_context_text
-from llm_router import answer
+from backend.answering.evidence_builder import build_evidence, build_context_text
+from backend.llm.router import answer
 
 
 def run_research_question(question: str, deep: bool = True) -> dict:

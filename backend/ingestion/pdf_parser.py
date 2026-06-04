@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 import fitz
-from ocr_fallback import ocr_pdf_fallback
+from backend.ingestion.ocr_fallback import ocr_pdf_fallback
 from dotenv import load_dotenv
 
 load_dotenv()

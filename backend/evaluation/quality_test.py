@@ -2,8 +2,8 @@ import json
 import time
 from pathlib import Path
 
-from answer_orchestrator import run_research_question
-from logger_config import suppress_output
+from backend.answering.answer_orchestrator import run_research_question
+from backend.common.logger_config import suppress_output
 
 QUESTIONS = [
     "Summarize the uploaded papers.",

@@ -141,7 +141,7 @@ def _build_sandbox_globals():
     # imports. The LLM still CAN write `from dsp_toolkit import ...` if
     # it wants -- both work.
     try:
-        import dsp_toolkit as _dsp
+        import dsp_toolkit as _dsp  # sibling module; this runs as a standalone script
         # Inject every name in PUBLIC_API plus the module itself
         injected = []
         for name in getattr(_dsp, "PUBLIC_API", ()):

@@ -5,13 +5,38 @@ research papers. It ingests PDFs, builds a hybrid (vector + BM25) retrieval inde
 backed by an Oracle vector database, and answers questions with cited sources
 through a Streamlit chat interface.
 
+## Two entry points
+
+| File | What it does |
+|------|--------------|
+| **`python run.py`** | Launch the app (Chat UI on :8502). `--market` for the Market UI on :8501. |
+| **`python pipeline.py`** | Build / refresh the search index from `data/papers/`. `--incremental` for changed PDFs only. |
+
+That's all most people need. Everything else lives under `backend/`, organized by job.
+
 ## Project structure
 
 ```
 Audio-research-assistant/
-├── backend/            # Retrieval engine, ingestion, LLM providers, DB access
-├── frontend/           # Streamlit UIs (chat_ui.py, streamlit_app.py) + helpers
-├── scripts/            # CLI maintenance tools (memory import/export, cleanup)
+├── run.py              # Launch the web app
+├── pipeline.py         # Build / refresh the search index (ingest → embed → vector-migrate)
+├── backend/
+│   ├── config.py           # Central settings + data paths (reads .env)
+│   ├── common/             # logger_config
+│   ├── ingestion/          # pdf_parser, ocr_fallback, document_chunker,
+│   │                       #   ingest_papers, embed_chunks, incremental_index
+│   ├── retrieval/          # hybrid_retrieve, vector_retriever, retrieval_fusion,
+│   │                       #   query_planner, hyde_generator, multi_query_retrieve, ...
+│   ├── answering/          # answer_orchestrator, manual_answer_engine, evidence_builder,
+│   │                       #   prompt_builder, prompt_quality, research_modes, query_sanity, ...
+│   ├── llm/                # provider, multi_provider, router, cost_tracker
+│   ├── database/           # oracle_db, create_schema, create_user, vector_migration,
+│   │                       #   reset_index, reset_embeddings, inspect_schema, db_status
+│   ├── memory/             # store (conversation memory), memory_io (import/export)
+│   ├── tools/              # web_search, code_executor, sandbox_runner, dsp_toolkit
+│   └── evaluation/         # evaluate_retrieval, quality_test
+├── frontend/           # Streamlit UIs (chat_ui.py :8502, streamlit_app.py :8501) + helpers
+├── scripts/            # CLI maintenance tools (memory import/export, chat cleanup)
 ├── viewer_tool/        # show_my_data.py — inspect indexed data & memory
 ├── data/               # Papers, extracted text, SQLite memory/cost DBs (gitignored)
 ├── docs/               # Reference material (pipeline PDF)
@@ -21,16 +46,8 @@ Audio-research-assistant/
 └── .env.example        # Environment configuration template
 ```
 
-### Key components
-
-| Area | Modules |
-|------|---------|
-| Ingestion | `backend/ingest_papers.py`, `incremental_index.py`, `parsers.py`, `advanced_chunker.py`, `ocr_fallback.py` |
-| Embedding / index | `backend/embed_chunks.py`, `create_schema.py`, `oracle_vector_migration.py` |
-| Retrieval | `backend/hybrid_retrieve.py`, `oracle_vector_retriever.py`, `retrieval_fusion.py`, `query_planner.py`, `hyde_generator.py` |
-| Answering | `backend/answer_orchestrator.py`, `manual_answer_engine.py`, `evidence_builder.py`, `llm_providers.py`, `llm_router.py` |
-| Memory / cost | `backend/memory.py`, `memory_io.py`, `cost_tracker.py` |
-| UI | `frontend/chat_ui.py` (chat, port 8502), `frontend/streamlit_app.py` (market UI, port 8501) |
+> The `backend` package uses absolute imports (`from backend.retrieval.hybrid_retrieve import …`).
+> Run scripts from the project root, e.g. `python -m backend.database.create_schema`.
 
 ## Setup
 
@@ -68,13 +85,13 @@ Open the folder, pick the `.venv` interpreter, then use **Run and Debug**:
 
 ### From the terminal
 ```powershell
-# Chat UI
-.\run_chat_ui.bat
-# or
-.venv\Scripts\python.exe -m streamlit run frontend\chat_ui.py --server.port 8502
+# First time / after adding PDFs — build the index
+python pipeline.py                 # or:  .\build_index.bat
 
-# Market UI
-.\run_market_ui.bat
+# Launch the app
+python run.py                      # Chat UI    -> http://localhost:8502
+python run.py --market             # Market UI   -> http://localhost:8501
+# .bat shortcuts: run_chat_ui.bat / run_market_ui.bat
 ```
 
 ## Maintenance tools
@@ -84,8 +101,10 @@ Open the folder, pick the `.venv` interpreter, then use **Run and Debug**:
 | `.\show_my_data.bat` | Inspect indexed PDFs, chunks, embeddings, memory |
 | `.\export_memory.bat` / `.\import_memory.bat` | Back up / restore conversation memory |
 | `.\clean_bad_chats.bat` | Prune low-quality stored conversations |
-| `python backend\ingest_papers.py` | Ingest / re-index PDFs in `data/papers/` |
-| `python backend\incremental_index.py` | Index only changed PDFs |
+| `python pipeline.py` | Full index rebuild |
+| `python pipeline.py --incremental` | Index only changed PDFs |
+| `python -m backend.database.create_schema` | (Re)create the Oracle schema |
+| `python -m backend.evaluation.evaluate_retrieval` | Score retrieval quality |
 
 ## Notes
 - Large/generated artifacts (`data/papers`, `data/extracted`, `*.db`, `.venv`) are

@@ -6,8 +6,8 @@ import oracledb
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-from parsers import parse_pdf
-from advanced_chunker import chunk_parsed_document
+from backend.ingestion.pdf_parser import parse_pdf
+from backend.ingestion.document_chunker import chunk_parsed_document
 
 load_dotenv()
 

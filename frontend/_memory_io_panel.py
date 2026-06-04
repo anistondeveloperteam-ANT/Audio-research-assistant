@@ -28,13 +28,13 @@ except ImportError:
 
 # Backend import (works regardless of how chat_ui.py imports things)
 try:
-    from backend.memory_io import (
+    from backend.memory.memory_io import (
         export_memory, import_memory, inspect_export,
         ExportSummary, ImportPlan, EXPORT_SCHEMA_VERSION,
     )
 except ImportError:
     # Fallback: backend may not be on path; chat_ui.py adds it
-    from memory_io import (
+    from backend.memory.memory_io import (
         export_memory, import_memory, inspect_export,
         ExportSummary, ImportPlan, EXPORT_SCHEMA_VERSION,
     )

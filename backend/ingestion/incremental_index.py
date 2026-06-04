@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data"
 PAPERS_DIR = DATA_DIR / "papers"
 EXTRACTED_DIR = DATA_DIR / "extracted"
@@ -101,9 +101,9 @@ def run_cmd(args: List[str], timeout: int = 7200) -> Tuple[bool, str]:
 def run_full_pipeline() -> Tuple[bool, str, str | None]:
     logs: List[str] = []
     steps = [
-        ("Reading and structuring papers", [sys.executable, "backend\\ingest_papers.py"], 3600),
-        ("Building search memory", [sys.executable, "backend\\embed_chunks.py"], 7200),
-        ("Updating vector search", [sys.executable, "backend\\oracle_vector_migration.py"], 3600),
+        ("Reading and structuring papers", [sys.executable, "-m", "backend.ingestion.ingest_papers"], 3600),
+        ("Building search memory", [sys.executable, "-m", "backend.ingestion.embed_chunks"], 7200),
+        ("Updating vector search", [sys.executable, "-m", "backend.database.vector_migration"], 3600),
     ]
 
     for label, cmd, timeout in steps:

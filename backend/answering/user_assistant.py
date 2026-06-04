@@ -6,8 +6,8 @@ os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 import time
 from dotenv import load_dotenv
 
-from logger_config import suppress_output
-from manual_answer_engine import build_manual_prompt
+from backend.common.logger_config import suppress_output
+from backend.answering.manual_answer_engine import build_manual_prompt
 
 load_dotenv()
 
@@ -51,7 +51,7 @@ def warmup_retrieval_quietly():
     """
     try:
         with suppress_output():
-            from hybrid_retrieve import hybrid_retrieve
+            from backend.retrieval.hybrid_retrieve import hybrid_retrieve
             hybrid_retrieve("warmup query", top_k=1)
     except Exception:
         # Do not block app startup if warmup fails.

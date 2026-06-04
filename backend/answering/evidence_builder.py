@@ -1,9 +1,9 @@
 import os
 from collections import defaultdict
 
-from query_planner import plan_queries
-from hybrid_retrieve import hybrid_retrieve
-from logger_config import debug_print
+from backend.retrieval.query_planner import plan_queries
+from backend.retrieval.hybrid_retrieve import hybrid_retrieve
+from backend.common.logger_config import debug_print
 
 PER_TOPIC_SOURCE_LIMIT = int(os.getenv("PER_TOPIC_SOURCE_LIMIT", "3"))
 TOTAL_SOURCE_LIMIT = int(os.getenv("TOTAL_SOURCE_LIMIT", "16"))

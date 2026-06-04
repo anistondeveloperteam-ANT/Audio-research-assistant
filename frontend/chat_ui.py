@@ -17,13 +17,13 @@ from pathlib import Path
 
 import streamlit as st
 
-# Path setup
+# Path setup: ROOT must be importable so `import backend.*` resolves; THIS_DIR
+# so the local `_chat_ui_utils` / `_components` helpers load by bare name.
 ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT / "backend") not in sys.path:
-    sys.path.insert(0, str(ROOT / "backend"))
 THIS_DIR = Path(__file__).resolve().parent
-if str(THIS_DIR) not in sys.path:
-    sys.path.insert(0, str(THIS_DIR))
+for _p in (ROOT, THIS_DIR):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 try:
     from dotenv import load_dotenv
@@ -39,9 +39,9 @@ from _chat_ui_utils import (
     update_env_var,
     run_ingestion,
 )
-from memory import MemoryStore, default_db_path
-from web_search import search_web, format_results_for_llm as format_web_for_llm
-from code_executor import run_code as run_sandbox_code
+from backend.memory.store import MemoryStore, default_db_path
+from backend.tools.web_search import search_web, format_results_for_llm as format_web_for_llm
+from backend.tools.code_executor import run_code as run_sandbox_code
 
 # AudioLab AI v2 branding modules
 import importlib.util as _ilu
@@ -99,14 +99,14 @@ _styles.inject_global_styles()
 # ----------------------------------------------------------------------
 @st.cache_resource(show_spinner=False)
 def get_retriever():
-    from hybrid_retrieve import hybrid_retrieve
+    from backend.retrieval.hybrid_retrieve import hybrid_retrieve
     return hybrid_retrieve
 
 
 @st.cache_resource(show_spinner=False)
 def get_mode_applier():
     try:
-        from research_modes import apply_research_mode
+        from backend.answering.research_modes import apply_research_mode
         return apply_research_mode
     except Exception:
         return None
@@ -119,7 +119,7 @@ def get_llm():
         load_dotenv(override=True)
     except Exception:
         pass
-    from llm_provider import get_provider
+    from backend.llm.provider import get_provider
     return get_provider()
 
 
@@ -208,7 +208,7 @@ def build_system_prompt(memory_block: str, include_dsp_toolkit: bool = False) ->
         )
     if include_dsp_toolkit:
         try:
-            from dsp_toolkit import describe_api
+            from backend.tools.dsp_toolkit import describe_api
             prompt += (
                 "\n\n=== DSP toolkit available in the code sandbox ===\n"
                 "When the user asks for a simulation involving beamforming, "
@@ -505,26 +505,26 @@ with st.sidebar:
     # --- OpenAI model selector (only shown when provider is openai) ---
     if _new_provider == "openai":
         try:
-            from llm_providers import (
+            from backend.llm.multi_provider import (
                 OPENAI_AVAILABLE_MODELS,
                 OPENAI_DEFAULT_MODEL,
                 get_provider as _get_provider,
                 test_connection as _test_connection,
             )
-            from cost_tracker import (
+            from backend.llm.cost_tracker import (
                 format_usd as _format_usd,
                 get_today_cost as _get_today_cost,
             )
             _12c_ok = True
         except ImportError:
             try:
-                from backend.llm_providers import (
+                from backend.llm.multi_provider import (
                     OPENAI_AVAILABLE_MODELS,
                     OPENAI_DEFAULT_MODEL,
                     get_provider as _get_provider,
                     test_connection as _test_connection,
                 )
-                from backend.cost_tracker import (
+                from backend.llm.cost_tracker import (
                     format_usd as _format_usd,
                     get_today_cost as _get_today_cost,
                 )
@@ -854,10 +854,10 @@ if question:
     # Catch obvious nonsense BEFORE retrieval + LLM. Prevents the model
     # from hallucinating confident answers to gibberish like "buoh".
     try:
-        from query_sanity import check_query_sanity
+        from backend.answering.query_sanity import check_query_sanity
     except ImportError:
         try:
-            from backend.query_sanity import check_query_sanity
+            from backend.answering.query_sanity import check_query_sanity
         except ImportError:
             check_query_sanity = None  # fail open if module missing
 
@@ -986,10 +986,10 @@ if question:
             if _provider_label == "openai":
                 # NEW: OpenAI path via provider abstraction
                 try:
-                    from llm_providers import generate_with_fallback
+                    from backend.llm.multi_provider import generate_with_fallback
                 except ImportError:
                     try:
-                        from backend.llm_providers import generate_with_fallback
+                        from backend.llm.multi_provider import generate_with_fallback
                     except ImportError:
                         generate_with_fallback = None
 
@@ -1047,9 +1047,9 @@ if question:
                             placeholder.markdown(answer)
                             if result.cost_usd > 0:
                                 try:
-                                    from cost_tracker import format_usd, get_today_cost
+                                    from backend.llm.cost_tracker import format_usd, get_today_cost
                                 except ImportError:
-                                    from backend.cost_tracker import format_usd, get_today_cost
+                                    from backend.llm.cost_tracker import format_usd, get_today_cost
                                 st.caption(
                                     f"Query: {format_usd(result.cost_usd)} "
                                     f"({result.tokens_in} in + {result.tokens_out} out tokens) "

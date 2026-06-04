@@ -1,4 +1,4 @@
-from hybrid_retrieve import hybrid_retrieve
+from backend.retrieval.hybrid_retrieve import hybrid_retrieve
 
 def build_context(question, results):
     lines = []

@@ -57,7 +57,7 @@ from typing import Any, Dict, List, Optional
 
 
 HERE = Path(__file__).resolve().parent
-RUNNER = HERE / "_sandbox_runner.py"
+RUNNER = HERE / "sandbox_runner.py"
 
 
 # Mirror of _sandbox_runner.ALLOWED_IMPORTS. Kept here as a separate

@@ -1,5 +1,5 @@
 from pathlib import Path
-from evidence_builder import build_evidence, build_context_text
+from backend.answering.evidence_builder import build_evidence, build_context_text
 
 def build_prompt(question):
     query_plan, topic_sources, all_sources = build_evidence(question)
