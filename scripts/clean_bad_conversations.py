@@ -174,7 +174,7 @@ def main():
             print()
             print(f"  Title:  {b['title'][:60]}")
             print(f"  Turns:  {b['n_turns']}")
-            print(f"  Gibberish detected in:")
+            print("  Gibberish detected in:")
             for reason in b["bad_reasons"][:3]:
                 print(f"    - {reason}")
             if len(b["bad_reasons"]) > 3:

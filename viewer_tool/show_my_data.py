@@ -308,7 +308,7 @@ else:
         n_turns = conn.execute("SELECT COUNT(*) FROM turns").fetchone()[0]
         n_global = conn.execute("SELECT COUNT(*) FROM facts WHERE scope='global'").fetchone()[0]
         n_session = conn.execute("SELECT COUNT(*) FROM facts WHERE scope='session'").fetchone()[0]
-        print(f"\nCounts:")
+        print("\nCounts:")
         print(f"   Conversations (sessions):  {n_sessions}")
         print(f"   Total turns (messages):    {n_turns}")
         print(f"   Long-term facts (global):  {n_global}")
@@ -316,7 +316,7 @@ else:
 
         # ----- Sessions list -----
         if n_sessions > 0:
-            print(f"\nMost recent 10 conversations:")
+            print("\nMost recent 10 conversations:")
             rows = conn.execute("""
                 SELECT s.id, s.title, s.updated_at,
                        (SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id) AS n_turns
@@ -332,7 +332,7 @@ else:
 
         # ----- Long-term facts -----
         if n_global > 0:
-            print(f"\nLong-term facts (used by the LLM in every conversation):")
+            print("\nLong-term facts (used by the LLM in every conversation):")
             rows = conn.execute("""
                 SELECT key, value, updated_at
                 FROM facts WHERE scope='global'
@@ -359,7 +359,7 @@ else:
                     ORDER BY turn_index DESC LIMIT 3
                 """, (sid_row["id"],)).fetchall()
                 if latest_turns:
-                    print(f"\nLast 3 messages from the most recent conversation:")
+                    print("\nLast 3 messages from the most recent conversation:")
                     for r in reversed(latest_turns):  # show in chronological order
                         content = (r["content"] or "").replace("\n", " ")[:250]
                         print(f"   [{r['turn_index']:>2}] {r['role']:>9}: {content}")

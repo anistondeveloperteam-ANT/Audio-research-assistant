@@ -236,8 +236,8 @@ def build_user_message(question: str, evidence: str, web_evidence: str = "") -> 
             f"{web_evidence}\n\n"
         )
     msg += (
-        f"Answer the question above using only the evidence above. "
-        f"Cite local sources with [n] and web sources with [Wn]."
+        "Answer the question above using only the evidence above. "
+        "Cite local sources with [n] and web sources with [Wn]."
     )
     return msg
 
@@ -1015,7 +1015,7 @@ if question:
                         # so the user sees the real OpenAI problem, not just
                         # the masked Ollama fallback failure.
                         _openai_err = result.fallback_reason or result.error
-                        answer = f"*LLM call failed.*\n\n"
+                        answer = "*LLM call failed.*\n\n"
                         answer += f"**OpenAI error:** {_openai_err}\n\n"
                         if result.fell_back:
                             answer += f"**Ollama fallback also failed:** {result.error}\n\n"

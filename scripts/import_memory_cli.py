@@ -68,7 +68,7 @@ def main():
             sys.exit(3)
 
     try:
-        plan = cli_import(
+        cli_import(
             project_root=ROOT,
             bundle_path=bundle_path,
             mode=args.mode,

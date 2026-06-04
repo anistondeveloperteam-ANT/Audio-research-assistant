@@ -598,7 +598,7 @@ def cli_export(project_root: Path, output_path: Optional[Path] = None) -> Path:
     size_kb = output_path.stat().st_size / 1024.0
     print()
     print("=" * 60)
-    print(f"EXPORT COMPLETE")
+    print("EXPORT COMPLETE")
     print("=" * 60)
     print(f"File:                {output_path}")
     print(f"Size:                {size_kb:.1f} KB")
@@ -648,7 +648,7 @@ def cli_import(project_root: Path, bundle_path: Path,
         dry_run=dry_run,
     )
 
-    print(f"Plan:")
+    print("Plan:")
     print(f"  New sessions:      {plan.new_sessions}")
     print(f"  New turns:         {plan.new_turns}")
     print(f"  New global facts:  {plan.new_global_facts}")
