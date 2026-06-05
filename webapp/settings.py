@@ -62,12 +62,12 @@ def _ollama_models() -> List[str]:
         return []
 
 
+# OpenAI models shown in the dropdown when OPENAI_API_KEY is set.
+OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]
+
+
 def _openai_models() -> List[str]:
-    try:
-        from backend.llm.fallback_provider import OPENAI_AVAILABLE_MODELS
-        return list(OPENAI_AVAILABLE_MODELS)
-    except Exception:
-        return ["gpt-4o-mini", "gpt-4o"]
+    return list(OPENAI_MODELS)
 
 
 def _label(provider: str) -> str:

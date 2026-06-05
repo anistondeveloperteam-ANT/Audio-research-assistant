@@ -20,20 +20,18 @@ That's all most people need. Everything else lives under `backend/` and `webapp/
 Audio-research-assistant/
 ├── run.py              # Launch the web app
 ├── pipeline.py         # Build / refresh the search index (ingest → embed → vector-migrate)
+├── enable_sharing.bat  # One-time: open the firewall for LAN sharing (run as admin)
 ├── backend/
 │   ├── config.py           # Central settings + data paths (reads .env)
-│   ├── common/             # logger_config
+│   ├── common/             # device (GPU/CPU), embeddings (Gemini / local)
 │   ├── ingestion/          # pdf_parser, ocr_fallback, document_chunker,
 │   │                       #   ingest_papers, embed_chunks, incremental_index
-│   ├── retrieval/          # hybrid_retrieve, vector_retriever, retrieval_fusion,
-│   │                       #   query_planner, hyde_generator, multi_query_retrieve, ...
-│   ├── answering/          # answer_orchestrator, evidence_builder,
-│   │                       #   prompt_quality, research_modes, query_sanity
-│   ├── llm/                # streaming_provider, fallback_provider, router, cost_tracker
-│   ├── database/           # oracle_db, create_schema, create_user, vector_migration,
-│   │                       #   reset_index, reset_embeddings, inspect_schema, db_status
+│   ├── retrieval/          # hybrid_retrieve, vector_retriever,
+│   │                       #   retrieval_fusion, hyde_generator
+│   ├── answering/          # research_modes, query_sanity
+│   ├── llm/                # streaming_provider (all chat providers)
+│   ├── database/           # vector_migration + DB admin scripts
 │   ├── memory/             # store (conversation memory), memory_backup (import/export)
-│   ├── tools/              # web_search, code_executor, sandbox_runner, dsp_toolkit
 │   └── evaluation/         # evaluate_retrieval
 ├── webapp/             # The web UI — FastAPI server + static front end
 │   ├── server.py           #   API routes + streaming chat (SSE)
@@ -44,8 +42,9 @@ Audio-research-assistant/
 ├── scripts/            # CLI maintenance tools (memory import/export, chat cleanup)
 ├── viewer_tool/        # show_my_data.py — inspect indexed data & memory
 ├── tests/              # pytest unit tests
-├── data/               # Papers, extracted text, SQLite memory/cost DBs (gitignored)
-├── docs/               # Reference material (pipeline PDF + guide)
+├── data/               # Papers, extracted text, SQLite memory DB (gitignored)
+├── docs/               # PIPELINE.md guide + reference PDF
+├── CHANGELOG.md        # What changed and when (kept up to date)
 ├── .vscode/            # Editor + debugger configuration
 ├── requirements.txt    # Pinned Python dependencies
 └── .env.example        # Environment configuration template
@@ -96,9 +95,12 @@ python pipeline.py --status
 python pipeline.py
 
 # Launch the web app
-python run.py                      # http://localhost:8600   (or double-click web_ui.bat)
+python run.py                      # http://localhost:8600 — shared on your Wi-Fi by default
+python run.py --local              # restrict to this PC only
 ```
 > The web app does not auto-open a browser — visit http://localhost:8600 yourself.
+> `python run.py` shares the app on your network so teammates can open
+> `http://<your-ip>:8600`; the first run adds a firewall rule (one approval prompt).
 
 ## Maintenance tools
 

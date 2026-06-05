@@ -153,8 +153,8 @@ _TOPIC_TRIGGERS: List[Tuple[str, List[str]]] = [
 
 
 def detect_intent(question: str) -> str:
-    """Mirrors the intent detector in query_planner so HyDE picks
-    the same intent route as the planner does."""
+    """Classify the question into a coarse intent route so HyDE can
+    generate a hypothetical answer in the right style."""
     q = " " + (question or "").lower() + " "
     if any(x in q for x in [" best ", " suitable ", " recommend ", "which method", "which algorithm"]):
         return "best_method"
