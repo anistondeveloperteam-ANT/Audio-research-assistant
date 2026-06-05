@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from webapp import chat_logic, ingest
+from webapp import chat_logic, ingest, settings
 from backend.answering.research_modes import MODE_SETTINGS
 from backend.llm.streaming_provider import get_provider
 
@@ -91,6 +91,22 @@ def get_turns(session_id: str):
 @app.get("/api/library")
 def library():
     return ingest.library_stats()
+
+
+# ----------------------------------------------------------------------
+# LLM model selection
+# ----------------------------------------------------------------------
+@app.get("/api/models")
+def models():
+    return settings.list_models()
+
+
+@app.post("/api/model")
+def set_model(body: dict = Body(...)):
+    try:
+        return settings.set_model(body.get("provider", ""), body.get("model", ""))
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
 
 
 @app.post("/api/upload")

@@ -12,6 +12,9 @@
     deleteSession: (id) => fetch(`/api/sessions/${id}`, { method: "DELETE" }),
     turns: (id) => fetch(`/api/sessions/${id}/turns`).then((r) => r.json()),
     library: () => fetch("/api/library").then((r) => r.json()),
+    models: () => fetch("/api/models").then((r) => r.json()),
+    setModel: (provider, model) =>
+      fetch("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, model }) }).then((r) => r.json()),
     upload: (file) => {
       const fd = new FormData(); fd.append("file", file);
       return fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json());
@@ -540,8 +543,54 @@
     loadLibrary();
   }
 
+  // ---------- Theme ----------
+  const ICON_SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+  const ICON_MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+  function applyTheme(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    $("themeBtn").innerHTML = t === "dark" ? ICON_SUN : ICON_MOON;
+    $("themeBtn").title = t === "dark" ? "Switch to light theme" : "Switch to dark theme";
+  }
+  function toggleTheme() {
+    const next = (document.documentElement.getAttribute("data-theme") === "dark") ? "light" : "dark";
+    try { localStorage.setItem("ara-theme", next); } catch {}
+    applyTheme(next);
+  }
+
+  // ---------- Model switcher ----------
+  function setProviderLabel(label) {
+    $("provLabel").textContent = label;
+    $("provDot").style.background = "var(--ok)";
+  }
+  async function loadModels() {
+    try {
+      const data = await api.models();
+      const sel = $("modelSel");
+      sel.innerHTML = "";
+      (data.options || []).forEach((o) => {
+        const opt = document.createElement("option");
+        opt.value = JSON.stringify({ provider: o.provider, model: o.model });
+        opt.textContent = o.label;
+        sel.appendChild(opt);
+      });
+      const cur = data.current || {};
+      sel.value = JSON.stringify({ provider: cur.provider, model: cur.model });
+      setProviderLabel(`${cur.provider} · ${cur.model}`);
+    } catch { $("modelSel").innerHTML = '<option>unavailable</option>'; }
+  }
+  async function onModelChange() {
+    let v; try { v = JSON.parse($("modelSel").value); } catch { return; }
+    try {
+      const res = await api.setModel(v.provider, v.model);
+      if (res.error) { toast(res.error, "error"); return; }
+      setProviderLabel(res.label);
+      toast("Model switched to " + res.model);
+    } catch { toast("Could not switch model.", "error"); }
+  }
+
   // ---------- Init ----------
   async function init() {
+    applyTheme(document.documentElement.getAttribute("data-theme") || "light");
     try { state.cfg = await api.config(); } catch {}
     const modeSel = $("modeSel");
     (state.cfg.modes || ["Fast", "Balanced", "Deep"]).forEach((m) => {
@@ -555,6 +604,7 @@
     if (!state.cfg.provider || state.cfg.provider === "unknown") $("provDot").style.background = "var(--amber)";
 
     loadLibrary();
+    loadModels();
     await loadSessions();
 
     // Events
@@ -572,6 +622,8 @@
     $("addPaperBtn").addEventListener("click", pickPdf);
     $("pdfInput").addEventListener("change", onPdfChosen);
     $("imDone").addEventListener("click", closeIngestModal);
+    $("themeBtn").addEventListener("click", toggleTheme);
+    $("modelSel").addEventListener("change", onModelChange);
 
     const input = $("input");
     input.addEventListener("input", () => { autosize(); $("sendBtn").disabled = state.streaming || !input.value.trim(); });
