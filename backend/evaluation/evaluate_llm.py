@@ -100,7 +100,7 @@ def build_provider(spec: Optional[str]):
 
 
 def generate(provider, question: str, mode: str, top_k: int,
-             use_retrieval: bool) -> Tuple[str, List[Dict[str, Any]], float]:
+             use_retrieval: bool, max_tokens: int = 2048) -> Tuple[str, List[Dict[str, Any]], float]:
     sources: List[Dict[str, Any]] = []
     if use_retrieval:
         try:
@@ -119,7 +119,7 @@ def generate(provider, question: str, mode: str, top_k: int,
     parts: List[str] = []
     for chunk in provider.stream_chat(
         [{"role": "user", "content": user_msg}],
-        system=system, max_tokens=1024, temperature=0.2,
+        system=system, max_tokens=max_tokens, temperature=0.2,
     ):
         parts.append(chunk)
     return "".join(parts).strip(), sources, time.time() - t0
@@ -147,7 +147,7 @@ def judge_answer(judge, question: str, key_points: List[str], answer: str) -> Op
 # ----------------------------------------------------------------------
 def evaluate_model(spec: Optional[str], questions: List[Dict[str, Any]],
                    mode: str, top_k: int, use_retrieval: bool,
-                   judge=None) -> Dict[str, Any]:
+                   judge=None, max_tokens: int = 2048) -> Dict[str, Any]:
     provider = build_provider(spec)
     label = f"{provider.name}:{provider.model}"
     print(f"\n{'=' * 70}\nMODEL: {label}\n{'=' * 70}")
@@ -160,7 +160,7 @@ def evaluate_model(spec: Optional[str], questions: List[Dict[str, Any]],
         question = q["question"]
         key_points = q.get("key_points", [])
         try:
-            answer, sources, secs = generate(provider, question, mode, top_k, use_retrieval)
+            answer, sources, secs = generate(provider, question, mode, top_k, use_retrieval, max_tokens)
         except Exception as exc:
             print(f"  Q{i}: generation failed: {exc}")
             rows.append({"question": question, "error": str(exc), "coverage": 0.0,
@@ -201,6 +201,7 @@ def main() -> int:
     p.add_argument("--questions", default=str(QUESTIONS_PATH), help="Path to the questions JSON.")
     p.add_argument("--mode", default="Balanced", help="Retrieval mode (Fast/Balanced/Deep).")
     p.add_argument("--top-k", type=int, default=8, help="Sources to retrieve per question.")
+    p.add_argument("--max-tokens", type=int, default=2048, help="Answer token budget (match the app; reasoning models need room).")
     p.add_argument("--limit", type=int, default=0, help="Only evaluate the first N questions (0 = all).")
     p.add_argument("--no-retrieval", action="store_true", help="Test raw model knowledge (skip retrieval).")
     p.add_argument("--judge", action="store_true", help="Also score with an LLM judge (extra API calls).")
@@ -226,7 +227,7 @@ def main() -> int:
     use_retrieval = not args.no_retrieval
     print(f"Questions: {len(questions)} | retrieval: {use_retrieval} | mode: {args.mode} | top_k: {args.top_k}")
 
-    reports = [evaluate_model(spec, questions, args.mode, args.top_k, use_retrieval, judge)
+    reports = [evaluate_model(spec, questions, args.mode, args.top_k, use_retrieval, judge, args.max_tokens)
                for spec in specs]
 
     # Ranked comparison
