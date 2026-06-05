@@ -44,10 +44,11 @@
 
       <div class="sidebar-foot">
         <div class="foot-row"><span class="dot" id="provDot"></span><span id="provLabel">connecting…</span></div>
-        <div class="foot-row foot-lib">
+        <button class="foot-row foot-lib" id="manageBtn" title="View and delete your papers">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
           <span id="libLabel">loading library…</span>
-        </div>
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:auto;opacity:.6"><path d="M9 18l6-6-6-6"/></svg>
+        </button>
       </div>
     </aside>
 
@@ -136,6 +137,21 @@
     <div class="im-foot" id="imFoot" hidden>
       <button class="new-chat" id="imDone" style="margin:0;width:100%">Done</button>
     </div>
+  </div>
+
+  <!-- ============ Your papers (manage / delete) ============ -->
+  <div class="modal-scrim" id="papersScrim"></div>
+  <div class="papers-modal" id="papersModal" role="dialog" aria-label="Your papers">
+    <div class="pm-head">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <h3>Your papers</h3>
+      <span class="count" id="pmCount">0</span>
+      <span style="flex:1"></span>
+      <button class="icon-btn" id="pmClose" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="pm-body" id="pmBody"></div>
   </div>
 
   <div class="cite-pop" id="citePop"></div>

@@ -105,6 +105,71 @@ def library_stats() -> Dict[str, Any]:
     return out
 
 
+def _connect():
+    import oracledb
+    return oracledb.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=ORACLE_DSN)
+
+
+def list_papers() -> list:
+    """List indexed papers with their chunk counts (newest first)."""
+    out = []
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT p.id, p.title, p.file_name, COUNT(c.id)
+            FROM papers p LEFT JOIN chunks c ON c.paper_id = p.id
+            GROUP BY p.id, p.title, p.file_name
+            ORDER BY p.id DESC
+            """
+        )
+        for pid, title, fname, n in cur.fetchall():
+            if hasattr(title, "read"):
+                title = title.read()
+            out.append({
+                "id": int(pid),
+                "title": str(title or fname or "Untitled"),
+                "file_name": str(fname or ""),
+                "chunks": int(n),
+            })
+        conn.close()
+    except Exception:
+        pass
+    return out
+
+
+def delete_paper(paper_id: int) -> Dict[str, Any]:
+    """Completely remove a paper: its chunks + embeddings/vectors, the papers
+    row, and the PDF file on disk. Then drop the retrieval caches."""
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("SELECT file_name FROM papers WHERE id = :p", {"p": paper_id})
+    row = cur.fetchone()
+    file_name = row[0] if row else None
+
+    try:
+        cur.execute(
+            "DELETE FROM chunk_concepts WHERE chunk_id IN "
+            "(SELECT id FROM chunks WHERE paper_id = :p)", {"p": paper_id}
+        )
+    except Exception:
+        pass  # table may not exist
+    cur.execute("DELETE FROM chunks WHERE paper_id = :p", {"p": paper_id})  # removes embeddings + embedding_vec
+    cur.execute("DELETE FROM papers WHERE id = :p", {"p": paper_id})
+    conn.commit()
+    conn.close()
+
+    if file_name:
+        try:
+            (PAPERS_DIR / file_name).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    _clear_retrieval_caches()
+    return {"ok": True, "deleted": file_name, "library": library_stats()}
+
+
 def _clear_retrieval_caches() -> None:
     """Drop the BM25/chunk caches so a newly-ingested paper is searchable now."""
     try:

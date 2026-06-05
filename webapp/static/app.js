@@ -12,6 +12,8 @@
     deleteSession: (id) => fetch(`/api/sessions/${id}`, { method: "DELETE" }),
     turns: (id) => fetch(`/api/sessions/${id}/turns`).then((r) => r.json()),
     library: () => fetch("/api/library").then((r) => r.json()),
+    papers: () => fetch("/api/papers").then((r) => r.json()),
+    deletePaper: (id) => fetch(`/api/papers/${id}`, { method: "DELETE" }).then((r) => r.json()),
     models: () => fetch("/api/models").then((r) => r.json()),
     setModel: (provider, model) =>
       fetch("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, model }) }).then((r) => r.json()),
@@ -485,6 +487,57 @@
     } catch { $("libLabel").textContent = "library unavailable"; }
   }
 
+  // ---------- Your papers (manage / delete) ----------
+  async function openPapers() {
+    $("papersModal").classList.add("show");
+    $("papersScrim").classList.add("show");
+    const body = $("pmBody");
+    body.innerHTML = `<div class="pm-empty">Loading…</div>`;
+    let list = [];
+    try { list = await api.papers(); } catch {}
+    renderPapers(list);
+  }
+  function closePapers() { $("papersModal").classList.remove("show"); $("papersScrim").classList.remove("show"); }
+
+  function renderPapers(list) {
+    $("pmCount").textContent = String(list.length);
+    const body = $("pmBody");
+    if (!list.length) {
+      body.innerHTML = `<div class="pm-empty">No papers yet. Click <b>Add paper</b> in the sidebar to upload a PDF.</div>`;
+      return;
+    }
+    body.innerHTML = "";
+    list.forEach((p) => {
+      const row = document.createElement("div");
+      row.className = "paper-row";
+      row.innerHTML = `
+        <div class="pr-main">
+          <div class="pr-title">${esc(p.title)}</div>
+          <div class="pr-meta">${p.chunks} chunk${p.chunks === 1 ? "" : "s"}${p.file_name ? " · " + esc(p.file_name) : ""}</div>
+        </div>
+        <button class="pr-del">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+          Delete
+        </button>`;
+      const btn = row.querySelector(".pr-del");
+      btn.addEventListener("click", async () => {
+        if (!confirm(`Delete "${p.title}"? This removes the PDF, its chunks, and all embeddings — permanently.`)) return;
+        btn.disabled = true; btn.textContent = "Deleting…";
+        try {
+          const res = await api.deletePaper(p.id);
+          if (res.error) { toast(res.error, "error"); btn.disabled = false; btn.textContent = "Delete"; return; }
+          row.remove();
+          const remaining = $("pmBody").querySelectorAll(".paper-row").length;
+          $("pmCount").textContent = String(remaining);
+          if (!remaining) renderPapers([]);
+          if (res.library) { const n = res.library.papers != null ? res.library.papers : res.library.pdfs; $("libLabel").textContent = `${n} paper${n === 1 ? "" : "s"} indexed`; }
+          toast("Paper deleted.");
+        } catch (e) { toast("Delete failed.", "error"); btn.disabled = false; btn.textContent = "Delete"; }
+      });
+      body.appendChild(row);
+    });
+  }
+
   function pickPdf() {
     if (state.ingesting) return;
     $("pdfInput").value = "";
@@ -503,7 +556,7 @@
     catch (err) { toast("Upload failed: " + err.message, "error"); $("addPaperBtn").classList.remove("busy"); return; }
     $("addPaperBtn").classList.remove("busy");
 
-    if (res.status === "duplicate") { toast(`"${res.filename}" is already in your library.`); return; }
+    if (res.status === "duplicate") { toast(`"${res.filename}" is already indexed — skipped.`); return; }
     if (res.status === "error") { toast(res.message || "Upload rejected.", "error"); return; }
     // saved -> index it
     startIngest(res.filename);
@@ -672,6 +725,9 @@
     $("imDone").addEventListener("click", closeIngestModal);
     $("themeBtn").addEventListener("click", toggleTheme);
     $("modelSel").addEventListener("change", onModelChange);
+    $("manageBtn").addEventListener("click", openPapers);
+    $("pmClose").addEventListener("click", closePapers);
+    $("papersScrim").addEventListener("click", closePapers);
 
     const input = $("input");
     input.addEventListener("input", () => { autosize(); $("sendBtn").disabled = state.streaming || !input.value.trim(); });
@@ -680,7 +736,7 @@
     });
     document.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); newChat(); }
-      if (e.key === "Escape") closeDrawer();
+      if (e.key === "Escape") { closeDrawer(); closePapers(); }
     });
   }
 

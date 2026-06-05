@@ -93,6 +93,19 @@ def library():
     return ingest.library_stats()
 
 
+@app.get("/api/papers")
+def papers():
+    return ingest.list_papers()
+
+
+@app.delete("/api/papers/{paper_id}")
+def delete_paper(paper_id: int):
+    try:
+        return ingest.delete_paper(paper_id)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 # ----------------------------------------------------------------------
 # LLM model selection
 # ----------------------------------------------------------------------

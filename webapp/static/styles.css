@@ -453,6 +453,43 @@ body {
 .foot-row { display: flex; align-items: center; gap: 7px; }
 .foot-lib { color: var(--muted-2); }
 .foot-lib svg { opacity: .7; }
+button.foot-lib {
+  font: inherit; font-size: 11.5px; background: none; border: 1px solid transparent;
+  border-radius: 8px; padding: 5px 7px; cursor: pointer; text-align: left; width: 100%;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+button.foot-lib:hover { background: var(--surface-2); border-color: var(--border); color: var(--text-soft); }
+
+/* ---------- Your papers modal ---------- */
+.papers-modal {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -46%) scale(.97);
+  width: 600px; max-width: 92vw; max-height: 80vh; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  z-index: 71; opacity: 0; pointer-events: none; transition: opacity .22s ease, transform .22s ease;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.papers-modal.show { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+.pm-head { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+.pm-head h3 { margin: 0; font-size: 15px; }
+.pm-head .count { font-size: 12px; color: var(--muted); background: var(--surface-2); border-radius: 999px; padding: 2px 9px; }
+.pm-body { overflow-y: auto; padding: 10px 12px 16px; }
+.pm-empty { color: var(--muted); text-align: center; padding: 36px 20px; font-size: 13.5px; line-height: 1.6; }
+.paper-row {
+  display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); margin-bottom: 8px; background: var(--surface);
+}
+.paper-row:hover { border-color: var(--border-strong); }
+.paper-row .pr-main { flex: 1; min-width: 0; }
+.paper-row .pr-title { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paper-row .pr-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.paper-row .pr-del {
+  flex: none; font: inherit; font-size: 12.5px; color: var(--danger); background: none;
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 11px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; transition: background .12s ease, border-color .12s ease;
+}
+.paper-row .pr-del:hover { background: rgba(220,38,38,.08); border-color: var(--danger); }
+.paper-row .pr-del svg { width: 13px; height: 13px; }
+.paper-row .pr-del:disabled { opacity: .5; cursor: default; }
 
 /* ---------- Ingest modal ---------- */
 .modal-scrim { position: fixed; inset: 0; background: rgba(15,20,32,.42); opacity: 0; pointer-events: none;
