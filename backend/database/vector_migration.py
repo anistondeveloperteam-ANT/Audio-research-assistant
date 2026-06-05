@@ -111,25 +111,29 @@ print("Updated:", updated)
 print("Skipped:", skipped)
 
 
-print("Creating HNSW vector index...")
-
-if not index_exists("idx_chunks_embedding_vec_hnsw"):
-    try:
-        cur.execute("""
-            CREATE VECTOR INDEX idx_chunks_embedding_vec_hnsw
-            ON chunks (embedding_vec)
-            ORGANIZATION INMEMORY NEIGHBOR GRAPH
-            DISTANCE COSINE
-            WITH TARGET ACCURACY 90
-        """)
-        conn.commit()
-        print("HNSW vector index created.")
-    except Exception as e:
-        print("Could not create HNSW vector index.")
-        print("Reason:", e)
-        print("Vector search can still work without the index, but slower.")
+# A vector index is OPTIONAL. Exact COSINE search needs no index and is fast
+# for small / medium libraries, so we don't build one by default (this also
+# avoids ORA-51962, the HNSW in-memory pool being out of space). To enable an
+# index for very large libraries, set CREATE_VECTOR_INDEX=true; we use an IVF
+# index (on-disk) which does not need the in-memory vector pool.
+if os.getenv("CREATE_VECTOR_INDEX", "false").lower() == "true":
+    if not index_exists("idx_chunks_embedding_vec"):
+        try:
+            cur.execute("""
+                CREATE VECTOR INDEX idx_chunks_embedding_vec
+                ON chunks (embedding_vec)
+                ORGANIZATION NEIGHBOR PARTITIONS
+                DISTANCE COSINE
+                WITH TARGET ACCURACY 90
+            """)
+            conn.commit()
+            print("Vector index (IVF) created.")
+        except Exception as e:
+            print("Vector index not created; exact search will be used.", str(e)[:140])
+    else:
+        print("Vector index already exists.")
 else:
-    print("HNSW vector index already exists.")
+    print("Using exact vector search (no index needed at this scale).")
 
 cur.close()
 conn.close()

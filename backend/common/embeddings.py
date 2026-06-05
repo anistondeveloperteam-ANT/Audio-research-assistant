@@ -15,10 +15,12 @@ from __future__ import annotations
 import math
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import List
 
-EMBED_BATCH = int(os.getenv("EMBED_BATCH", "4"))
-EMBED_SLEEP = float(os.getenv("EMBED_SLEEP", "0.0"))  # optional pause between calls
+# The Gemini embedding API returns ONE embedding per request, so we send one
+# text per call and run the calls concurrently for speed.
+EMBED_CONCURRENCY = int(os.getenv("EMBED_CONCURRENCY", "6"))
 
 
 def provider() -> str:
@@ -63,34 +65,30 @@ def _google_embed(texts: List[str], task_type: str) -> List[List[float]]:
     dim = int(os.getenv("EMBEDDING_DIM", "768"))
     cfg = types.EmbedContentConfig(task_type=task_type, output_dimensionality=dim)
 
-    def call(batch: List[str]) -> List[List[float]]:
-        for attempt in range(5):
+    def one(text: str) -> List[float]:
+        """Embed a single text (the API returns exactly one embedding per call)."""
+        for attempt in range(6):
             try:
-                resp = client.models.embed_content(model=model, contents=batch, config=cfg)
-                return [_l2(list(e.values)) for e in resp.embeddings]
-            except Exception as exc:  # rate limit / transient -> backoff
+                resp = client.models.embed_content(model=model, contents=text, config=cfg)
+                return _l2(list(resp.embeddings[0].values))
+            except Exception as exc:  # rate-limit / transient -> exponential backoff
                 msg = str(exc).lower()
-                transient = any(k in msg for k in ("rate", "quota", "429", "resource_exhausted", "deadline", "unavailable", "503"))
-                if transient and attempt < 4:
-                    time.sleep(2 * (attempt + 1))
+                transient = any(k in msg for k in (
+                    "rate", "quota", "429", "resource_exhausted",
+                    "deadline", "unavailable", "503", "500", "internal",
+                ))
+                if transient and attempt < 5:
+                    time.sleep(min(2 ** attempt, 30))
                     continue
                 raise
 
-    out: List[List[float]] = []
-    for i in range(0, len(texts), EMBED_BATCH):
-        batch = texts[i:i + EMBED_BATCH]
-        try:
-            out.extend(call(batch))
-        except Exception:
-            # If a multi-item batch is rejected, fall back to one at a time.
-            if len(batch) > 1:
-                for t in batch:
-                    out.extend(call([t]))
-            else:
-                raise
-        if EMBED_SLEEP:
-            time.sleep(EMBED_SLEEP)
-    return out
+    if len(texts) <= 1:
+        return [one(t) for t in texts]
+
+    # Fire requests concurrently; ThreadPoolExecutor.map preserves order.
+    workers = max(1, min(EMBED_CONCURRENCY, len(texts)))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return list(ex.map(one, texts))
 
 
 # ----------------------------------------------------------------------
