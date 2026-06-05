@@ -35,6 +35,8 @@
     abort: null,
     autoStick: true,
     nextTurnIndex: 0,
+    mode: "Balanced",   // retrieval depth (selector removed from UI; sensible default)
+    topk: 8,            // sources retrieved per question
   };
 
   // Icons for the per-question action buttons (copy / edit / delete).
@@ -192,7 +194,6 @@
 
   async function deleteUserMessage(m) {
     if (state.streaming) { toast("Please wait for the answer to finish."); return; }
-    if (!confirm("Delete this question and its answer? This can't be undone.")) return;
     const idx = m.dataset.turnIndex;
     try {
       if (idx != null) await api.deleteTurn(state.currentId, idx);
@@ -254,7 +255,6 @@
     const m = document.createElement("div");
     m.className = "msg assistant";
     m.innerHTML = `
-      <div class="avatar">AI</div>
       <div class="body">
         <div class="bubble assistant">
           <div class="statusline"><span class="typing"><span></span><span></span><span></span></span><span class="status-text">Thinking…</span><span class="elapsed"></span></div>
@@ -513,7 +513,7 @@
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: state.currentId, question: text, mode: $("modeSel").value, top_k: parseInt($("topkSel").value, 10) }),
+        body: JSON.stringify({ session_id: state.currentId, question: text, mode: state.mode, top_k: state.topk }),
         signal: controller.signal,
       });
       const reader = resp.body.getReader();
@@ -830,20 +830,10 @@
     applyTheme(document.documentElement.getAttribute("data-theme") || "light");
     try { if (localStorage.getItem("ara-sidebar") === "collapsed" && window.innerWidth > 880) $("app").classList.add("collapsed"); } catch {}
     try { state.cfg = await api.config(); } catch {}
-    const modeSel = $("modeSel");
-    (state.cfg.modes || ["Fast", "Balanced", "Deep"]).forEach((m) => {
-      const o = document.createElement("option"); o.value = m; o.textContent = m; modeSel.appendChild(o);
-    });
-    modeSel.value = state.cfg.default_mode || "Balanced";
-    const topk = $("topkSel");
-    [4, 6, 8, 10, 12, 15].forEach((n) => { const o = document.createElement("option"); o.value = n; o.textContent = n; topk.appendChild(o); });
-    topk.value = String(state.cfg.default_top_k || 8);
-    try {
-      const sm = localStorage.getItem("ara-mode"); if (sm && [...modeSel.options].some((o) => o.value === sm)) modeSel.value = sm;
-      const stk = localStorage.getItem("ara-topk"); if (stk) topk.value = stk;
-    } catch {}
-    modeSel.addEventListener("change", () => { try { localStorage.setItem("ara-mode", modeSel.value); } catch {} });
-    topk.addEventListener("change", () => { try { localStorage.setItem("ara-topk", topk.value); } catch {} });
+    // Retrieval depth + source count use sensible defaults (selectors removed from
+    // the top bar to keep it clean).
+    state.mode = state.cfg.default_mode || "Balanced";
+    state.topk = state.cfg.default_top_k || 8;
     $("provLabel").textContent = state.cfg.provider || "ready";
     if (!state.cfg.provider || state.cfg.provider === "unknown") $("provDot").style.background = "var(--amber)";
 

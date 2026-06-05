@@ -3,8 +3,8 @@
 run.py -- launch the Audio Research Assistant web app (FastAPI).
 
 Usage:
-    python run.py                # SHARED on your Wi-Fi/LAN -> http://<your-ip>:8600
-    python run.py --local        # this PC only -> http://localhost:8600
+    python run.py                # this PC only -> http://localhost:8600 (no prompts)
+    python run.py --share        # also reachable by teammates on your Wi-Fi/LAN
     python run.py --port 9000     # override the port
     python run.py --host 0.0.0.0  # bind a specific interface (advanced)
     python run.py --no-free-port  # do NOT auto-clear a stale server on the port
@@ -230,14 +230,14 @@ def main() -> int:
                         help="Do not auto-stop a leftover server occupying the port.")
     args = parser.parse_args()
 
-    # Sharing is the DEFAULT: bind all interfaces so teammates on the same
-    # network can reach it. Use --local to keep it to this PC only.
+    # Local by default (this PC only) -> no firewall/permission prompt on start.
+    # Add --share to expose it on your Wi-Fi/LAN for teammates.
     if args.host:
         host = args.host
-    elif args.local:
-        host = "127.0.0.1"
-    else:
+    elif args.share:
         host = "0.0.0.0"
+    else:
+        host = "127.0.0.1"
     shared = host not in ("127.0.0.1", "localhost")
 
     if not args.no_free_port:

@@ -13,6 +13,20 @@ companion to the git history.
 
 ## 2026-06-05
 
+### UX cleanup per feedback
+- **No startup prompt:** `run.py` is now **local by default** (binds 127.0.0.1) — no
+  Windows firewall/permission popup on launch. Use `--share` only when you want
+  teammates on your network to reach it.
+- **Delete a question instantly:** removed the confirmation dialog — the trash icon
+  deletes the question + its answer immediately.
+- **Cleaner top bar:** removed the Mode and Sources-count selectors (sensible
+  defaults used instead). Kept just the Model picker, the Sources bar, and the
+  dark-mode toggle.
+- **Removed the "AI" avatar** next to answers; assistant replies are now clean
+  full-width bubbles.
+- **Crisper type:** enabled Inter stylistic sets + tighter tracking + grayscale
+  smoothing for a less "dull", more premium feel.
+
 ### Targeted upgrade: speed, accuracy, interactive UI
 Web research confirmed the existing stack (Docling parser + Gemini embeddings) is
 already 2026 best-in-class for this hardware, so we improved *on top of* it rather

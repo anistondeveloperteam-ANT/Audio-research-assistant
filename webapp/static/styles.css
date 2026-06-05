@@ -81,7 +81,11 @@ body {
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  /* Inter stylistic sets + tighter tracking = a crisper, more premium feel */
+  font-feature-settings: "cv05", "cv08", "ss01", "ss03";
+  letter-spacing: -0.011em;
   transition: background-color .25s ease, color .25s ease;
 }
 ::selection { background: var(--accent-weak); }
@@ -246,10 +250,6 @@ body {
 
 /* Messages */
 .msg { display: flex; gap: 13px; margin: 22px 0; animation: rise .35s ease both; }
-.msg .avatar {
-  width: 30px; height: 30px; border-radius: 9px; flex: none; display: grid; place-items: center;
-  font-size: 13px; font-weight: 700; margin-top: 2px;
-}
 .msg.user { justify-content: flex-end; }
 .msg.user .u-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 80%; }
 .msg.user .bubble {
@@ -289,10 +289,9 @@ body {
 .ue-btn:hover { background: var(--surface); color: var(--text); }
 .ue-save { background: var(--accent); border-color: var(--accent); color: #fff; }
 .ue-save:hover { background: var(--accent); color: #fff; filter: brightness(1.06); }
-.msg.assistant .avatar { background: var(--grad); color: #fff; }
 .msg.assistant .body { flex: 1; min-width: 0; }
 .bubble.assistant {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 5px 16px 16px 16px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
   padding: 4px 18px 6px; box-shadow: var(--shadow-sm);
 }
 
