@@ -27,14 +27,24 @@ ENV_PATH = ROOT / ".env"
 # Cloud providers: API key + the env var that holds their chosen model + a
 # curated model list shown in the dropdown (OpenAI's list is fetched separately).
 CLOUD: Dict[str, Dict[str, Any]] = {
-    "openai":   {"key_env": "OPENAI_API_KEY",    "model_env": "OPENAI_MODEL",   "label": "OpenAI",   "models": None},
-    "deepseek": {"key_env": "DEEPSEEK_API_KEY",  "model_env": "DEEPSEEK_MODEL", "label": "DeepSeek", "models": ["deepseek-v4-pro", "deepseek-v4-flash"]},
-    "qwen":     {"key_env": "DASHSCOPE_API_KEY", "model_env": "QWEN_MODEL",     "label": "Qwen",     "models": ["qwen3-32b", "qwen-max", "qwen-plus"]},
+    "openai":     {"key_env": "OPENAI_API_KEY",     "model_env": "OPENAI_MODEL",     "label": "OpenAI",     "models": None},
+    "deepseek":   {"key_env": "DEEPSEEK_API_KEY",   "model_env": "DEEPSEEK_MODEL",   "label": "DeepSeek",   "models": ["deepseek-v4-pro", "deepseek-v4-flash"]},
+    "qwen":       {"key_env": "DASHSCOPE_API_KEY",  "model_env": "QWEN_MODEL",       "label": "Qwen",       "models": ["qwen3-32b", "qwen-max", "qwen-plus"]},
+    # OpenRouter: one key (sk-or-v1-...) serves DeepSeek, Qwen and 300+ others.
+    # Slugs are "vendor/model"; ":free" variants cost nothing.
+    "openrouter": {"key_env": "OPENROUTER_API_KEY", "model_env": "OPENROUTER_MODEL", "label": "OpenRouter", "models": [
+        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-flash",
+        "qwen/qwen3-32b",
+        "deepseek/deepseek-chat-v3-0324:free",
+        "qwen/qwen3-235b-a22b:free",
+    ]},
 }
 VALID_PROVIDERS = ("ollama",) + tuple(CLOUD.keys())
 MODEL_ENV = {"ollama": "OLLAMA_MODEL", **{p: c["model_env"] for p, c in CLOUD.items()}}
 DEFAULT_MODEL = {"ollama": "llama3.2:3b", "openai": "gpt-4o-mini",
-                 "deepseek": "deepseek-v4-pro", "qwen": "qwen3-32b"}
+                 "deepseek": "deepseek-v4-pro", "qwen": "qwen3-32b",
+                 "openrouter": "deepseek/deepseek-v4-pro"}
 
 
 def _ollama_host() -> str:

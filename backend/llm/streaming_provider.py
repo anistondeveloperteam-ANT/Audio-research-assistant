@@ -269,9 +269,17 @@ class OpenAIProvider(LLMProvider):
 # Factory
 # ----------------------------------------------------------------------
 
-VALID_PROVIDERS = ("ollama", "anthropic", "openai", "deepseek", "qwen")
+VALID_PROVIDERS = ("ollama", "anthropic", "openai", "deepseek", "qwen", "openrouter")
 
 # OpenAI-compatible cloud providers: base URL + the env keys they read.
+#
+#   deepseek   -> DeepSeek's own API (api.deepseek.com). Needs a funded DeepSeek
+#                 account; the direct API has no free tier.
+#   qwen       -> Alibaba DashScope (needs a real DashScope key, not OpenRouter).
+#   openrouter -> One gateway to DeepSeek, Qwen and 300+ others with a single
+#                 `sk-or-v1-...` key. Models use "vendor/model" slugs and there
+#                 are ":free" variants. This is the easiest way to run DeepSeek
+#                 V4 and Qwen3 without per-provider billing.
 OPENAI_COMPATIBLE = {
     "deepseek": {
         "base_url": "https://api.deepseek.com",
@@ -284,6 +292,12 @@ OPENAI_COMPATIBLE = {
         "key_env": "DASHSCOPE_API_KEY",
         "model_env": "QWEN_MODEL",
         "default_model": "qwen3-32b",
+    },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "key_env": "OPENROUTER_API_KEY",
+        "model_env": "OPENROUTER_MODEL",
+        "default_model": "deepseek/deepseek-v4-pro",
     },
 }
 
