@@ -178,7 +178,6 @@
   function fillUserWrap(m, text) {
     const wrap = m.querySelector(".u-wrap");
     wrap.innerHTML = `
-      <div class="role-tag you">You</div>
       <div class="bubble"></div>
       <div class="msg-actions">
         <button class="ua-btn" data-act="copy" title="Copy question" aria-label="Copy question">${ICON_COPY}</button>
@@ -257,7 +256,6 @@
     m.className = "msg assistant";
     m.innerHTML = `
       <div class="body">
-        <div class="role-tag answer"><span class="role-dot"></span>Answer</div>
         <div class="bubble assistant">
           <div class="statusline"><span class="typing"><span></span><span></span><span></span></span><span class="status-text">Thinking…</span><span class="elapsed"></span></div>
           <div class="md" style="display:none"></div>
@@ -395,8 +393,6 @@
   async function selectSession(id) {
     if (state.streaming) return;
     state.currentId = id;
-    const s = state.sessions.find((x) => x.id === id);
-    $("convoTitle").textContent = (s && s.title) || "New chat";
     renderSessions();
     renderTurns(await api.turns(id));
     if (window.innerWidth <= 880) $("sidebar").classList.remove("open");
@@ -438,7 +434,6 @@
     if (title == null) return;
     await api.renameSession(s.id, title.trim() || "Untitled");
     s.title = title.trim() || "Untitled";
-    if (s.id === state.currentId) $("convoTitle").textContent = s.title;
     renderSessions();
   }
   async function deleteSession(s) {
@@ -559,7 +554,6 @@
         const title = text.length > 48 ? text.slice(0, 48) + "…" : text;
         await api.renameSession(state.currentId, title);
         if (sess) sess.title = title;
-        $("convoTitle").textContent = title;
         renderSessions();
       }
     }
