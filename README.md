@@ -80,8 +80,8 @@ Then edit `.env` and fill in your Oracle credentials and any LLM API keys.
 
 ### From VSCode
 Open the folder, pick the `.venv` interpreter, then use **Run and Debug**:
-- **Streamlit: Chat UI (port 8502)**
-- **Streamlit: Market UI (port 8501)**
+- **Web UI: run.py (FastAPI, :8600)**  ← the new default UI
+- **Old Chat UI: run.py --chat (Streamlit)**
 
 ### From the terminal
 ```powershell
@@ -91,10 +91,13 @@ python pipeline.py --status
 # First time / after adding PDFs — build the index
 python pipeline.py
 
-# Launch the app
-python run.py                      # Chat UI    -> http://localhost:8502
+# Launch the app — the new web UI is the DEFAULT
+python run.py                      # New web UI  -> http://localhost:8600   (or: web_ui.bat)
+python run.py --chat               # Old Chat UI -> http://localhost:8502
 python run.py --market             # Market UI   -> http://localhost:8501
+python run.py --dashboard          # Dashboard   -> http://localhost:8503
 ```
+> The web UI does not auto-open a browser — visit http://localhost:8600 yourself.
 
 ## Maintenance tools
 

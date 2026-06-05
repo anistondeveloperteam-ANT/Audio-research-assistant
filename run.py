@@ -3,13 +3,14 @@
 run.py -- launch the Audio Research Assistant web app.
 
 Usage:
-    python run.py                # Chat UI    (Streamlit)  http://localhost:8502  (default)
-    python run.py --web          # New web UI (FastAPI)    http://localhost:8600
+    python run.py                # New web UI (FastAPI)    http://localhost:8600  (default)
+    python run.py --chat         # Old Chat UI (Streamlit) http://localhost:8502
     python run.py --market       # Market UI  (Streamlit)  http://localhost:8501
     python run.py --dashboard    # Quality dashboard       http://localhost:8503
     python run.py --port 9000    # override the port
 
-The Streamlit apps and the new FastAPI web UI both load config from the local .env.
+The new web UI is the default. The Streamlit apps and the FastAPI web UI both
+load config from the local .env.
 """
 from __future__ import annotations
 
@@ -30,16 +31,19 @@ APPS = {
 def main() -> int:
     parser = argparse.ArgumentParser(description="Launch the Audio Research Assistant app.")
     parser.add_argument("--web", action="store_true",
-                        help="Launch the new FastAPI web UI (http://localhost:8600).")
+                        help="Launch the new FastAPI web UI (default; http://localhost:8600).")
+    parser.add_argument("--chat", action="store_true",
+                        help="Launch the old Streamlit chat UI (http://localhost:8502).")
     parser.add_argument("--market", action="store_true",
-                        help="Launch the Market UI instead of the Chat UI.")
+                        help="Launch the Market UI (Streamlit).")
     parser.add_argument("--dashboard", action="store_true",
-                        help="Launch the retrieval-quality dashboard.")
+                        help="Launch the retrieval-quality dashboard (Streamlit).")
     parser.add_argument("--port", type=int, default=None,
                         help="Override the server port.")
     args = parser.parse_args()
 
-    if args.web:
+    # The new web UI is the default unless a Streamlit UI is explicitly requested.
+    if args.web or not (args.chat or args.market or args.dashboard):
         port = args.port or 8600
         cmd = [sys.executable, "-m", "uvicorn", "webapp.server:app", "--port", str(port)]
         print(f"Starting web UI on http://localhost:{port}  (Ctrl+C to stop)")

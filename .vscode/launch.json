@@ -2,10 +2,22 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "App: run.py (Chat UI)",
+      "name": "Web UI: run.py (FastAPI, :8600)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/run.py",
+      "args": ["--web"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env"
+    },
+    {
+      "name": "Old Chat UI: run.py --chat (Streamlit)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/run.py",
+      "args": ["--chat"],
       "console": "integratedTerminal",
       "justMyCode": false,
       "cwd": "${workspaceFolder}",
