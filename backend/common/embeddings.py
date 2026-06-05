@@ -2,7 +2,7 @@
 Unified text-embedding layer.
 
 Pick the backend with EMBEDDING_PROVIDER in .env:
-  - "google"  -> Gemini Embedding API (gemini-embedding-001), free tier via a
+  - "google"  -> Gemini Embedding API (gemini-embedding-2), free tier via a
                  GEMINI_API_KEY from https://aistudio.google.com/apikey
   - "local"   -> sentence-transformers model on the local GPU/CPU (BAAI/bge-*)
 
@@ -27,7 +27,7 @@ def provider() -> str:
 
 def provider_label() -> str:
     if provider() == "google":
-        return f"google · {os.getenv('EMBEDDING_MODEL', 'gemini-embedding-001')} ({os.getenv('EMBEDDING_DIM', '768')}d)"
+        return f"google · {os.getenv('EMBEDDING_MODEL', 'gemini-embedding-2')} ({os.getenv('EMBEDDING_DIM', '768')}d)"
     return f"local · {os.getenv('EMBEDDING_MODEL', 'BAAI/bge-base-en-v1.5')}"
 
 
@@ -59,7 +59,7 @@ def _google_client():
 def _google_embed(texts: List[str], task_type: str) -> List[List[float]]:
     from google.genai import types
     client = _google_client()
-    model = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
+    model = os.getenv("EMBEDDING_MODEL", "gemini-embedding-2")
     dim = int(os.getenv("EMBEDDING_DIM", "768"))
     cfg = types.EmbedContentConfig(task_type=task_type, output_dimensionality=dim)
 

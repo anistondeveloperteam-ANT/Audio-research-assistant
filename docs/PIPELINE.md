@@ -113,7 +113,7 @@ fixed-size slices. For every chunk it detects and stores:
 Converts each chunk's text into a **768-dimensional vector** (a numeric
 fingerprint of its meaning). The embedding backend is configurable via
 `EMBEDDING_PROVIDER`: **`google`** uses Google's **Gemini Embedding**
-(`gemini-embedding-001`, free tier, 768-dim output) — the default — while
+(`gemini-embedding-2`, free tier, 768-dim output) — the default — while
 **`local`** uses a `sentence-transformers` model (e.g. `BAAI/bge-base-en-v1.5`)
 on the GPU. The re-ranker stays local either way.
 
@@ -246,7 +246,7 @@ flowchart LR
 | **PyTorch** | 2.7.1 (CUDA 12.6) | Tensor/GPU backend |
 | **sentence-transformers** | 5.5 | Loads embedding + reranker models |
 | **transformers** | 4.57 | Model runtime under the hood |
-| **Gemini Embedding** (`gemini-embedding-001`) | — | **Embedding model** (768-dim, Google API; default) |
+| **Gemini Embedding** (`gemini-embedding-2`) | — | **Embedding model** (768-dim, Google API; default) |
 | **BAAI/bge-base-en-v1.5** | — | Local embedding alternative (`EMBEDDING_PROVIDER=local`) |
 | **BAAI/bge-reranker-v2-m3** | — | **Cross-encoder reranker** |
 | **OpenAI SDK** | 1.109 | OpenAI answer provider |
@@ -325,7 +325,7 @@ Everything is configured via a single `.env` file. Key settings:
 |----------|---------|---------|
 | `ORACLE_DSN` | `localhost:1521/FREEPDB1` | Oracle connection |
 | `EMBEDDING_PROVIDER` | `google` \| `local` | Embedding backend |
-| `EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model |
+| `EMBEDDING_MODEL` | `gemini-embedding-2` | Embedding model |
 | `GEMINI_API_KEY` | `…` | Free key for Google embeddings (aistudio.google.com) |
 | `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | Reranker |
 | `EMBEDDING_DIM` | `768` | Vector dimension |
