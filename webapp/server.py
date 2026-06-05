@@ -85,6 +85,22 @@ def get_turns(session_id: str):
     return chat_logic.memory().get_turns(session_id)
 
 
+@app.delete("/api/sessions/{session_id}/turns/{turn_index}")
+def delete_turn(session_id: str, turn_index: int):
+    """Delete one question and its answer (a single user turn + the assistant
+    reply that follows it)."""
+    deleted = chat_logic.memory().delete_turn_pair(session_id, turn_index)
+    return {"ok": True, "deleted": deleted}
+
+
+@app.post("/api/sessions/{session_id}/turns/{turn_index}/truncate")
+def truncate_turns(session_id: str, turn_index: int):
+    """Delete the turn at turn_index and everything after it (used when the user
+    edits an earlier question and we re-generate from that point)."""
+    deleted = chat_logic.memory().delete_turns_from(session_id, turn_index)
+    return {"ok": True, "deleted": deleted}
+
+
 # ----------------------------------------------------------------------
 # Library: upload a PDF + stream ingestion
 # ----------------------------------------------------------------------

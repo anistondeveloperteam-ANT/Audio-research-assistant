@@ -11,6 +11,8 @@
       fetch(`/api/sessions/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }),
     deleteSession: (id) => fetch(`/api/sessions/${id}`, { method: "DELETE" }),
     turns: (id) => fetch(`/api/sessions/${id}/turns`).then((r) => r.json()),
+    deleteTurn: (id, idx) => fetch(`/api/sessions/${id}/turns/${idx}`, { method: "DELETE" }).then((r) => r.json()),
+    truncateTurns: (id, idx) => fetch(`/api/sessions/${id}/turns/${idx}/truncate`, { method: "POST" }).then((r) => r.json()),
     library: () => fetch("/api/library").then((r) => r.json()),
     papers: () => fetch("/api/papers").then((r) => r.json()),
     deletePaper: (id) => fetch(`/api/papers/${id}`, { method: "DELETE" }).then((r) => r.json()),
@@ -32,7 +34,13 @@
     currentSources: [],
     abort: null,
     autoStick: true,
+    nextTurnIndex: 0,
   };
+
+  // Icons for the per-question action buttons (copy / edit / delete).
+  const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+  const ICON_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+  const ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
 
   const SEND_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11l5-5 5 5M12 6v13"/></svg>';
   const STOP_ICON = '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor"/></svg>';
@@ -145,13 +153,100 @@
     });
   }
 
-  function addUserMessage(text) {
+  function addUserMessage(text, turnIndex) {
     const m = document.createElement("div");
     m.className = "msg user";
-    m.innerHTML = `<div class="bubble"></div>`;
-    m.querySelector(".bubble").textContent = text;
+    if (turnIndex != null) m.dataset.turnIndex = String(turnIndex);
+    m.innerHTML = `<div class="u-wrap"></div>`;
+    fillUserWrap(m, text);
+    // Delegated so the handler survives the wrap being re-rendered (edit mode).
+    m.addEventListener("click", (e) => {
+      const b = e.target.closest(".ua-btn");
+      if (!b || !m.contains(b)) return;
+      if (b.dataset.act === "copy") copyUserMessage(m);
+      else if (b.dataset.act === "edit") startEditUserMessage(m);
+      else if (b.dataset.act === "delete") deleteUserMessage(m);
+    });
     inner().appendChild(m);
     scrollToBottom(true);
+    return m;
+  }
+
+  // (Re)build the normal bubble + hover actions for a user message.
+  function fillUserWrap(m, text) {
+    const wrap = m.querySelector(".u-wrap");
+    wrap.innerHTML = `
+      <div class="bubble"></div>
+      <div class="msg-actions">
+        <button class="ua-btn" data-act="copy" title="Copy question" aria-label="Copy question">${ICON_COPY}</button>
+        <button class="ua-btn" data-act="edit" title="Edit & resend" aria-label="Edit question">${ICON_EDIT}</button>
+        <button class="ua-btn danger" data-act="delete" title="Delete question" aria-label="Delete question">${ICON_TRASH}</button>
+      </div>`;
+    wrap.querySelector(".bubble").textContent = text;
+  }
+
+  function copyUserMessage(m) {
+    const text = (m.querySelector(".bubble") || {}).textContent || "";
+    navigator.clipboard.writeText(text).then(() => toast("Question copied"));
+  }
+
+  async function deleteUserMessage(m) {
+    if (state.streaming) { toast("Please wait for the answer to finish."); return; }
+    if (!confirm("Delete this question and its answer? This can't be undone.")) return;
+    const idx = m.dataset.turnIndex;
+    try {
+      if (idx != null) await api.deleteTurn(state.currentId, idx);
+    } catch { toast("Couldn't delete the question.", "error"); return; }
+    await reloadTurns();   // re-render from the DB so turn indices + sources stay correct
+    toast("Question deleted");
+  }
+
+  function startEditUserMessage(m) {
+    if (state.streaming) { toast("Please wait for the answer to finish."); return; }
+    const wrap = m.querySelector(".u-wrap");
+    if (wrap.querySelector(".u-edit")) return;   // already editing
+    const text = (m.querySelector(".bubble") || {}).textContent || "";
+    wrap.innerHTML = `
+      <div class="u-edit">
+        <textarea class="u-edit-area" rows="1"></textarea>
+        <div class="u-edit-actions">
+          <button class="ue-btn ue-cancel">Cancel</button>
+          <button class="ue-btn ue-save">Save &amp; resend</button>
+        </div>
+      </div>`;
+    const ta = wrap.querySelector(".u-edit-area");
+    ta.value = text;
+    const fit = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 200) + "px"; };
+    ta.addEventListener("input", fit);
+    fit();
+    ta.focus();
+    ta.setSelectionRange(text.length, text.length);
+    wrap.querySelector(".ue-cancel").addEventListener("click", () => fillUserWrap(m, text));
+    wrap.querySelector(".ue-save").addEventListener("click", () => saveEditUserMessage(m, text));
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEditUserMessage(m, text); }
+      else if (e.key === "Escape") { e.preventDefault(); fillUserWrap(m, text); }
+    });
+  }
+
+  async function saveEditUserMessage(m, originalText) {
+    if (state.streaming) return;
+    const ta = m.querySelector(".u-edit-area");
+    const edited = (ta ? ta.value : "").trim();
+    if (!edited) { toast("The question can't be empty."); return; }
+    if (edited === originalText) { fillUserWrap(m, originalText); return; }
+    const idx = m.dataset.turnIndex;
+    try {
+      if (idx != null) await api.truncateTurns(state.currentId, idx);   // drop this Q + everything after
+    } catch { toast("Couldn't edit the question.", "error"); fillUserWrap(m, originalText); return; }
+    // Remove this message and all later ones from the view; send() re-adds the edited one.
+    let n = m.nextElementSibling;
+    while (n) { const after = n.nextElementSibling; n.remove(); n = after; }
+    m.remove();
+    if (idx != null) state.nextTurnIndex = parseInt(idx, 10);
+    $("input").value = edited;
+    autosize();
+    send();
   }
 
   // Returns handles to drive a streaming assistant message.
@@ -179,7 +274,7 @@
   }
 
   function renderHistoryMessage(turn) {
-    if (turn.role === "user") { addUserMessage(turn.content); return; }
+    if (turn.role === "user") { addUserMessage(turn.content, turn.turn_index); return; }
     const h = addAssistantMessage();
     h.statusEl.style.display = "none";
     h.md.style.display = "";
@@ -291,16 +386,30 @@
     const s = state.sessions.find((x) => x.id === id);
     $("convoTitle").textContent = (s && s.title) || "New chat";
     renderSessions();
-    const turns = await api.turns(id);
-    inner().innerHTML = "";
-    if (!turns.length) { showWelcome(); state.currentSources = []; renderSources([]); }
-    else {
-      turns.forEach(renderHistoryMessage);
-      const lastAssist = [...turns].reverse().find((t) => t.role === "assistant" && t.sources);
-      renderSources(lastAssist ? lastAssist.sources : []);
-      scrollToBottom(true);
-    }
+    renderTurns(await api.turns(id));
     if (window.innerWidth <= 880) $("sidebar").classList.remove("open");
+  }
+
+  // Render a full turn list into the transcript and track the next turn index
+  // (so freshly-sent questions get the same index the server will assign them).
+  function renderTurns(turns) {
+    inner().innerHTML = "";
+    if (!turns.length) {
+      showWelcome();
+      state.currentSources = []; renderSources([]);
+      state.nextTurnIndex = 0;
+      return;
+    }
+    turns.forEach(renderHistoryMessage);
+    state.nextTurnIndex = turns.reduce((mx, t) => Math.max(mx, t.turn_index), -1) + 1;
+    const lastAssist = [...turns].reverse().find((t) => t.role === "assistant" && t.sources);
+    renderSources(lastAssist ? lastAssist.sources : []);
+    scrollToBottom(true);
+  }
+
+  async function reloadTurns() {
+    if (!state.currentId) return;
+    renderTurns(await api.turns(state.currentId));
   }
 
   async function newChat() {
@@ -359,7 +468,9 @@
 
     if (inner().querySelector(".welcome")) inner().innerHTML = "";
     $("input").value = ""; autosize();
-    addUserMessage(text);
+    const userIndex = state.nextTurnIndex;
+    addUserMessage(text, userIndex);
+    state.nextTurnIndex = userIndex + 2;   // server appends user(+0) then assistant(+1)
     setStreaming(true);
     const h = addAssistantMessage();
 

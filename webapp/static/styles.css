@@ -251,11 +251,44 @@ body {
   font-size: 13px; font-weight: 700; margin-top: 2px;
 }
 .msg.user { justify-content: flex-end; }
+.msg.user .u-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 80%; }
 .msg.user .bubble {
   background: var(--accent); color: #fff; border-radius: 16px 16px 5px 16px;
-  padding: 11px 15px; max-width: 76%; font-size: 14.5px; line-height: 1.5;
+  padding: 11px 15px; max-width: 100%; font-size: 14.5px; line-height: 1.5;
   box-shadow: 0 4px 14px var(--accent-ring); white-space: pre-wrap; word-wrap: break-word;
 }
+
+/* Per-question actions: copy / edit / delete (appear on hover) */
+.msg-actions { display: flex; gap: 5px; opacity: 0; transition: opacity .15s ease; }
+.msg.user:hover .msg-actions, .msg.user:focus-within .msg-actions { opacity: 1; }
+.ua-btn {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  color: var(--muted); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+}
+.ua-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
+.ua-btn.danger:hover { color: #e5484d; border-color: #e5484d; }
+.ua-btn svg { width: 14px; height: 14px; }
+
+/* Inline edit box for a question */
+.u-edit {
+  width: min(640px, 78vw); display: flex; flex-direction: column; gap: 9px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 14px;
+  padding: 11px 13px; box-shadow: var(--shadow-sm);
+}
+.u-edit-area {
+  width: 100%; resize: none; border: none; outline: none; background: none;
+  color: var(--text); font: inherit; font-size: 14.5px; line-height: 1.55;
+}
+.u-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.ue-btn {
+  font: inherit; font-size: 12.5px; border-radius: 8px; padding: 6px 13px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-soft);
+  transition: background .12s, color .12s, filter .12s;
+}
+.ue-btn:hover { background: var(--surface); color: var(--text); }
+.ue-save { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ue-save:hover { background: var(--accent); color: #fff; filter: brightness(1.06); }
 .msg.assistant .avatar { background: var(--grad); color: #fff; }
 .msg.assistant .body { flex: 1; min-width: 0; }
 .bubble.assistant {

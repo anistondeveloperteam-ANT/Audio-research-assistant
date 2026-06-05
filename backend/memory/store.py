@@ -295,6 +295,52 @@ class MemoryStore:
             )
             return cur.rowcount
 
+    def delete_turn_pair(self, session_id: str, turn_index: int) -> int:
+        """Delete the turn at `turn_index` and, if the next turn is an assistant
+        reply, that one too -- i.e. remove a single question + its answer.
+
+        Returns the number of rows deleted. Leaves a gap in turn_index, which is
+        harmless: get_turns orders by turn_index and append_turn uses MAX+1.
+        """
+        with self._conn() as conn:
+            nxt = conn.execute(
+                "SELECT turn_index, role FROM turns "
+                "WHERE session_id = ? AND turn_index > ? "
+                "ORDER BY turn_index ASC LIMIT 1",
+                (session_id, turn_index),
+            ).fetchone()
+            indices = [turn_index]
+            if nxt and nxt["role"] == "assistant":
+                indices.append(nxt["turn_index"])
+            placeholders = ",".join("?" * len(indices))
+            cur = conn.execute(
+                f"DELETE FROM turns WHERE session_id = ? AND turn_index IN ({placeholders})",
+                (session_id, *indices),
+            )
+            conn.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                (time.time(), session_id),
+            )
+            return cur.rowcount
+
+    def delete_turns_from(self, session_id: str, turn_index: int) -> int:
+        """Delete the turn at `turn_index` and every turn after it. Used when a
+        user edits an earlier question: the conversation is truncated at that
+        point and re-generated from there.
+
+        Returns the number of rows deleted.
+        """
+        with self._conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM turns WHERE session_id = ? AND turn_index >= ?",
+                (session_id, turn_index),
+            )
+            conn.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                (time.time(), session_id),
+            )
+            return cur.rowcount
+
     # ------- Facts ---------------------------------------------------
     def upsert_fact(
         self,
