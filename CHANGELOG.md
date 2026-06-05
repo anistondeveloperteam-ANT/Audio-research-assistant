@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-05
 
+### Q/A distinction + model dropdown fix
+- Added **"You" / "Answer" role tags** so questions and answers are instantly
+  distinguishable; the answer bubble gets an accent left-stripe and lifts on hover.
+- Fixed the **Model dropdown text overlap** (added arrow padding + max-width +
+  ellipsis) and shortened labels to drop the redundant `vendor/` prefix
+  (e.g. "OpenRouter · deepseek-v4-flash").
+
 ### UX cleanup per feedback
 - **No startup prompt:** `run.py` is now **local by default** (binds 127.0.0.1) — no
   Windows firewall/permission popup on launch. Use `--share` only when you want

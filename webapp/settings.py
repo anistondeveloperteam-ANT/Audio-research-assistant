@@ -68,23 +68,28 @@ def current() -> Dict[str, str]:
     return {"provider": provider, "model": model}
 
 
+def _short(model: str) -> str:
+    """Drop the redundant 'vendor/' prefix for a compact dropdown label."""
+    return model.split("/")[-1]
+
+
 def list_models() -> Dict[str, Any]:
     cur = current()
     options: List[Dict[str, str]] = []
 
     for m in _ollama_models():
-        options.append({"provider": "ollama", "model": m, "label": f"Ollama · {m}"})
+        options.append({"provider": "ollama", "model": m, "label": f"Ollama · {_short(m)}"})
 
     for prov, cfg in CLOUD.items():
         if not os.getenv(cfg["key_env"]):
             continue  # provider not configured -> hide it
         for m in cfg["models"]:
-            options.append({"provider": prov, "model": m, "label": f"{cfg['label']} · {m}"})
+            options.append({"provider": prov, "model": m, "label": f"{cfg['label']} · {_short(m)}"})
 
     # Always include the current selection, even if its source is unavailable.
     if not any(o["provider"] == cur["provider"] and o["model"] == cur["model"] for o in options):
         options.insert(0, {"provider": cur["provider"], "model": cur["model"],
-                           "label": f"{_label(cur['provider'])} · {cur['model']}"})
+                           "label": f"{_label(cur['provider'])} · {_short(cur['model'])}"})
     return {"current": cur, "options": options}
 
 

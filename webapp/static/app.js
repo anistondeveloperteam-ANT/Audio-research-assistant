@@ -178,6 +178,7 @@
   function fillUserWrap(m, text) {
     const wrap = m.querySelector(".u-wrap");
     wrap.innerHTML = `
+      <div class="role-tag you">You</div>
       <div class="bubble"></div>
       <div class="msg-actions">
         <button class="ua-btn" data-act="copy" title="Copy question" aria-label="Copy question">${ICON_COPY}</button>
@@ -256,6 +257,7 @@
     m.className = "msg assistant";
     m.innerHTML = `
       <div class="body">
+        <div class="role-tag answer"><span class="role-dot"></span>Answer</div>
         <div class="bubble assistant">
           <div class="statusline"><span class="typing"><span></span><span></span><span></span></span><span class="status-text">Thinking…</span><span class="elapsed"></span></div>
           <div class="md" style="display:none"></div>
