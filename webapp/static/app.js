@@ -503,7 +503,7 @@
     $("pmCount").textContent = String(list.length);
     const body = $("pmBody");
     if (!list.length) {
-      body.innerHTML = `<div class="pm-empty">No papers yet. Click <b>Add paper</b> in the sidebar to upload a PDF.</div>`;
+      body.innerHTML = `<div class="pm-empty">No papers yet. Click <b>Add papers</b> in the sidebar to upload one or more PDFs.</div>`;
       return;
     }
     body.innerHTML = "";
@@ -544,26 +544,37 @@
     $("pdfInput").click();
   }
 
-  async function onPdfChosen(e) {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    if (file.type && file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-      toast("Please choose a PDF file.", "error"); return;
-    }
-    $("addPaperBtn").classList.add("busy");
-    let res;
-    try { res = await api.upload(file); }
-    catch (err) { toast("Upload failed: " + err.message, "error"); $("addPaperBtn").classList.remove("busy"); return; }
-    $("addPaperBtn").classList.remove("busy");
-
-    if (res.status === "duplicate") { toast(`"${res.filename}" is already indexed — skipped.`); return; }
-    if (res.status === "error") { toast(res.message || "Upload rejected.", "error"); return; }
-    // saved -> index it
-    startIngest(res.filename);
+  function isPdf(file) {
+    return (file.type === "application/pdf") || file.name.toLowerCase().endsWith(".pdf");
   }
 
-  function openIngestModal(filename) {
-    $("imTitle").textContent = "Adding " + (filename || "your paper") + "…";
+  async function onPdfChosen(e) {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+
+    $("addPaperBtn").classList.add("busy");
+    const saved = [], dups = [], errs = [];
+    for (const file of files) {
+      if (!isPdf(file)) { errs.push(file.name); continue; }
+      try {
+        const res = await api.upload(file);
+        if (res.status === "saved") saved.push(res.filename);
+        else if (res.status === "duplicate") dups.push(res.filename);
+        else errs.push(file.name);
+      } catch { errs.push(file.name); }
+    }
+    $("addPaperBtn").classList.remove("busy");
+
+    if (dups.length) toast(`${dups.length} already indexed — skipped.`);
+    if (errs.length) toast(`${errs.length} file${errs.length > 1 ? "s" : ""} couldn't be added.`, "error");
+    if (!saved.length) return;  // nothing new to index
+
+    const label = saved.length === 1 ? saved[0] : `${saved.length} papers`;
+    startIngest(label, saved);
+  }
+
+  function openIngestModal(label) {
+    $("imTitle").textContent = "Adding " + (label || "your papers") + "…";
     $("imStage").textContent = "Starting…";
     $("imLog").textContent = "";
     $("imSpinner").hidden = false;
@@ -583,11 +594,13 @@
     log.scrollTop = log.scrollHeight;
   }
 
-  async function startIngest(filename) {
+  async function startIngest(label, saved) {
     state.ingesting = true;
     $("addPaperBtn").classList.add("busy");
-    openIngestModal(filename);
-    logLine("→ Saved. Indexing now — this can take a minute for a new paper.", "stage");
+    openIngestModal(label);
+    const n = (saved && saved.length) || 1;
+    logLine(`→ Saved ${n} file${n > 1 ? "s" : ""}. Indexing now — the first paper also warms up the models.`, "stage");
+    if (saved && saved.length) saved.forEach((f) => logLine("   • " + f));
     try {
       const resp = await fetch("/api/ingest", { method: "POST" });
       const reader = resp.body.getReader();
@@ -611,22 +624,22 @@
           }
         }
       }
-      finishIngest(ok, filename);
+      finishIngest(ok, label);
     } catch (err) {
       logLine("✗ " + err.message, "warn");
-      finishIngest(false, filename);
+      finishIngest(false, label);
     }
   }
 
-  function finishIngest(ok, filename) {
+  function finishIngest(ok, label) {
     state.ingesting = false;
     $("addPaperBtn").classList.remove("busy");
     $("imSpinner").hidden = true;
     $("imCheck").hidden = !ok;
-    $("imTitle").textContent = ok ? "Paper added" : "Indexing failed";
-    $("imStage").textContent = ok ? "You can now ask questions about it." : "See the log above. The paper was saved but not fully indexed.";
+    $("imTitle").textContent = ok ? "Done — indexed" : "Indexing failed";
+    $("imStage").textContent = ok ? "You can now ask questions about your papers." : "See the log above. The files were saved but not fully indexed.";
     $("imFoot").hidden = false;
-    if (ok) toast(`"${filename}" added to your library.`);
+    if (ok) toast(`${label} added to your library.`);
     loadLibrary();
   }
 
