@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-05
 
+### Slimmed to two LLM providers
+Kept **Ollama** (local) + **OpenRouter** (one key → DeepSeek, Qwen, GPT, Claude,
+300+) and removed the redundant direct providers — **OpenAI, Anthropic, DeepSeek,
+Qwen** — since OpenRouter reaches all of those models with a single key. Dropped
+the `AnthropicProvider` class and the direct-OpenAI branch from
+`streaming_provider.py`, trimmed `webapp/settings.py`, cleaned the removed keys
+out of `.env` / `.env.example`, and dropped the now-unused `anthropic` and
+`beautifulsoup4` dependencies. Docs updated.
+
 ### LLM accuracy measurement
 - Added `backend/evaluation/evaluate_llm.py` + `data/llm_eval_questions.json`:
   runs the real retrieve→answer pipeline over a question set and scores each

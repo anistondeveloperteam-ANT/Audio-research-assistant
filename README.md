@@ -57,7 +57,7 @@ Audio-research-assistant/
 ### 1. Prerequisites
 - Python 3.11+
 - An Oracle database with vector support (e.g. Oracle 23ai / FREEPDB1)
-- Optional: Ollama, an OpenAI key, or an Anthropic key for answer generation
+- For answer generation: Ollama (local, free) **or** an OpenRouter key (one key → DeepSeek, Qwen, GPT, Claude, 300+)
 
 ### 2. Install dependencies
 The repository already ships with a `.venv`. To use it as-is, just select it in

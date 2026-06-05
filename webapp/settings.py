@@ -5,10 +5,8 @@ Lists the models the user can pick and switches the active one by updating both
 the running process env and the on-disk .env, so the choice persists.
 
 Providers:
-  - ollama   : local models (auto-listed from the Ollama server)
-  - openai   : OpenAI models (needs OPENAI_API_KEY)
-  - deepseek : DeepSeek API, OpenAI-compatible (needs DEEPSEEK_API_KEY)
-  - qwen     : Qwen via Alibaba DashScope, OpenAI-compatible (needs DASHSCOPE_API_KEY)
+  - ollama     : local models (auto-listed from the Ollama server)
+  - openrouter : one key (OPENROUTER_API_KEY) -> DeepSeek, Qwen, GPT, Claude, 300+
 """
 from __future__ import annotations
 
@@ -27,11 +25,8 @@ ENV_PATH = ROOT / ".env"
 # Cloud providers: API key + the env var that holds their chosen model + a
 # curated model list shown in the dropdown (OpenAI's list is fetched separately).
 CLOUD: Dict[str, Dict[str, Any]] = {
-    "openai":     {"key_env": "OPENAI_API_KEY",     "model_env": "OPENAI_MODEL",     "label": "OpenAI",     "models": None},
-    "deepseek":   {"key_env": "DEEPSEEK_API_KEY",   "model_env": "DEEPSEEK_MODEL",   "label": "DeepSeek",   "models": ["deepseek-v4-pro", "deepseek-v4-flash"]},
-    "qwen":       {"key_env": "DASHSCOPE_API_KEY",  "model_env": "QWEN_MODEL",       "label": "Qwen",       "models": ["qwen3-32b", "qwen-max", "qwen-plus"]},
-    # OpenRouter: one key (sk-or-v1-...) serves DeepSeek, Qwen and 300+ others.
-    # Slugs are "vendor/model"; ":free" variants cost nothing.
+    # OpenRouter: one key (sk-or-v1-...) serves DeepSeek, Qwen, GPT, Claude and
+    # 300+ others. Slugs are "vendor/model"; ":free" variants cost nothing.
     "openrouter": {"key_env": "OPENROUTER_API_KEY", "model_env": "OPENROUTER_MODEL", "label": "OpenRouter", "models": [
         "deepseek/deepseek-v4-pro",
         "deepseek/deepseek-v4-flash",
@@ -42,9 +37,7 @@ CLOUD: Dict[str, Dict[str, Any]] = {
 }
 VALID_PROVIDERS = ("ollama",) + tuple(CLOUD.keys())
 MODEL_ENV = {"ollama": "OLLAMA_MODEL", **{p: c["model_env"] for p, c in CLOUD.items()}}
-DEFAULT_MODEL = {"ollama": "llama3.2:3b", "openai": "gpt-4o-mini",
-                 "deepseek": "deepseek-v4-pro", "qwen": "qwen3-32b",
-                 "openrouter": "deepseek/deepseek-v4-pro"}
+DEFAULT_MODEL = {"ollama": "llama3.2:3b", "openrouter": "deepseek/deepseek-v4-pro"}
 
 
 def _ollama_host() -> str:
@@ -60,14 +53,6 @@ def _ollama_models() -> List[str]:
         return [m.get("name", "") for m in r.json().get("models", []) if m.get("name")]
     except Exception:
         return []
-
-
-# OpenAI models shown in the dropdown when OPENAI_API_KEY is set.
-OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]
-
-
-def _openai_models() -> List[str]:
-    return list(OPENAI_MODELS)
 
 
 def _label(provider: str) -> str:
@@ -92,8 +77,7 @@ def list_models() -> Dict[str, Any]:
     for prov, cfg in CLOUD.items():
         if not os.getenv(cfg["key_env"]):
             continue  # provider not configured -> hide it
-        models = cfg["models"] if cfg["models"] is not None else _openai_models()
-        for m in models:
+        for m in cfg["models"]:
             options.append({"provider": prov, "model": m, "label": f"{cfg['label']} · {m}"})
 
     # Always include the current selection, even if its source is unavailable.

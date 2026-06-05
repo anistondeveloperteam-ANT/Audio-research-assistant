@@ -4,11 +4,10 @@ llm_provider.py  --  Batch 8 (Phase 2)
 Swappable LLM backend. The chat UI calls this; nothing else cares
 which backend is active.
 
-Choose at runtime via .env:
+Two providers are supported. Choose at runtime via .env:
 
-    LLM_PROVIDER=ollama       (default; runs locally, free)
-    LLM_PROVIDER=anthropic    (paid, top quality)
-    LLM_PROVIDER=openai       (paid, also good)
+    LLM_PROVIDER=ollama       (default; runs locally, free, offline)
+    LLM_PROVIDER=openrouter   (one key -> DeepSeek, Qwen, GPT, Claude, 300+)
 
 Provider-specific env vars (only the one you use matters):
 
@@ -16,13 +15,9 @@ Provider-specific env vars (only the one you use matters):
         OLLAMA_HOST=http://localhost:11434   (default)
         OLLAMA_MODEL=llama3.2:3b             (default; fits 6GB GPU)
 
-    Anthropic:
-        ANTHROPIC_API_KEY=sk-ant-...
-        ANTHROPIC_MODEL=claude-3-5-sonnet-20241022   (default)
-
-    OpenAI:
-        OPENAI_API_KEY=sk-...
-        OPENAI_MODEL=gpt-4o-mini             (default)
+    OpenRouter (OpenAI-compatible gateway):
+        OPENROUTER_API_KEY=sk-or-v1-...
+        OPENROUTER_MODEL=deepseek/deepseek-v4-pro   (vendor/model; :free slugs are free)
 
 Public API:
 
@@ -155,63 +150,14 @@ class OllamaProvider(LLMProvider):
 
 
 # ----------------------------------------------------------------------
-# Anthropic (paid)
-# ----------------------------------------------------------------------
-
-class AnthropicProvider(LLMProvider):
-    def __init__(self, model: str, api_key: str):
-        self._model = model
-        self.api_key = api_key
-
-    @property
-    def name(self) -> str:
-        return "anthropic"
-
-    @property
-    def model(self) -> str:
-        return self._model
-
-    @property
-    def is_available(self) -> bool:
-        if not self.api_key:
-            return False
-        try:
-            import anthropic  # noqa: F401
-            return True
-        except ImportError:
-            return False
-
-    def stream_chat(
-        self,
-        messages,
-        system="",
-        max_tokens=2048,
-        temperature=0.3,
-    ):
-        import anthropic
-        client = anthropic.Anthropic(api_key=self.api_key)
-        kwargs = {
-            "model": self._model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        }
-        if system:
-            kwargs["system"] = system
-        with client.messages.stream(**kwargs) as stream:
-            for text in stream.text_stream:
-                yield text
-
-
-# ----------------------------------------------------------------------
-# OpenAI (paid)
+# OpenAI-compatible client (used for OpenRouter)
 # ----------------------------------------------------------------------
 
 class OpenAIProvider(LLMProvider):
-    """OpenAI and any OpenAI-compatible API (DeepSeek, Qwen/DashScope, …)
-    via a custom base_url."""
+    """Client for any OpenAI-compatible chat API via a custom base_url.
+    Used here for OpenRouter (one key -> DeepSeek, Qwen, GPT, Claude, 300+)."""
 
-    def __init__(self, model: str, api_key: str, base_url: str | None = None, name: str = "openai"):
+    def __init__(self, model: str, api_key: str, base_url: str | None = None, name: str = "openrouter"):
         self._model = model
         self.api_key = api_key
         self.base_url = base_url
@@ -269,30 +215,15 @@ class OpenAIProvider(LLMProvider):
 # Factory
 # ----------------------------------------------------------------------
 
-VALID_PROVIDERS = ("ollama", "anthropic", "openai", "deepseek", "qwen", "openrouter")
+VALID_PROVIDERS = ("ollama", "openrouter")
 
 # OpenAI-compatible cloud providers: base URL + the env keys they read.
 #
-#   deepseek   -> DeepSeek's own API (api.deepseek.com). Needs a funded DeepSeek
-#                 account; the direct API has no free tier.
-#   qwen       -> Alibaba DashScope (needs a real DashScope key, not OpenRouter).
-#   openrouter -> One gateway to DeepSeek, Qwen and 300+ others with a single
-#                 `sk-or-v1-...` key. Models use "vendor/model" slugs and there
-#                 are ":free" variants. This is the easiest way to run DeepSeek
-#                 V4 and Qwen3 without per-provider billing.
+#   openrouter -> One gateway to DeepSeek, Qwen, GPT, Claude and 300+ others with
+#                 a single `sk-or-v1-...` key. Models use "vendor/model" slugs and
+#                 there are ":free" variants. This is the only cloud provider we
+#                 keep, because it covers every model with one key.
 OPENAI_COMPATIBLE = {
-    "deepseek": {
-        "base_url": "https://api.deepseek.com",
-        "key_env": "DEEPSEEK_API_KEY",
-        "model_env": "DEEPSEEK_MODEL",
-        "default_model": "deepseek-v4-pro",
-    },
-    "qwen": {
-        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "key_env": "DASHSCOPE_API_KEY",
-        "model_env": "QWEN_MODEL",
-        "default_model": "qwen3-32b",
-    },
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
         "key_env": "OPENROUTER_API_KEY",
@@ -331,16 +262,6 @@ def get_provider() -> LLMProvider:
         return OllamaProvider(
             model=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
             host=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
-        )
-    if backend == "anthropic":
-        return AnthropicProvider(
-            model=os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
-            api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-        )
-    if backend == "openai":
-        return OpenAIProvider(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            api_key=os.getenv("OPENAI_API_KEY", ""),
         )
     if backend in OPENAI_COMPATIBLE:
         cfg = OPENAI_COMPATIBLE[backend]

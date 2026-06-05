@@ -30,14 +30,5 @@ RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "10"))
 TOTAL_SOURCE_LIMIT = int(os.getenv("TOTAL_SOURCE_LIMIT", "16"))
 PER_TOPIC_SOURCE_LIMIT = int(os.getenv("PER_TOPIC_SOURCE_LIMIT", "3"))
 
-ANSWER_PROVIDER = os.getenv("ANSWER_PROVIDER", "manual").lower()
-
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-ANTHROPIC_DEEP_MODEL = os.getenv("ANTHROPIC_DEEP_MODEL", ANTHROPIC_MODEL)
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
-OPENAI_DEEP_MODEL = os.getenv("OPENAI_DEEP_MODEL", OPENAI_MODEL)
-
-MANUAL_MODE = ANSWER_PROVIDER == "manual"
+# Chat model selection lives in .env (LLM_PROVIDER = ollama | openrouter) and is
+# read directly by backend/llm/streaming_provider.py.

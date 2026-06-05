@@ -183,13 +183,9 @@ flowchart LR
     EV[Top evidence chunks] --> SP[chat_logic.py<br/>system prompt + numbered evidence]
     SP --> PROV[streaming_provider.get_provider]
     PROV --> OLL[Ollama - local]
-    PROV --> OR[OpenRouter]
-    PROV --> OAI[OpenAI]
-    PROV --> ANTH[Anthropic]
+    PROV --> OR[OpenRouter - DeepSeek/Qwen/GPT/Claude/300+]
     OLL --> TOK[Streamed tokens]
     OR --> TOK
-    OAI --> TOK
-    ANTH --> TOK
     TOK --> ANS[Cited answer in the UI]
 ```
 
@@ -213,20 +209,18 @@ flowchart LR
 ## 6. LLM providers (chat models)
 
 All answer generation goes through one swappable interface,
-`backend/llm/streaming_provider.py`. Select with `LLM_PROVIDER` in `.env`; switch
-live in the UI.
+`backend/llm/streaming_provider.py`. There are **two** providers — select with
+`LLM_PROVIDER` in `.env`; switch live in the UI.
 
 | `LLM_PROVIDER` | Endpoint | Key env | Notes |
 |----------------|----------|---------|-------|
 | `ollama` | local `http://localhost:11434` | — | Free, offline (e.g. `llama3.2:3b`, `qwen2.5:7b`). |
-| `openrouter` | `openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | **One key → DeepSeek, Qwen & 300+ models**; `:free` slugs cost nothing. Easiest cloud option. |
-| `openai` | `api.openai.com` | `OPENAI_API_KEY` | GPT-4o etc. |
-| `anthropic` | `api.anthropic.com` | `ANTHROPIC_API_KEY` | Claude. |
-| `deepseek` | `api.deepseek.com` | `DEEPSEEK_API_KEY` | DeepSeek direct (needs a funded account). |
-| `qwen` | DashScope compatible-mode | `DASHSCOPE_API_KEY` | Qwen via Alibaba DashScope. |
+| `openrouter` | `openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | **One key → DeepSeek, Qwen, GPT, Claude & 300+ models**; `:free` slugs cost nothing. |
 
-`openrouter`, `deepseek`, and `qwen` are **OpenAI-compatible**, so they reuse the
-same client with a custom base URL.
+OpenRouter is **OpenAI-compatible**, so it reuses the OpenAI client with a custom
+base URL. It deliberately replaces the older per-vendor providers (OpenAI,
+Anthropic, DeepSeek, Qwen direct) — one key covers them all. To measure which
+model answers best, use `python -m backend.evaluation.evaluate_llm --models …`.
 
 ---
 
@@ -260,7 +254,7 @@ same client with a custom base URL.
 | **BAAI/bge-base-en-v1.5** | Local embedding alternative (`EMBEDDING_PROVIDER=local`) |
 | **BAAI/bge-reranker-v2-m3** | Cross-encoder reranker |
 | **PyTorch / sentence-transformers / transformers** | Run the reranker (and local embeddings) on GPU/CPU |
-| **OpenAI / Anthropic SDKs** | Cloud chat providers (also used for OpenRouter / DeepSeek / Qwen) |
+| **OpenAI SDK** | Client for OpenRouter (the OpenAI-compatible cloud gateway) |
 | **Ollama** | Local/offline chat models |
 
 ### Document processing

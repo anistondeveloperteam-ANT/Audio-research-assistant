@@ -35,16 +35,14 @@ docling==2.93.0          # primary parser (best quality: layout, tables, structu
 PyMuPDF==1.27.2.3        # fast fallback parser
 pypdf==6.11.0
 
-# --- LLM providers (selected at runtime via LLM_PROVIDER / ANSWER_PROVIDER) ---
+# --- Chat model client (openai SDK powers OpenRouter; Ollama uses HTTP/requests) ---
 openai==1.109.1
-anthropic==0.46.0
 
 # --- Google Gemini (embeddings: EMBEDDING_PROVIDER=google) ---
 google-genai==1.75.0
 
-# --- Web search tool ---
+# --- HTTP (Ollama calls, model listing) ---
 requests==2.34.1
-beautifulsoup4==4.14.3
 
 # --- Misc utilities ---
 tqdm==4.67.3
