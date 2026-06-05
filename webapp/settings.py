@@ -1,9 +1,14 @@
 """
 LLM model selection for the web UI.
 
-Lists the models the user can pick (local Ollama models + OpenAI models when a
-key is present) and switches the active one by updating both the running
-process env and the on-disk .env, so the choice persists across restarts.
+Lists the models the user can pick and switches the active one by updating both
+the running process env and the on-disk .env, so the choice persists.
+
+Providers:
+  - ollama   : local models (auto-listed from the Ollama server)
+  - openai   : OpenAI models (needs OPENAI_API_KEY)
+  - deepseek : DeepSeek API, OpenAI-compatible (needs DEEPSEEK_API_KEY)
+  - qwen     : Qwen via Alibaba DashScope, OpenAI-compatible (needs DASHSCOPE_API_KEY)
 """
 from __future__ import annotations
 
@@ -18,7 +23,18 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 ENV_PATH = ROOT / ".env"
-VALID_PROVIDERS = ("ollama", "openai")
+
+# Cloud providers: API key + the env var that holds their chosen model + a
+# curated model list shown in the dropdown (OpenAI's list is fetched separately).
+CLOUD: Dict[str, Dict[str, Any]] = {
+    "openai":   {"key_env": "OPENAI_API_KEY",    "model_env": "OPENAI_MODEL",   "label": "OpenAI",   "models": None},
+    "deepseek": {"key_env": "DEEPSEEK_API_KEY",  "model_env": "DEEPSEEK_MODEL", "label": "DeepSeek", "models": ["deepseek-v4-pro", "deepseek-v4-flash"]},
+    "qwen":     {"key_env": "DASHSCOPE_API_KEY", "model_env": "QWEN_MODEL",     "label": "Qwen",     "models": ["qwen3-32b", "qwen-max", "qwen-plus"]},
+}
+VALID_PROVIDERS = ("ollama",) + tuple(CLOUD.keys())
+MODEL_ENV = {"ollama": "OLLAMA_MODEL", **{p: c["model_env"] for p, c in CLOUD.items()}}
+DEFAULT_MODEL = {"ollama": "llama3.2:3b", "openai": "gpt-4o-mini",
+                 "deepseek": "deepseek-v4-pro", "qwen": "qwen3-32b"}
 
 
 def _ollama_host() -> str:
@@ -37,8 +53,6 @@ def _ollama_models() -> List[str]:
 
 
 def _openai_models() -> List[str]:
-    if not os.getenv("OPENAI_API_KEY"):
-        return []
     try:
         from backend.llm.fallback_provider import OPENAI_AVAILABLE_MODELS
         return list(OPENAI_AVAILABLE_MODELS)
@@ -46,26 +60,36 @@ def _openai_models() -> List[str]:
         return ["gpt-4o-mini", "gpt-4o"]
 
 
+def _label(provider: str) -> str:
+    return CLOUD.get(provider, {}).get("label") or provider.title()
+
+
 def current() -> Dict[str, str]:
     provider = (os.getenv("LLM_PROVIDER", "ollama") or "ollama").strip().lower()
     if provider not in VALID_PROVIDERS:
         provider = "ollama"
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini") if provider == "openai" \
-        else os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+    model = os.getenv(MODEL_ENV[provider], DEFAULT_MODEL.get(provider, ""))
     return {"provider": provider, "model": model}
 
 
 def list_models() -> Dict[str, Any]:
     cur = current()
     options: List[Dict[str, str]] = []
+
     for m in _ollama_models():
         options.append({"provider": "ollama", "model": m, "label": f"Ollama · {m}"})
-    for m in _openai_models():
-        options.append({"provider": "openai", "model": m, "label": f"OpenAI · {m}"})
-    # Make sure the current selection is always present, even if Ollama is down.
+
+    for prov, cfg in CLOUD.items():
+        if not os.getenv(cfg["key_env"]):
+            continue  # provider not configured -> hide it
+        models = cfg["models"] if cfg["models"] is not None else _openai_models()
+        for m in models:
+            options.append({"provider": prov, "model": m, "label": f"{cfg['label']} · {m}"})
+
+    # Always include the current selection, even if its source is unavailable.
     if not any(o["provider"] == cur["provider"] and o["model"] == cur["model"] for o in options):
         options.insert(0, {"provider": cur["provider"], "model": cur["model"],
-                           "label": f"{cur['provider'].title()} · {cur['model']}"})
+                           "label": f"{_label(cur['provider'])} · {cur['model']}"})
     return {"current": cur, "options": options}
 
 
@@ -95,10 +119,10 @@ def set_model(provider: str, model: str) -> Dict[str, str]:
     if not model:
         raise ValueError("Model is required")
 
-    model_key = "OPENAI_MODEL" if provider == "openai" else "OLLAMA_MODEL"
-    # Update the running process immediately (get_provider reads os.environ
-    # with override=False, so these values win) and persist to disk.
+    key = MODEL_ENV[provider]
+    # Update the running process immediately (get_provider reads os.environ with
+    # override=False, so these win) and persist to disk for next time.
     os.environ["LLM_PROVIDER"] = provider
-    os.environ[model_key] = model
-    _persist_env({"LLM_PROVIDER": provider, model_key: model})
-    return {"provider": provider, "model": model, "label": f"{provider} · {model}"}
+    os.environ[key] = model
+    _persist_env({"LLM_PROVIDER": provider, key: model})
+    return {"provider": provider, "model": model, "label": f"{_label(provider)} · {model}"}

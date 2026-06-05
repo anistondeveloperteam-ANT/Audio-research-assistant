@@ -208,13 +208,18 @@ class AnthropicProvider(LLMProvider):
 # ----------------------------------------------------------------------
 
 class OpenAIProvider(LLMProvider):
-    def __init__(self, model: str, api_key: str):
+    """OpenAI and any OpenAI-compatible API (DeepSeek, Qwen/DashScope, …)
+    via a custom base_url."""
+
+    def __init__(self, model: str, api_key: str, base_url: str | None = None, name: str = "openai"):
         self._model = model
         self.api_key = api_key
+        self.base_url = base_url
+        self._name = name
 
     @property
     def name(self) -> str:
-        return "openai"
+        return self._name
 
     @property
     def model(self) -> str:
@@ -238,7 +243,8 @@ class OpenAIProvider(LLMProvider):
         temperature=0.3,
     ):
         import openai
-        client = openai.OpenAI(api_key=self.api_key)
+        client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url) if self.base_url \
+            else openai.OpenAI(api_key=self.api_key)
         msgs = []
         if system:
             msgs.append({"role": "system", "content": system})
@@ -263,7 +269,23 @@ class OpenAIProvider(LLMProvider):
 # Factory
 # ----------------------------------------------------------------------
 
-VALID_PROVIDERS = ("ollama", "anthropic", "openai")
+VALID_PROVIDERS = ("ollama", "anthropic", "openai", "deepseek", "qwen")
+
+# OpenAI-compatible cloud providers: base URL + the env keys they read.
+OPENAI_COMPATIBLE = {
+    "deepseek": {
+        "base_url": "https://api.deepseek.com",
+        "key_env": "DEEPSEEK_API_KEY",
+        "model_env": "DEEPSEEK_MODEL",
+        "default_model": "deepseek-v4-pro",
+    },
+    "qwen": {
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "key_env": "DASHSCOPE_API_KEY",
+        "model_env": "QWEN_MODEL",
+        "default_model": "qwen3-32b",
+    },
+}
 
 
 def get_provider() -> LLMProvider:
@@ -305,6 +327,14 @@ def get_provider() -> LLMProvider:
         return OpenAIProvider(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             api_key=os.getenv("OPENAI_API_KEY", ""),
+        )
+    if backend in OPENAI_COMPATIBLE:
+        cfg = OPENAI_COMPATIBLE[backend]
+        return OpenAIProvider(
+            model=os.getenv(cfg["model_env"], cfg["default_model"]),
+            api_key=os.getenv(cfg["key_env"], ""),
+            base_url=cfg["base_url"],
+            name=backend,
         )
 
     # Defensive -- shouldn't reach here after the fallback above
