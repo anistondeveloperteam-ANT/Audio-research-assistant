@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-05
 
+### Consolidated config / launcher files
+- Removed `enable_sharing.bat` — `run.py` now opens the firewall itself (one UAC
+  prompt) and prints the manual `netsh` command if that's declined.
+- Merged `requirements-dev.txt` into `requirements.txt` (dev/test tools are a
+  clearly-marked section at the bottom), so there's a single requirements file.
+- Kept `.env` + `.env.example` as-is: `.env.example` is the committed, secret-free
+  template; `.env` is your local filled-in copy and stays gitignored. Merging them
+  would mean committing real API keys, so they're intentionally separate.
+
 ### Cleanup — removed dead code, fixed the docs
 Deleted modules that nothing imported (the live web app answers via
 `webapp/chat_logic.py` → `hybrid_retrieve` → `streaming_provider`, so an older
@@ -33,8 +42,8 @@ providers) instead of the old Streamlit/router design. All 20 tests still pass.
 ### Sharing on the local network
 - `python run.py` now **shares on the Wi-Fi/LAN by default** (binds `0.0.0.0`) and
   prints the teammate URL; `--local` restricts to this PC.
-- On Windows it **auto-opens the firewall** for the port via one UAC prompt;
-  `enable_sharing.bat` is the manual fallback.
+- On Windows it **auto-opens the firewall** for the port via one UAC prompt (and
+  prints the manual `netsh` command if that's declined).
 - `run.py` also **auto-clears a stale server** still holding the port (fixes the
   recurring `[Errno 10048] only one usage of each socket address`).
 

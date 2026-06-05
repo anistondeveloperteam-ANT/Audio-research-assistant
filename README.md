@@ -20,7 +20,6 @@ That's all most people need. Everything else lives under `backend/` and `webapp/
 Audio-research-assistant/
 ├── run.py              # Launch the web app
 ├── pipeline.py         # Build / refresh the search index (ingest → embed → vector-migrate)
-├── enable_sharing.bat  # One-time: open the firewall for LAN sharing (run as admin)
 ├── backend/
 │   ├── config.py           # Central settings + data paths (reads .env)
 │   ├── common/             # device (GPU/CPU), embeddings (Gemini / local)
@@ -133,10 +132,11 @@ Ollama LLM). If you have VRAM to spare (or use a cloud LLM), set `RERANKER_DEVIC
 
 ## Development & tests
 
-Install dev tooling and run the fast unit suite (no DB / models / network needed):
+The dev/test tools (pytest, pyflakes, vulture) are included at the bottom of
+`requirements.txt`, so a normal install already has them. Run the fast unit suite
+(no DB / models / network needed):
 
 ```powershell
-pip install -r requirements-dev.txt
 pytest                          # tests/ — retrieval fusion, query sanity,
                                 #   device selection, env helpers, etc.
 pyflakes backend webapp         # lint: unused imports / undefined names

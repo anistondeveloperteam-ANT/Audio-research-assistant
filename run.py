@@ -211,8 +211,10 @@ def ensure_firewall_rule(port: int) -> None:
     if firewall_rule_exists(port):
         print(f"  Firewall opened for port {port}.  [OK]")
     else:
-        print("  Could not add the firewall rule automatically.")
-        print("  Right-click  enable_sharing.bat  ->  'Run as administrator'  (one time).")
+        print("  Could not add the firewall rule automatically. To allow it once,")
+        print("  open PowerShell as Administrator and run:")
+        print(f'    netsh advfirewall firewall add rule name="{name}" '
+              f'dir=in action=allow protocol=TCP localport={port} profile=any')
 
 
 # ----------------------------------------------------------------------

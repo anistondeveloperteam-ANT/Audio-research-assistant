@@ -372,9 +372,8 @@ python -m backend.database.db_status       # show indexed papers / chunks
 
 ```
 Audio-research-assistant/
-├── run.py                  # Launch the web app (auto-frees port, LAN sharing)
+├── run.py                  # Launch the web app (auto-frees port, LAN sharing + firewall)
 ├── pipeline.py             # Build / refresh the index (ingest -> embed -> vector)
-├── enable_sharing.bat      # One-time: open the firewall for LAN sharing (admin)
 ├── backend/
 │   ├── config.py           # Central settings (reads .env)
 │   ├── common/             # device (GPU/CPU), embeddings (Gemini/local)
