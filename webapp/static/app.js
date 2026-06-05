@@ -36,10 +36,10 @@
   const STOP_ICON = '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor"/></svg>';
 
   const EXAMPLES = [
-    ["How does MVDR beamforming reduce noise?", "Compare it with delay-and-sum."],
-    ["What is HyDE in retrieval?", "And why does it help recall?"],
+    ["How does MVDR beamforming work?", "…and how does it compare to delay-and-sum?"],
     ["Explain acoustic echo cancellation", "with the key signal-processing steps."],
     ["Which metrics evaluate speech enhancement?", "PESQ, STOI, SDR — what do they mean?"],
+    ["Summarize deep-learning denoising", "approaches across my papers."],
   ];
 
   const esc = (s) => (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -129,8 +129,8 @@
     inner().innerHTML = `
       <div class="welcome">
         <div class="hero-mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zm7 9a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12h-2z"/></svg></div>
-        <h1>Ask your audio research papers</h1>
-        <p>Get clear, technical answers grounded only in your indexed papers — every claim cited back to its source, section, and page.</p>
+        <h1>What do your papers say?</h1>
+        <p>Ask anything about your audio &amp; speech-enhancement library. Every answer is grounded only in your papers — with each claim cited to its source, section, and page.</p>
         <div class="examples" id="examples"></div>
       </div>`;
     const box = $("examples");

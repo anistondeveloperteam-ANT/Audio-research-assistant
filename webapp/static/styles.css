@@ -24,6 +24,8 @@
   --topbar-bg: rgba(255, 255, 255, 0.8);
   --code-bg: #0f1320;
   --glow: rgba(79, 70, 229, 0.07);
+  --grad: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --grad-soft: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(139,92,246,0.12));
   --teal: #0ea5a4;
   --amber: #d97706;
   --danger: #dc2626;
@@ -63,6 +65,8 @@
   --topbar-bg: rgba(20, 25, 40, 0.82);
   --code-bg: #0a0d18;
   --glow: rgba(124, 131, 255, 0.13);
+  --grad: linear-gradient(135deg, #7c83ff 0%, #a78bfa 100%);
+  --grad-soft: linear-gradient(135deg, rgba(124,131,255,0.16), rgba(167,139,250,0.16));
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow: 0 8px 26px rgba(0, 0, 0, 0.42);
@@ -110,7 +114,7 @@ body {
 }
 .brand .mark {
   width: 34px; height: 34px; border-radius: 10px;
-  background: linear-gradient(135deg, var(--accent), #7c5cff);
+  background: var(--grad);
   display: grid; place-items: center; color: #fff; flex: none;
   box-shadow: 0 4px 12px var(--accent-ring);
 }
@@ -122,12 +126,12 @@ body {
   margin: 4px 14px 12px;
   display: flex; align-items: center; justify-content: center; gap: 8px;
   padding: 11px 14px; border-radius: var(--radius-sm);
-  background: var(--accent); color: #fff; border: none;
+  background: var(--grad); color: #fff; border: none;
   font: inherit; font-weight: 600; font-size: 13.5px; cursor: pointer;
-  box-shadow: 0 4px 12px var(--accent-ring);
-  transition: transform .12s ease, background .15s ease, box-shadow .15s ease;
+  box-shadow: 0 4px 14px var(--accent-ring);
+  transition: transform .12s ease, filter .15s ease, box-shadow .15s ease;
 }
-.new-chat:hover { background: var(--accent-600); box-shadow: 0 6px 16px var(--accent-ring); }
+.new-chat:hover { filter: brightness(1.08); box-shadow: 0 8px 20px var(--accent-ring); }
 .new-chat:active { transform: translateY(1px); }
 .new-chat svg { width: 16px; height: 16px; }
 
@@ -144,7 +148,7 @@ body {
   position: relative;
 }
 .session:hover { background: var(--surface-2); transform: translateX(2px); }
-.session.active { background: var(--accent-weak); border-color: var(--accent-border); color: var(--accent-600); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
+.session.active { background: var(--grad-soft); border-color: var(--accent-border); color: var(--accent-600); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
 .session .s-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session .s-actions { display: none; gap: 2px; }
 .session:hover .s-actions, .session.active .s-actions { display: flex; }
@@ -219,11 +223,15 @@ body {
 .welcome { max-width: 720px; margin: 7vh auto 0; text-align: center; padding: 0 20px; animation: rise .5s ease both; }
 .welcome .hero-mark {
   width: 60px; height: 60px; border-radius: 18px; margin: 0 auto 18px;
-  background: linear-gradient(135deg, var(--accent), #7c5cff);
+  background: var(--grad);
   display: grid; place-items: center; color: #fff; box-shadow: 0 12px 30px var(--accent-ring);
 }
 .welcome .hero-mark svg { width: 30px; height: 30px; }
-.welcome h1 { font-size: 27px; letter-spacing: -.02em; margin: 0 0 8px; }
+.welcome h1 {
+  font-size: 30px; letter-spacing: -.025em; margin: 0 0 10px; line-height: 1.15;
+  background: var(--grad); -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+}
 .welcome p { color: var(--muted); font-size: 15px; margin: 0 auto 26px; max-width: 520px; line-height: 1.55; }
 .examples { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 620px; margin: 0 auto; }
 .example {
@@ -248,7 +256,7 @@ body {
   padding: 11px 15px; max-width: 76%; font-size: 14.5px; line-height: 1.5;
   box-shadow: 0 4px 14px var(--accent-ring); white-space: pre-wrap; word-wrap: break-word;
 }
-.msg.assistant .avatar { background: linear-gradient(135deg, var(--accent), #7c5cff); color: #fff; }
+.msg.assistant .avatar { background: var(--grad); color: #fff; }
 .msg.assistant .body { flex: 1; min-width: 0; }
 .bubble.assistant {
   background: var(--surface); border: 1px solid var(--border); border-radius: 5px 16px 16px 16px;
@@ -345,10 +353,10 @@ body {
 .composer textarea::placeholder { color: var(--muted-2); }
 .send {
   width: 40px; height: 40px; flex: none; border-radius: 12px; border: none; cursor: pointer;
-  background: var(--accent); color: #fff; display: grid; place-items: center;
-  transition: background .14s ease, transform .12s ease, opacity .14s ease;
+  background: var(--grad); color: #fff; display: grid; place-items: center;
+  transition: filter .14s ease, transform .12s ease, opacity .14s ease;
 }
-.send:hover { background: var(--accent-600); }
+.send:hover { filter: brightness(1.08); }
 .send:active { transform: scale(.94); }
 .send:disabled { background: var(--surface-3); color: var(--muted-2); cursor: not-allowed; }
 .send svg { width: 18px; height: 18px; }
@@ -397,7 +405,7 @@ body {
 .source-card .sc-head { display: flex; align-items: flex-start; gap: 9px; }
 .source-card .sc-n {
   flex: none; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 7px; display: grid; place-items: center;
-  font-size: 12px; font-weight: 700; color: #fff; background: linear-gradient(135deg, var(--accent), #7c5cff);
+  font-size: 12px; font-weight: 700; color: #fff; background: var(--grad);
 }
 .source-card .sc-title { font-weight: 650; font-size: 13.5px; line-height: 1.35; }
 .source-card .sc-meta { font-size: 11.5px; color: var(--muted); margin: 3px 0 8px; display: flex; gap: 8px; flex-wrap: wrap; }
