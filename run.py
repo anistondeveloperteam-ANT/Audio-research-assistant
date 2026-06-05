@@ -3,8 +3,8 @@
 run.py -- launch the Audio Research Assistant web app (FastAPI).
 
 Usage:
-    python run.py                # http://localhost:8600 (this PC only)
-    python run.py --share        # also reachable by teammates on your Wi-Fi/LAN
+    python run.py                # SHARED on your Wi-Fi/LAN -> http://<your-ip>:8600
+    python run.py --local        # this PC only -> http://localhost:8600
     python run.py --port 9000     # override the port
     python run.py --host 0.0.0.0  # bind a specific interface (advanced)
     python run.py --no-free-port  # do NOT auto-clear a stale server on the port
@@ -167,46 +167,102 @@ def ensure_port_free(port: int) -> bool:
     return False
 
 
+def _firewall_rule_name(port: int) -> str:
+    return f"Audio Research Assistant {port}"
+
+
+def firewall_rule_exists(port: int) -> bool:
+    if os.name != "nt":
+        return True
+    try:
+        out = subprocess.run(
+            ["netsh", "advfirewall", "firewall", "show", "rule", f"name={_firewall_rule_name(port)}"],
+            capture_output=True, text=True,
+        ).stdout
+        return bool(out) and "No rules match" not in out
+    except Exception:
+        return False
+
+
+def ensure_firewall_rule(port: int) -> None:
+    """On Windows, make sure inbound TCP `port` is allowed so teammates can
+    connect. If the rule is missing, ask Windows for permission (one UAC
+    prompt) and add it. Non-fatal: if the user declines, we print how to do it
+    by hand and carry on."""
+    if os.name != "nt" or firewall_rule_exists(port):
+        return
+
+    name = _firewall_rule_name(port)
+    print(f"  Opening Windows Firewall for port {port} (approve the prompt that pops up)...")
+    # Run netsh elevated. -ArgumentList as an array lets PowerShell quote the
+    # rule name (which contains spaces) correctly.
+    arg_array = (
+        "@('advfirewall','firewall','add','rule',"
+        f"'name={name}','dir=in','action=allow','protocol=TCP',"
+        f"'localport={port}','profile=any')"
+    )
+    ps = f"Start-Process netsh -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList {arg_array}"
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                       capture_output=True, text=True, timeout=60)
+    except Exception:
+        pass
+
+    if firewall_rule_exists(port):
+        print(f"  Firewall opened for port {port}.  [OK]")
+    else:
+        print("  Could not add the firewall rule automatically.")
+        print("  Right-click  enable_sharing.bat  ->  'Run as administrator'  (one time).")
+
+
 # ----------------------------------------------------------------------
 def main() -> int:
     parser = argparse.ArgumentParser(description="Launch the Audio Research Assistant web app.")
     parser.add_argument("--port", type=int, default=8600, help="Server port (default: 8600).")
-    parser.add_argument("--share", action="store_true",
-                        help="Make the app reachable by other people on your Wi-Fi/LAN.")
+    parser.add_argument("--local", action="store_true",
+                        help="Restrict to THIS PC only (no network sharing).")
+    parser.add_argument("--share", action="store_true", help=argparse.SUPPRESS)  # sharing is the default now
     parser.add_argument("--host", default=None,
-                        help="Interface to bind (advanced). Default 127.0.0.1, or 0.0.0.0 with --share.")
+                        help="Interface to bind (advanced). Default 0.0.0.0 (shared), or 127.0.0.1 with --local.")
     parser.add_argument("--no-free-port", action="store_true",
                         help="Do not auto-stop a leftover server occupying the port.")
     args = parser.parse_args()
 
-    # --share => listen on all interfaces so teammates on the same network can reach it.
-    host = args.host or ("0.0.0.0" if args.share else "127.0.0.1")
-    shared = args.share or host not in ("127.0.0.1", "localhost")
+    # Sharing is the DEFAULT: bind all interfaces so teammates on the same
+    # network can reach it. Use --local to keep it to this PC only.
+    if args.host:
+        host = args.host
+    elif args.local:
+        host = "127.0.0.1"
+    else:
+        host = "0.0.0.0"
+    shared = host not in ("127.0.0.1", "localhost")
 
     if not args.no_free_port:
         if not ensure_port_free(args.port):
             return 1
 
-    cmd = [sys.executable, "-m", "uvicorn", "webapp.server:app",
-           "--host", host, "--port", str(args.port)]
-
     if shared:
+        ensure_firewall_rule(args.port)
         ips = lan_ips()
-        print("=" * 60)
-        print("Sharing the Audio Research Assistant on your network.")
-        print("Your teammate (on the SAME Wi-Fi/LAN) should open:")
+        print("=" * 62)
+        print(" Audio Research Assistant is SHARED on your network.")
+        print(" Your teammate (on the SAME Wi-Fi/LAN) opens this in a browser:")
         if ips:
             for ip in ips:
-                print(f"    ->  http://{ip}:{args.port}")
+                print(f"     ->  http://{ip}:{args.port}")
         else:
-            print("    (could not detect your LAN IP -- run 'ipconfig' and use the IPv4 address)")
-        print(f"On this PC you can still use:  http://localhost:{args.port}")
-        print("Note: no password -- anyone on the network who has the URL can use it,")
-        print("and questions run on YOUR models/keys. Stop the server (Ctrl+C) when done.")
-        print("If they can't connect, allow port through Windows Firewall (see chat).")
-        print("=" * 60)
+            print("     (couldn't detect your LAN IP -- run 'ipconfig', use the IPv4 address)")
+        print(f" On this PC you can also use:  http://localhost:{args.port}")
+        print(" No password: anyone on the network with the URL can use it, and")
+        print(" questions run on YOUR models/keys. Keep this window open; Ctrl+C to stop.")
+        print(" Want it private?  ->  python run.py --local")
+        print("=" * 62)
     else:
-        print(f"Starting web UI on http://localhost:{args.port}  (open it in your browser; Ctrl+C to stop)")
+        print(f"Starting web UI (this PC only) on http://localhost:{args.port}  (Ctrl+C to stop)")
+
+    cmd = [sys.executable, "-m", "uvicorn", "webapp.server:app",
+           "--host", host, "--port", str(args.port)]
     # Run from the project root so `import backend.*` / `import webapp.*` resolve.
     try:
         return subprocess.call(cmd, cwd=str(ROOT))
