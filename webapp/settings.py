@@ -30,6 +30,7 @@ CLOUD: Dict[str, Dict[str, Any]] = {
     "openrouter": {"key_env": "OPENROUTER_API_KEY", "model_env": "OPENROUTER_MODEL", "label": "OpenRouter", "models": [
         "deepseek/deepseek-v4-pro",
         "deepseek/deepseek-v4-flash",
+        "qwen/qwen3.5-35b-a3b",
         "qwen/qwen3-32b",
         "deepseek/deepseek-chat-v3-0324:free",
         "qwen/qwen3-235b-a22b:free",

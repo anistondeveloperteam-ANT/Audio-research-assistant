@@ -13,6 +13,12 @@ companion to the git history.
 
 ## 2026-06-05
 
+### Added Qwen 3.5 (35B) to the OpenRouter model list
+- Added `qwen/qwen3.5-35b-a3b` to the dropdown. (There is no literal "Qwen 3.5
+  32B"; the closest 3.5-family model is this 35B mixture-of-experts.) It's a
+  reasoning model, so it "thinks" before answering — fine with the app's 2048
+  token budget, just expect a short pause before the answer appears.
+
 ### Slimmed to two LLM providers
 Kept **Ollama** (local) + **OpenRouter** (one key → DeepSeek, Qwen, GPT, Claude,
 300+) and removed the redundant direct providers — **OpenAI, Anthropic, DeepSeek,
