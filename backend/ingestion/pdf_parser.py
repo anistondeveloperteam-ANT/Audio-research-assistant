@@ -158,11 +158,27 @@ _docling_converter = None
 
 
 def _get_docling_converter():
-    """Lazily build and cache the Docling converter (loads layout models once)."""
+    """Lazily build and cache the Docling converter (loads layout models once),
+    on the GPU when DEVICE allows."""
     global _docling_converter
     if _docling_converter is None:
         from docling.document_converter import DocumentConverter
-        _docling_converter = DocumentConverter()
+        try:
+            from docling.document_converter import PdfFormatOption
+            from docling.datamodel.base_models import InputFormat
+            from docling.datamodel.pipeline_options import (
+                PdfPipelineOptions, AcceleratorOptions, AcceleratorDevice,
+            )
+            want = (os.getenv("DEVICE", "auto") or "auto").strip().lower()
+            device = AcceleratorDevice.CPU if want == "cpu" else AcceleratorDevice.CUDA
+            opts = PdfPipelineOptions()
+            opts.accelerator_options = AcceleratorOptions(num_threads=8, device=device)
+            _docling_converter = DocumentConverter(
+                format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+            )
+        except Exception:
+            # Older/different Docling API — fall back to its default (auto device).
+            _docling_converter = DocumentConverter()
     return _docling_converter
 
 
