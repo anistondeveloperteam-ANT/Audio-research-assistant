@@ -285,6 +285,27 @@ body {
 }
 .cite:hover { background: #e3e5fd; transform: translateY(-1px); }
 
+/* Citation hover card */
+.cite-pop {
+  position: fixed; z-index: 80; max-width: 330px; background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: var(--shadow-lg);
+  padding: 11px 13px; font-size: 12.5px; line-height: 1.5; color: var(--text-soft);
+  opacity: 0; pointer-events: none; transform: translateY(4px); transition: opacity .14s ease, transform .14s ease;
+}
+.cite-pop.show { opacity: 1; transform: translateY(0); }
+.cite-pop .cp-title { font-weight: 650; color: var(--text); font-size: 12.5px; margin-bottom: 3px; }
+.cite-pop .cp-meta { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+
+/* Code-block copy button */
+.md pre { position: relative; }
+.code-copy {
+  position: absolute; top: 8px; right: 8px; font: inherit; font-size: 11px; color: #c7d0df;
+  background: rgba(255,255,255,0.09); border: 1px solid rgba(255,255,255,0.16); border-radius: 7px;
+  padding: 3px 9px; cursor: pointer; opacity: 0; transition: opacity .14s ease, background .14s ease;
+}
+.md pre:hover .code-copy { opacity: 1; }
+.code-copy:hover { background: rgba(255,255,255,0.18); }
+
 /* Streaming caret + status */
 .caret { display: inline-block; width: 7px; height: 16px; margin-left: 2px; vertical-align: -3px;
   background: var(--accent); border-radius: 2px; animation: blink 1s steps(2) infinite; }

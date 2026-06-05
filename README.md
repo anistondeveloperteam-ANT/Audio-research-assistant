@@ -3,16 +3,16 @@
 A Retrieval-Augmented Generation (RAG) assistant for audio / speech-enhancement
 research papers. It ingests PDFs, builds a hybrid (vector + BM25) retrieval index
 backed by an Oracle vector database, and answers questions with cited sources
-through a Streamlit chat interface.
+through a fast, interactive **web app** (FastAPI + a no-build front end).
 
 ## Two entry points
 
 | File | What it does |
 |------|--------------|
-| **`python run.py`** | Launch the app (Chat UI on :8502). `--market` for the Market UI on :8501. |
+| **`python run.py`** | Launch the web app → http://localhost:8600 |
 | **`python pipeline.py`** | Build / refresh the search index from `data/papers/`. `--incremental` for changed PDFs only. |
 
-That's all most people need. Everything else lives under `backend/`, organized by job.
+That's all most people need. Everything else lives under `backend/` and `webapp/`.
 
 ## Project structure
 
@@ -27,20 +27,25 @@ Audio-research-assistant/
 │   │                       #   ingest_papers, embed_chunks, incremental_index
 │   ├── retrieval/          # hybrid_retrieve, vector_retriever, retrieval_fusion,
 │   │                       #   query_planner, hyde_generator, multi_query_retrieve, ...
-│   ├── answering/          # answer_orchestrator, manual_answer_engine, evidence_builder,
-│   │                       #   prompt_builder, prompt_quality, research_modes, query_sanity, ...
+│   ├── answering/          # answer_orchestrator, evidence_builder,
+│   │                       #   prompt_quality, research_modes, query_sanity
 │   ├── llm/                # streaming_provider, fallback_provider, router, cost_tracker
 │   ├── database/           # oracle_db, create_schema, create_user, vector_migration,
 │   │                       #   reset_index, reset_embeddings, inspect_schema, db_status
 │   ├── memory/             # store (conversation memory), memory_backup (import/export)
 │   ├── tools/              # web_search, code_executor, sandbox_runner, dsp_toolkit
-│   └── evaluation/         # evaluate_retrieval, quality_test
-├── frontend/           # Streamlit UIs (chat_ui.py :8502, market_ui.py :8501, quality_dashboard.py) + helpers
+│   └── evaluation/         # evaluate_retrieval
+├── webapp/             # The web UI — FastAPI server + static front end
+│   ├── server.py           #   API routes + streaming chat (SSE)
+│   ├── chat_logic.py       #   orchestrates retrieval + LLM + memory
+│   ├── ingest.py           #   PDF upload + live ingestion
+│   ├── settings.py         #   model switcher
+│   └── static/             #   index.html, app.js, styles.css (no build step)
 ├── scripts/            # CLI maintenance tools (memory import/export, chat cleanup)
 ├── viewer_tool/        # show_my_data.py — inspect indexed data & memory
+├── tests/              # pytest unit tests
 ├── data/               # Papers, extracted text, SQLite memory/cost DBs (gitignored)
-├── docs/               # Reference material (pipeline PDF)
-├── .streamlit/         # Streamlit theme/config
+├── docs/               # Reference material (pipeline PDF + guide)
 ├── .vscode/            # Editor + debugger configuration
 ├── requirements.txt    # Pinned Python dependencies
 └── .env.example        # Environment configuration template
@@ -80,8 +85,7 @@ Then edit `.env` and fill in your Oracle credentials and any LLM API keys.
 
 ### From VSCode
 Open the folder, pick the `.venv` interpreter, then use **Run and Debug**:
-- **Web UI: run.py (FastAPI, :8600)**  ← the new default UI
-- **Old Chat UI: run.py --chat (Streamlit)**
+- **Web UI: run.py (FastAPI, :8600)**
 
 ### From the terminal
 ```powershell
@@ -91,13 +95,10 @@ python pipeline.py --status
 # First time / after adding PDFs — build the index
 python pipeline.py
 
-# Launch the app — the new web UI is the DEFAULT
-python run.py                      # New web UI  -> http://localhost:8600   (or: web_ui.bat)
-python run.py --chat               # Old Chat UI -> http://localhost:8502
-python run.py --market             # Market UI   -> http://localhost:8501
-python run.py --dashboard          # Dashboard   -> http://localhost:8503
+# Launch the web app
+python run.py                      # http://localhost:8600   (or double-click web_ui.bat)
 ```
-> The web UI does not auto-open a browser — visit http://localhost:8600 yourself.
+> The web app does not auto-open a browser — visit http://localhost:8600 yourself.
 
 ## Maintenance tools
 
@@ -136,8 +137,8 @@ Install dev tooling and run the fast unit suite (no DB / models / network needed
 pip install -r requirements-dev.txt
 pytest                          # tests/ — retrieval fusion, query sanity,
                                 #   device selection, env helpers, etc.
-pyflakes backend frontend       # lint: unused imports / undefined names
-vulture backend frontend        # find dead code
+pyflakes backend webapp         # lint: unused imports / undefined names
+vulture backend webapp          # find dead code
 ```
 
 ## Notes

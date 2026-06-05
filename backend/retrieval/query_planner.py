@@ -300,7 +300,7 @@ if __name__ == "__main__":
     if "--debug" not in sys.argv:
         print("query_planner.py is a backend component.")
         print("Run the app with:")
-        print("python run.py --market")
+        print("python run.py")
         print("")
         print("For developer diagnostics:")
         print("python backend\\query_planner.py --debug")

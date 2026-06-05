@@ -1,8 +1,7 @@
-"""Shared pytest setup: make the project root and frontend/ importable."""
+"""Shared pytest setup: make the project root importable (for `import backend.*`)."""
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-for p in (ROOT, ROOT / "frontend"):
-    if str(p) not in sys.path:
-        sys.path.insert(0, str(p))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))

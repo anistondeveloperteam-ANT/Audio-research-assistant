@@ -3,8 +3,7 @@
   "python.terminal.activateEnvironment": true,
   "python.envFile": "${workspaceFolder}/.env",
   "python.analysis.extraPaths": [
-    "${workspaceFolder}/backend",
-    "${workspaceFolder}/frontend"
+    "${workspaceFolder}"
   ],
   "python.analysis.typeCheckingMode": "basic",
   "files.exclude": {

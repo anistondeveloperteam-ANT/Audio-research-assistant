@@ -31,4 +31,4 @@ def run_research_question(question: str, deep: bool = True) -> dict:
 if __name__ == "__main__":
     print("answer_orchestrator.py is a backend component.")
     print("Use:")
-    print("python run.py --market")
+    print("python run.py")

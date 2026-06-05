@@ -57,7 +57,40 @@
   function renderMarkdown(el, text) {
     el.innerHTML = marked.parse(text || "", { breaks: true, gfm: true });
     linkifyCitations(el);
+    enhanceCodeBlocks(el);
   }
+
+  function enhanceCodeBlocks(root) {
+    root.querySelectorAll("pre").forEach((pre) => {
+      if (pre.querySelector(".code-copy")) return;
+      const btn = document.createElement("button");
+      btn.className = "code-copy";
+      btn.textContent = "Copy";
+      btn.addEventListener("click", () => {
+        const code = pre.querySelector("code");
+        navigator.clipboard.writeText((code || pre).innerText).then(() => {
+          btn.textContent = "Copied"; setTimeout(() => (btn.textContent = "Copy"), 1200);
+        });
+      });
+      pre.appendChild(btn);
+    });
+  }
+
+  // Citation hover preview
+  function showCitePop(chip, n) {
+    const s = (state.currentSources || []).find((x) => String(x.n) === String(n));
+    if (!s) return;
+    const pop = $("citePop");
+    const pages = s.page_start ? ` · pp. ${s.page_start}${s.page_end && s.page_end !== s.page_start ? "–" + s.page_end : ""}` : "";
+    pop.innerHTML = `<div class="cp-title">[${s.n}] ${esc(s.title)}</div>` +
+      `<div class="cp-meta">${esc(s.section || "")}${pages}</div>` +
+      `<div>${esc((s.text || "").slice(0, 170))}…</div>`;
+    const r = chip.getBoundingClientRect();
+    pop.style.left = Math.min(r.left, window.innerWidth - 350) + "px";
+    pop.style.top = (r.bottom + 8) + "px";
+    pop.classList.add("show");
+  }
+  function hideCitePop() { $("citePop").classList.remove("show"); }
   function linkifyCitations(root) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
@@ -77,8 +110,9 @@
         if (idx > last) frag.appendChild(document.createTextNode(s.slice(last, idx)));
         const b = document.createElement("button");
         b.className = "cite"; b.textContent = n; b.dataset.n = n;
-        b.title = "View source " + n;
         b.addEventListener("click", () => focusSource(parseInt(n, 10)));
+        b.addEventListener("mouseenter", () => showCitePop(b, n));
+        b.addEventListener("mouseleave", hideCitePop);
         frag.appendChild(b);
         last = idx + m.length;
         return m;
@@ -601,6 +635,12 @@
     const topk = $("topkSel");
     [4, 6, 8, 10, 12, 15].forEach((n) => { const o = document.createElement("option"); o.value = n; o.textContent = n; topk.appendChild(o); });
     topk.value = String(state.cfg.default_top_k || 8);
+    try {
+      const sm = localStorage.getItem("ara-mode"); if (sm && [...modeSel.options].some((o) => o.value === sm)) modeSel.value = sm;
+      const stk = localStorage.getItem("ara-topk"); if (stk) topk.value = stk;
+    } catch {}
+    modeSel.addEventListener("change", () => { try { localStorage.setItem("ara-mode", modeSel.value); } catch {} });
+    topk.addEventListener("change", () => { try { localStorage.setItem("ara-topk", topk.value); } catch {} });
     $("provLabel").textContent = state.cfg.provider || "ready";
     if (!state.cfg.provider || state.cfg.provider === "unknown") $("provDot").style.background = "var(--amber)";
 

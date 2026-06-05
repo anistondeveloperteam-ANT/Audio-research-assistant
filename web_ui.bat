@@ -9,4 +9,4 @@ if not exist .venv\Scripts\python.exe (
 )
 
 echo Open http://localhost:8600 in your browser once it says "Uvicorn running".
-.venv\Scripts\python.exe run.py --web
+.venv\Scripts\python.exe run.py

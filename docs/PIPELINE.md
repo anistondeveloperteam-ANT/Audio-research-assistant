@@ -54,7 +54,7 @@ flowchart LR
         LLM --> ANS[Cited answer]
     end
 
-    ANS --> UI[Streamlit UI]
+    ANS --> UI[Web UI]
 ```
 
 The project has **two commands** that map onto this picture:
@@ -393,7 +393,7 @@ Audio-research-assistant/
 │   ├── memory/             # store, memory_backup
 │   ├── tools/              # web_search, code_executor, sandbox_runner, dsp_toolkit
 │   └── evaluation/         # evaluate_retrieval
-├── frontend/               # chat_ui.py, market_ui.py, quality_dashboard.py (+ helpers)
+├── webapp/                 # the web UI — FastAPI server + static front end
 ├── data/                   # papers, extracted text, memory.db, llm_costs.db
 └── docs/                   # this file + reference PDF
 ```

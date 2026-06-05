@@ -218,5 +218,5 @@ def build_context_text(question, query_plan, topic_sources):
 
 if __name__ == "__main__":
     print("evidence_builder.py is a backend component.")
-    print("Use the Streamlit app:")
-    print("python run.py --market")
+    print("Use the web app:")
+    print("python run.py")
