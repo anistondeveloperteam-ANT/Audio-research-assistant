@@ -34,7 +34,8 @@ torchaudio==2.7.1
 oracledb==4.0.0
 
 # --- PDF reading / parsing ---
-PyMuPDF==1.27.2.3
+docling==2.93.0          # primary parser (best quality: layout, tables, structure)
+PyMuPDF==1.27.2.3        # fast fallback parser
 pypdf==6.11.0
 
 # --- LLM providers (selected at runtime via LLM_PROVIDER / ANSWER_PROVIDER) ---
@@ -52,14 +53,9 @@ beautifulsoup4==4.14.3
 tqdm==4.67.3
 
 # ======================================================================
-# OPTIONAL: heavy document-ingestion / OCR engines.
-# Only needed for re-ingesting PDFs with advanced parsers/OCR
-# (PARSER_MODE, ENABLE_DOCLING, ENABLE_MARKER, ENABLE_OCR in .env).
-# Uncomment the ones you actually use; they are large downloads.
+# OPTIONAL: OCR fallback for scanned / image-only PDFs (ENABLE_OCR).
+# Only triggers when a page has almost no extractable text; large downloads.
 # ----------------------------------------------------------------------
-# OCR fallback for scanned PDFs (only triggers when a page has no text):
 # paddleocr==3.5.0
 # paddlepaddle==3.3.1
 # pytesseract==0.3.13          # also requires the Tesseract binary on PATH
-#
-# (Docling and Marker were removed — PyMuPDF is the parser for low latency.)

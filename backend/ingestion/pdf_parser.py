@@ -154,9 +154,47 @@ def build_ocr_parsed_result(pdf_path: Path, ocr_result):
     }
 
 
+_docling_converter = None
+
+
+def _get_docling_converter():
+    """Lazily build and cache the Docling converter (loads layout models once)."""
+    global _docling_converter
+    if _docling_converter is None:
+        from docling.document_converter import DocumentConverter
+        _docling_converter = DocumentConverter()
+    return _docling_converter
+
+
+def parse_with_docling(pdf_path: Path):
+    """Parse via Docling's Python API (layout, tables, reading order)."""
+    converter = _get_docling_converter()
+    result = converter.convert(str(pdf_path))
+    md_text = clean_text(result.document.export_to_markdown())
+    if not md_text.strip():
+        raise RuntimeError("Docling produced empty output.")
+
+    return {
+        "parser": "docling",
+        "pages": [{"page": 1, "text": md_text, "parser": "docling"}],
+        "page_count": estimate_page_count(pdf_path),
+        "raw_markdown": md_text,
+        "tables": extract_markdown_tables(md_text),
+        "equations": extract_equation_blocks(md_text),
+    }
+
+
 def parse_pdf(pdf_path: Path):
-    # Fast path: PyMuPDF for all text PDFs (low latency).
-    parsed = parse_with_pymupdf(pdf_path)
+    # Best-quality parser first: Docling (layout, tables, reading order).
+    # Falls back to fast PyMuPDF only if Docling errors, so ingestion never fails.
+    parsed = None
+    try:
+        parsed = parse_with_docling(pdf_path)
+    except Exception as e:
+        print(f"Docling failed for {pdf_path.name}; falling back to PyMuPDF. {str(e)[:300]}")
+
+    if parsed is None:
+        parsed = parse_with_pymupdf(pdf_path)
 
     # OCR fallback only if normal extraction is weak (scanned / image-only PDF).
     if total_text_length(parsed) < 500:

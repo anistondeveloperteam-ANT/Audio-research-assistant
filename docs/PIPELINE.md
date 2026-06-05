@@ -85,13 +85,15 @@ flowchart TD
 ```
 
 ### 3.1 Parse — `backend/ingestion/pdf_parser.py`
-Extracts clean text from each PDF, page by page:
+Extracts clean text from each PDF (a one-time cost at upload — it does **not**
+affect answer speed):
 
-- **PyMuPDF (`fitz`)** — the parser. Very fast, low latency. (Docling and Marker
-  were removed because their ML layout models made parsing slow.)
+- **Docling** — the parser. IBM's document AI: layout analysis, reading order,
+  tables, and section structure → high-quality chunks for scientific papers.
+- **PyMuPDF (`fitz`)** — automatic fallback if Docling errors on a file, so
+  ingestion never hard-fails.
 - **OCR fallback** (`ocr_fallback.py`) — only when a page has almost no
-  extractable text (scanned / image-only PDF), it falls back to OCR
-  (PaddleOCR / Tesseract) so no paper is lost. Adds no latency to normal PDFs.
+  extractable text (scanned / image-only PDF): PaddleOCR / Tesseract.
 
 Text is cleaned (de-hyphenation, whitespace normalization) before chunking.
 
@@ -255,7 +257,8 @@ flowchart LR
 ### Document processing
 | Technology | Role |
 |------------|------|
-| **PyMuPDF (fitz)** | The PDF text parser — fast, low latency |
+| **Docling** | The PDF parser — best-quality layout/table/structure extraction |
+| **PyMuPDF (fitz)** | Fast fallback parser (if Docling errors) |
 | **PaddleOCR / Tesseract** *(optional)* | OCR for scanned PDFs |
 | **NumPy / SciPy** | Numerics, DSP, vector math |
 
