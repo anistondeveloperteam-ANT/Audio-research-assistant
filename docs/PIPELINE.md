@@ -237,6 +237,7 @@ same client with a custom base URL.
 | **Conversation memory** | `backend/memory/store.py` | Three-tier memory in SQLite (`data/memory.db`): sessions, turns (with saved sources), and facts. Supports edit/delete of individual turns. |
 | **Memory backup** | `backend/memory/memory_backup.py` | Human-readable, checksummed, secret-masked export/import of memory (used by `scripts/`). |
 | **Retrieval evaluation** | `backend/evaluation/evaluate_retrieval.py` | Scores retrieval quality against `data/evaluation_questions.json`. |
+| **LLM accuracy** | `backend/evaluation/evaluate_llm.py` | Scores/compares LLM answer accuracy (keypoint coverage, citation rate, optional LLM-judge) against `data/llm_eval_questions.json`. |
 | **Data viewer** | `viewer_tool/show_my_data.py` | Inspect indexed PDFs, chunks, embeddings, and memory. |
 
 ---

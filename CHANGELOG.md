@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-05
 
+### LLM accuracy measurement
+- Added `backend/evaluation/evaluate_llm.py` + `data/llm_eval_questions.json`:
+  runs the real retrieve→answer pipeline over a question set and scores each
+  answer on **keypoint coverage**, **citation rate**, and an optional
+  **LLM-as-judge** correctness score. `--models a,b,c` compares models head-to-head
+  and prints a ranked scorecard, so you can see which model answers best.
+
 ### Consolidated config / launcher files
 - Removed `enable_sharing.bat` — `run.py` now opens the firewall itself (one UAC
   prompt) and prints the manual `netsh` command if that's declined.

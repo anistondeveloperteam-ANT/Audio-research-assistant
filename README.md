@@ -115,6 +115,7 @@ python run.py --local              # restrict to this PC only
 | `python -m backend.database.test_oracle` | Verify the Oracle connection |
 | `python -m backend.database.db_status` | Show indexed papers / chunk counts |
 | `python -m backend.evaluation.evaluate_retrieval` | Score retrieval quality |
+| `python -m backend.evaluation.evaluate_llm` | Measure LLM answer accuracy (keypoint coverage + citations); `--models a,b` to compare, `--judge` for an LLM-graded score |
 
 ## GPU / CPU
 

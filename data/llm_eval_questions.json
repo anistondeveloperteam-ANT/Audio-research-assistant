@@ -1,0 +1,37 @@
+{
+  "_comment": "Accuracy test set for the LLM. Each item has a question and the key points a correct answer should mention. 'key_points' use 'a|b' to accept any alternative wording. EDIT THIS to match the papers you have indexed for the most meaningful scores. Used by: python -m backend.evaluation.evaluate_llm",
+  "questions": [
+    {
+      "question": "What is MVDR beamforming and how does it reduce noise?",
+      "key_points": ["mvdr|minimum variance|minimum-variance distortionless", "steering vector|look direction|array geometry", "noise|interference covariance", "distortionless|unit gain|undistorted"]
+    },
+    {
+      "question": "How does acoustic echo cancellation work?",
+      "key_points": ["adaptive filter|lms|nlms|rls", "reference|far-end signal", "echo path|impulse response", "residual echo|double-talk|suppression"]
+    },
+    {
+      "question": "What do PESQ and STOI measure in speech enhancement?",
+      "key_points": ["pesq", "stoi", "quality|perceptual", "intelligibility"]
+    },
+    {
+      "question": "What is the short-time Fourier transform and why is it used in audio processing?",
+      "key_points": ["window|frame|framing", "overlap", "frequency|spectrogram", "time-frequency|time-varying"]
+    },
+    {
+      "question": "What is the difference between delay-and-sum and MVDR beamforming?",
+      "key_points": ["delay-and-sum|delay and sum|fixed beamformer", "adaptive|data-dependent", "noise|interference suppression", "spatial|directional"]
+    },
+    {
+      "question": "How do deep neural networks perform speech denoising?",
+      "key_points": ["mask|ratio mask|spectral mask", "supervised|training", "noisy|clean speech", "spectrogram|time-frequency|waveform"]
+    },
+    {
+      "question": "What is dereverberation and which methods address it?",
+      "key_points": ["reverberation|reverberant|reverb", "wpe|weighted prediction error|inverse filter", "late reflections|tail", "room impulse response|rir"]
+    },
+    {
+      "question": "Which metrics evaluate source separation performance?",
+      "key_points": ["sdr|signal-to-distortion", "sir|sar|signal-to-interference", "separation", "decibel|db"]
+    }
+  ]
+}
