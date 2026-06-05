@@ -67,9 +67,6 @@ def apply_research_mode(mode: str | None) -> Dict[str, Any]:
     mode_name = settings["mode"]
 
     os.environ["RESEARCH_MODE"] = mode_name
-    os.environ["PARSER_MODE"] = "auto"
-    os.environ["ENABLE_DOCLING"] = "true"
-    os.environ["ENABLE_MARKER"] = "false"
     os.environ["ENABLE_OCR"] = "true"
     os.environ["ANSWER_PROVIDER"] = os.getenv("ANSWER_PROVIDER", "manual") or "manual"
 

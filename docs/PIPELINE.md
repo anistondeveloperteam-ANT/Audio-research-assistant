@@ -85,14 +85,13 @@ flowchart TD
 ```
 
 ### 3.1 Parse — `backend/ingestion/pdf_parser.py`
-Extracts clean text from each PDF, page by page. It supports several parser
-engines selected by `PARSER_MODE`:
+Extracts clean text from each PDF, page by page:
 
-- **PyMuPDF (`fitz`)** — fast default text extraction.
-- **Docling** *(optional)* — high-quality structured parsing (layout, tables).
-- **Marker** *(optional)* — alternative deep PDF→markdown parser.
-- **OCR fallback** (`ocr_fallback.py`) — when a PDF is scanned/image-only, falls
-  back to OCR (PaddleOCR / Tesseract) so no paper is lost.
+- **PyMuPDF (`fitz`)** — the parser. Very fast, low latency. (Docling and Marker
+  were removed because their ML layout models made parsing slow.)
+- **OCR fallback** (`ocr_fallback.py`) — only when a page has almost no
+  extractable text (scanned / image-only PDF), it falls back to OCR
+  (PaddleOCR / Tesseract) so no paper is lost. Adds no latency to normal PDFs.
 
 Text is cleaned (de-hyphenation, whitespace normalization) before chunking.
 
@@ -256,9 +255,7 @@ flowchart LR
 ### Document processing
 | Technology | Role |
 |------------|------|
-| **PyMuPDF (fitz)** | Default fast PDF text extraction |
-| **Docling** *(optional)* | Structured layout/table parsing |
-| **Marker** *(optional)* | Alternative deep PDF parser |
+| **PyMuPDF (fitz)** | The PDF text parser — fast, low latency |
 | **PaddleOCR / Tesseract** *(optional)* | OCR for scanned PDFs |
 | **NumPy / SciPy** | Numerics, DSP, vector math |
 
@@ -333,7 +330,7 @@ Everything is configured via a single `.env` file. Key settings:
 | `LLM_PROVIDER` | `ollama` \| `openai` | Chat backend |
 | `DEVICE` / `EMBEDDING_DEVICE` / `RERANKER_DEVICE` | `auto` / `cuda` / `cpu` | GPU/CPU placement |
 | `MAX_QUERY_ROUTES`, `RETRIEVAL_TOP_K`, `TOTAL_SOURCE_LIMIT` | `4 / 8 / 14` | Retrieval tuning |
-| `PARSER_MODE`, `ENABLE_DOCLING`, `ENABLE_OCR` | `auto`, `true`, `true` | Ingestion engines |
+| `ENABLE_OCR` | `true` | OCR fallback for scanned PDFs |
 
 ### GPU + CPU split
 On a small GPU (e.g. a 6 GB laptop card shared with Ollama), the default uses

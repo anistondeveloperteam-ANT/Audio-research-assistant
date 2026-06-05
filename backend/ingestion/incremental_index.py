@@ -124,9 +124,6 @@ def main() -> None:
     args = parser.parse_args()
 
     started = time.time()
-    os.environ["PARSER_MODE"] = "auto"
-    os.environ["ENABLE_DOCLING"] = "true"
-    os.environ["ENABLE_MARKER"] = "false"
     os.environ["ENABLE_OCR"] = "true"
 
     old_manifest = read_json(MANIFEST_FILE, {"files": {}})

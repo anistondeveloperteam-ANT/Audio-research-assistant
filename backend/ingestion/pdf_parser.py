@@ -1,7 +1,5 @@
 import os
 import re
-import shutil
-import subprocess
 from pathlib import Path
 
 import fitz
@@ -16,9 +14,6 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-PARSER_MODE = os.getenv("PARSER_MODE", "auto").lower()
-ENABLE_DOCLING = os.getenv("ENABLE_DOCLING", "true").lower() == "true"
-ENABLE_MARKER = os.getenv("ENABLE_MARKER", "false").lower() == "true"
 
 EXTRACTED_DIR = Path("data/extracted")
 PARSER_CACHE_DIR = EXTRACTED_DIR / "parser_cache"
@@ -133,154 +128,6 @@ def extract_equation_blocks(text: str):
     return list(dict.fromkeys(equations))
 
 
-def parse_with_docling(pdf_path: Path):
-    if not shutil.which("docling"):
-        raise RuntimeError("Docling CLI not found. Install with: pip install docling")
-
-    out_dir = PARSER_CACHE_DIR / safe_name(pdf_path)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    cmd = [
-        "docling",
-        "--to", "md",
-        "--output", str(out_dir),
-        str(pdf_path),
-    ]
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=1200,
-        env={
-            **os.environ,
-            "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
-            "HF_HUB_DISABLE_PROGRESS_BARS": "1",
-            "HF_HUB_DISABLE_TELEMETRY": "1",
-            "TRANSFORMERS_VERBOSITY": "error",
-            "TOKENIZERS_PARALLELISM": "false",
-        },
-    )
-
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr or result.stdout)
-
-    md_files = list(out_dir.glob("*.md"))
-
-    if not md_files:
-        raise RuntimeError("Docling did not create markdown output.")
-
-    md_text = md_files[0].read_text(encoding="utf-8", errors="ignore")
-    md_text = clean_text(md_text)
-
-    return {
-        "parser": "docling",
-        "pages": [
-            {
-                "page": 1,
-                "text": md_text,
-                "parser": "docling",
-            }
-        ],
-        "page_count": estimate_page_count(pdf_path),
-        "raw_markdown": md_text,
-        "tables": extract_markdown_tables(md_text),
-        "equations": extract_equation_blocks(md_text),
-    }
-
-def parse_with_marker(pdf_path: Path):
-    # Deep parser mode using marker-pdf.
-    # Your marker_single CLI expects: marker_single [OPTIONS] FPATH
-    if not ENABLE_MARKER:
-        raise RuntimeError('Marker disabled. Set ENABLE_MARKER=true in .env')
-
-    marker_cmd = shutil.which('marker_single')
-    if not marker_cmd:
-        raise RuntimeError('marker_single command not found. Install with: pip install marker-pdf')
-
-    out_dir = PARSER_CACHE_DIR / (safe_name(pdf_path) + '_marker')
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    pdf_abs = str(pdf_path.resolve())
-    out_abs = str(out_dir.resolve())
-
-    command_variants = [
-        [marker_cmd, pdf_abs, '--output_dir', out_abs],
-        [marker_cmd, pdf_abs, '--output_dir', out_abs, '--output_format', 'markdown'],
-        [marker_cmd, pdf_abs, '--output', out_abs],
-        [marker_cmd, '--output_dir', out_abs, pdf_abs],
-        [marker_cmd, '--output_format', 'markdown', '--output_dir', out_abs, pdf_abs],
-        [marker_cmd, pdf_abs],
-    ]
-
-    last_error = ''
-    generated_files = []
-
-    for cmd in command_variants:
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=1800,
-                cwd=str(out_dir),
-                env={
-                    **os.environ,
-                    'HF_HUB_DISABLE_SYMLINKS_WARNING': '1',
-                    'HF_HUB_DISABLE_PROGRESS_BARS': '1',
-                    'HF_HUB_DISABLE_TELEMETRY': '1',
-                    'TRANSFORMERS_VERBOSITY': 'error',
-                    'TOKENIZERS_PARALLELISM': 'false',
-                },
-            )
-
-            if result.returncode != 0:
-                last_error = (result.stderr or result.stdout or '')[:3000]
-                continue
-
-            generated_files = (
-                list(out_dir.rglob('*.md')) +
-                list(out_dir.rglob('*.markdown')) +
-                list(out_dir.rglob('*.txt'))
-            )
-
-            if generated_files:
-                break
-
-            last_error = 'Marker succeeded but no markdown/txt output was found. stdout=' + result.stdout[:1000] + ' stderr=' + result.stderr[:1000]
-
-        except Exception as exc:
-            last_error = str(exc)
-
-    if not generated_files:
-        manual_cmd = 'marker_single "' + pdf_abs + '" --output_dir "' + out_abs + '"'
-        message = (
-            'Marker did not create markdown output.' + chr(10) +
-            'Output folder: ' + str(out_dir) + chr(10) +
-            'Last error: ' + str(last_error) + chr(10) + chr(10) +
-            'Manual test command:' + chr(10) + manual_cmd
-        )
-        raise RuntimeError(message)
-
-    best_file = max(generated_files, key=lambda p: p.stat().st_size)
-    md_text = best_file.read_text(encoding='utf-8', errors='ignore')
-    md_text = clean_text(md_text)
-
-    return {
-        'parser': 'marker',
-        'pages': [
-            {
-                'page': 1,
-                'text': md_text,
-                'parser': 'marker',
-            }
-        ],
-        'page_count': estimate_page_count(pdf_path),
-        'raw_markdown': md_text,
-        'tables': extract_markdown_tables(md_text),
-        'equations': extract_equation_blocks(md_text),
-    }
-
 def total_text_length(parsed):
     total = 0
 
@@ -308,34 +155,10 @@ def build_ocr_parsed_result(pdf_path: Path, ocr_result):
 
 
 def parse_pdf(pdf_path: Path):
-    mode = PARSER_MODE
+    # Fast path: PyMuPDF for all text PDFs (low latency).
+    parsed = parse_with_pymupdf(pdf_path)
 
-    parsed = None
-
-    if mode == "pymupdf":
-        parsed = parse_with_pymupdf(pdf_path)
-
-    elif mode == "docling":
-        parsed = parse_with_docling(pdf_path)
-
-    elif mode == "marker":
-        parsed = parse_with_marker(pdf_path)
-
-    elif mode == "auto":
-        if ENABLE_DOCLING:
-            try:
-                parsed = parse_with_docling(pdf_path)
-            except Exception as e:
-                print(f"Docling failed for {pdf_path.name}. Falling back to PyMuPDF.")
-                print(str(e)[:500])
-
-        if parsed is None:
-            parsed = parse_with_pymupdf(pdf_path)
-
-    else:
-        parsed = parse_with_pymupdf(pdf_path)
-
-    # OCR fallback only if normal extraction is weak.
+    # OCR fallback only if normal extraction is weak (scanned / image-only PDF).
     if total_text_length(parsed) < 500:
         print(f"Weak extracted text detected for {pdf_path.name}. Trying OCR fallback...")
         ocr_result = ocr_pdf_fallback(pdf_path, max_pages=10)

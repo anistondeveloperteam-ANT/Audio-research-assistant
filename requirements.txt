@@ -57,9 +57,9 @@ tqdm==4.67.3
 # (PARSER_MODE, ENABLE_DOCLING, ENABLE_MARKER, ENABLE_OCR in .env).
 # Uncomment the ones you actually use; they are large downloads.
 # ----------------------------------------------------------------------
-# docling==2.93.0
-# marker-pdf==1.10.2
+# OCR fallback for scanned PDFs (only triggers when a page has no text):
 # paddleocr==3.5.0
 # paddlepaddle==3.3.1
 # pytesseract==0.3.13          # also requires the Tesseract binary on PATH
-# surya-ocr==0.17.1
+#
+# (Docling and Marker were removed — PyMuPDF is the parser for low latency.)
