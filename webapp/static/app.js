@@ -11,6 +11,11 @@
       fetch(`/api/sessions/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }),
     deleteSession: (id) => fetch(`/api/sessions/${id}`, { method: "DELETE" }),
     turns: (id) => fetch(`/api/sessions/${id}/turns`).then((r) => r.json()),
+    library: () => fetch("/api/library").then((r) => r.json()),
+    upload: (file) => {
+      const fd = new FormData(); fd.append("file", file);
+      return fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json());
+    },
   };
 
   const state = {
@@ -18,6 +23,7 @@
     sessions: [],
     currentId: null,
     streaming: false,
+    ingesting: false,
     currentSources: [],
   };
 
@@ -397,6 +403,107 @@
     tr.scrollTop = tr.scrollHeight;
   }
 
+  // ---------- Library + upload + ingest ----------
+  async function loadLibrary() {
+    try {
+      const lib = await api.library();
+      const p = lib.papers != null ? lib.papers : lib.pdfs;
+      $("libLabel").textContent = `${p} paper${p === 1 ? "" : "s"} indexed`;
+    } catch { $("libLabel").textContent = "library unavailable"; }
+  }
+
+  function pickPdf() {
+    if (state.ingesting) return;
+    $("pdfInput").value = "";
+    $("pdfInput").click();
+  }
+
+  async function onPdfChosen(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (file.type && file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      toast("Please choose a PDF file.", "error"); return;
+    }
+    $("addPaperBtn").classList.add("busy");
+    let res;
+    try { res = await api.upload(file); }
+    catch (err) { toast("Upload failed: " + err.message, "error"); $("addPaperBtn").classList.remove("busy"); return; }
+    $("addPaperBtn").classList.remove("busy");
+
+    if (res.status === "duplicate") { toast(`"${res.filename}" is already in your library.`); return; }
+    if (res.status === "error") { toast(res.message || "Upload rejected.", "error"); return; }
+    // saved -> index it
+    startIngest(res.filename);
+  }
+
+  function openIngestModal(filename) {
+    $("imTitle").textContent = "Adding " + (filename || "your paper") + "…";
+    $("imStage").textContent = "Starting…";
+    $("imLog").textContent = "";
+    $("imSpinner").hidden = false;
+    $("imCheck").hidden = true;
+    $("imFoot").hidden = true;
+    $("ingestModal").classList.add("show");
+    $("ingestScrim").classList.add("show");
+  }
+  function closeIngestModal() { $("ingestModal").classList.remove("show"); $("ingestScrim").classList.remove("show"); }
+
+  function logLine(text, cls) {
+    const log = $("imLog");
+    const span = document.createElement("span");
+    if (cls) span.className = cls;
+    span.textContent = text + "\n";
+    log.appendChild(span);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function startIngest(filename) {
+    state.ingesting = true;
+    $("addPaperBtn").classList.add("busy");
+    openIngestModal(filename);
+    logLine("→ Saved. Indexing now — this can take a minute for a new paper.", "stage");
+    try {
+      const resp = await fetch("/api/ingest", { method: "POST" });
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "", ok = true;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let ev; try { ev = JSON.parse(line); } catch { continue; }
+          if (ev.type === "stage") { $("imStage").textContent = ev.label; logLine("◆ " + ev.label, "stage"); }
+          else if (ev.type === "log") { logLine(ev.line, /skip/i.test(ev.line) ? "warn" : null); }
+          else if (ev.type === "error") { ok = false; logLine("✗ " + ev.message, "warn"); }
+          else if (ev.type === "done") {
+            logLine("✓ " + ev.message, "ok");
+            if (ev.library) { const p = ev.library.papers != null ? ev.library.papers : ev.library.pdfs; $("libLabel").textContent = `${p} papers indexed`; }
+          }
+        }
+      }
+      finishIngest(ok, filename);
+    } catch (err) {
+      logLine("✗ " + err.message, "warn");
+      finishIngest(false, filename);
+    }
+  }
+
+  function finishIngest(ok, filename) {
+    state.ingesting = false;
+    $("addPaperBtn").classList.remove("busy");
+    $("imSpinner").hidden = true;
+    $("imCheck").hidden = !ok;
+    $("imTitle").textContent = ok ? "Paper added" : "Indexing failed";
+    $("imStage").textContent = ok ? "You can now ask questions about it." : "See the log above. The paper was saved but not fully indexed.";
+    $("imFoot").hidden = false;
+    if (ok) toast(`"${filename}" added to your library.`);
+    loadLibrary();
+  }
+
   // ---------- Init ----------
   async function init() {
     try { state.cfg = await api.config(); } catch {}
@@ -411,6 +518,7 @@
     $("provLabel").textContent = state.cfg.provider || "ready";
     if (!state.cfg.provider || state.cfg.provider === "unknown") $("provDot").style.background = "var(--amber)";
 
+    loadLibrary();
     await loadSessions();
 
     // Events
@@ -420,6 +528,9 @@
     $("drawerClose").addEventListener("click", closeDrawer);
     $("scrim").addEventListener("click", closeDrawer);
     $("menuBtn").addEventListener("click", () => $("sidebar").classList.toggle("open"));
+    $("addPaperBtn").addEventListener("click", pickPdf);
+    $("pdfInput").addEventListener("change", onPdfChosen);
+    $("imDone").addEventListener("click", closeIngestModal);
 
     const input = $("input");
     input.addEventListener("input", () => { autosize(); $("sendBtn").disabled = state.streaming || !input.value.trim(); });

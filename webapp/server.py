@@ -11,7 +11,7 @@ import json
 import sys
 from pathlib import Path
 
-from fastapi import Body, FastAPI
+from fastapi import Body, FastAPI, File, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from webapp import chat_logic
+from webapp import chat_logic, ingest
 from backend.answering.research_modes import MODE_SETTINGS
 from backend.llm.streaming_provider import get_provider
 
@@ -83,6 +83,32 @@ def delete_session(session_id: str):
 @app.get("/api/sessions/{session_id}/turns")
 def get_turns(session_id: str):
     return chat_logic.memory().get_turns(session_id)
+
+
+# ----------------------------------------------------------------------
+# Library: upload a PDF + stream ingestion
+# ----------------------------------------------------------------------
+@app.get("/api/library")
+def library():
+    return ingest.library_stats()
+
+
+@app.post("/api/upload")
+async def upload(file: UploadFile = File(...)):
+    data = await file.read()
+    return ingest.save_pdf(file.filename or "paper.pdf", data)
+
+
+@app.post("/api/ingest")
+def run_ingest():
+    def gen():
+        try:
+            for event in ingest.stream_ingest():
+                yield json.dumps(event) + "\n"
+        except Exception as exc:
+            yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
 # ----------------------------------------------------------------------

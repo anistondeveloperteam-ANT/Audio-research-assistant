@@ -32,12 +32,21 @@
         New chat
       </button>
 
+      <button class="add-paper" id="addPaperBtn" title="Upload a PDF to add it to your searchable library">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/><path d="M12 11v6M9 14h6"/></svg>
+        Add paper
+      </button>
+      <input type="file" id="pdfInput" accept="application/pdf,.pdf" hidden />
+
       <div class="sessions-label">Conversations</div>
       <div class="sessions" id="sessions"></div>
 
       <div class="sidebar-foot">
-        <span class="dot" id="provDot"></span>
-        <span id="provLabel">connecting…</span>
+        <div class="foot-row"><span class="dot" id="provDot"></span><span id="provLabel">connecting…</span></div>
+        <div class="foot-row foot-lib">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          <span id="libLabel">loading library…</span>
+        </div>
       </div>
     </aside>
 
@@ -98,6 +107,25 @@
       <div class="drawer-empty">Ask a question and the papers used to answer it will appear here — with section and page references.</div>
     </div>
   </aside>
+
+  <!-- ============ Ingest progress modal ============ -->
+  <div class="modal-scrim" id="ingestScrim"></div>
+  <div class="ingest-modal" id="ingestModal" role="dialog" aria-label="Indexing paper">
+    <div class="im-head">
+      <span class="im-spinner" id="imSpinner"></span>
+      <span class="im-check" id="imCheck" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      </span>
+      <div class="im-titles">
+        <div class="im-title" id="imTitle">Adding your paper…</div>
+        <div class="im-stage" id="imStage">Starting…</div>
+      </div>
+    </div>
+    <pre class="im-log" id="imLog"></pre>
+    <div class="im-foot" id="imFoot" hidden>
+      <button class="new-chat" id="imDone" style="margin:0;width:100%">Done</button>
+    </div>
+  </div>
 
   <div class="toasts" id="toasts"></div>
 
