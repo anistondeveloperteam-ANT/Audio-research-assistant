@@ -25,7 +25,12 @@
     streaming: false,
     ingesting: false,
     currentSources: [],
+    abort: null,
+    autoStick: true,
   };
+
+  const SEND_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11l5-5 5 5M12 6v13"/></svg>';
+  const STOP_ICON = '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor"/></svg>';
 
   const EXAMPLES = [
     ["How does MVDR beamforming reduce noise?", "Compare it with delay-and-sum."],
@@ -107,7 +112,7 @@
     m.innerHTML = `<div class="bubble"></div>`;
     m.querySelector(".bubble").textContent = text;
     inner().appendChild(m);
-    scrollToBottom();
+    scrollToBottom(true);
   }
 
   // Returns handles to drive a streaming assistant message.
@@ -124,7 +129,7 @@
         <div class="msg-tools" style="display:none"></div>
       </div>`;
     inner().appendChild(m);
-    scrollToBottom();
+    scrollToBottom(true);
     return {
       el: m,
       statusEl: m.querySelector(".statusline"),
@@ -254,7 +259,7 @@
       turns.forEach(renderHistoryMessage);
       const lastAssist = [...turns].reverse().find((t) => t.role === "assistant" && t.sources);
       renderSources(lastAssist ? lastAssist.sources : []);
-      scrollToBottom();
+      scrollToBottom(true);
     }
     if (window.innerWidth <= 880) $("sidebar").classList.remove("open");
   }
@@ -290,7 +295,18 @@
   // ---------- Sending + streaming ----------
   function setStreaming(on) {
     state.streaming = on;
-    $("sendBtn").disabled = on || !$("input").value.trim();
+    const btn = $("sendBtn");
+    if (on) {
+      btn.disabled = false;
+      btn.classList.add("stop");
+      btn.innerHTML = STOP_ICON;
+      btn.setAttribute("aria-label", "Stop generating");
+    } else {
+      btn.classList.remove("stop");
+      btn.innerHTML = SEND_ICON;
+      btn.setAttribute("aria-label", "Send");
+      btn.disabled = !$("input").value.trim();
+    }
     $("input").disabled = on;
   }
 
@@ -321,11 +337,14 @@
       });
     };
 
+    const controller = new AbortController();
+    state.abort = controller;
     try {
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: state.currentId, question: text, mode: $("modeSel").value, top_k: parseInt($("topkSel").value, 10) }),
+        signal: controller.signal,
       });
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
@@ -344,11 +363,17 @@
         }
       }
     } catch (err) {
-      toast("Connection error: " + err.message, "error");
+      if (err.name === "AbortError") {
+        answer = (answer || "").trim() + "\n\n_⏹ Stopped._";
+      } else {
+        toast("Connection error: " + err.message, "error");
+        if (!answer) answer = "_Something went wrong. Please try again._";
+      }
       h.statusEl.style.display = "none";
       h.md.style.display = "";
-      renderMarkdown(h.md, answer || "_Something went wrong. Please try again._");
+      renderMarkdown(h.md, answer);
     } finally {
+      state.abort = null;
       // Final clean render (drop the streaming caret).
       h.md.style.display = ""; h.statusEl.style.display = "none";
       renderMarkdown(h.md, answer || "_(no answer)_");
@@ -398,9 +423,20 @@
     t.style.height = "auto";
     t.style.height = Math.min(t.scrollHeight, 200) + "px";
   }
-  function scrollToBottom() {
+  function nearBottom() {
     const tr = $("transcript");
-    tr.scrollTop = tr.scrollHeight;
+    return tr.scrollHeight - tr.scrollTop - tr.clientHeight < 120;
+  }
+  function updateToBottomBtn() {
+    const tr = $("transcript");
+    const show = tr.scrollHeight - tr.scrollTop - tr.clientHeight > 220 && !!inner().querySelector(".msg");
+    $("toBottom").classList.toggle("show", show);
+  }
+  function scrollToBottom(force) {
+    const tr = $("transcript");
+    if (force) state.autoStick = true;
+    if (force || state.autoStick) tr.scrollTop = tr.scrollHeight;
+    updateToBottomBtn();
   }
 
   // ---------- Library + upload + ingest ----------
@@ -523,7 +559,12 @@
 
     // Events
     $("newChatBtn").addEventListener("click", newChat);
-    $("sendBtn").addEventListener("click", send);
+    $("sendBtn").addEventListener("click", () => {
+      if (state.streaming) { if (state.abort) state.abort.abort(); }
+      else send();
+    });
+    $("transcript").addEventListener("scroll", () => { state.autoStick = nearBottom(); updateToBottomBtn(); });
+    $("toBottom").addEventListener("click", () => scrollToBottom(true));
     $("sourcesBtn").addEventListener("click", () => { renderSources(state.currentSources); openDrawer(); });
     $("drawerClose").addEventListener("click", closeDrawer);
     $("scrim").addEventListener("click", closeDrawer);
