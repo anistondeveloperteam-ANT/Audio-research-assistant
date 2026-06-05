@@ -257,7 +257,7 @@
       <div class="avatar">AI</div>
       <div class="body">
         <div class="bubble assistant">
-          <div class="statusline"><span class="typing"><span></span><span></span><span></span></span><span class="status-text">Thinking…</span></div>
+          <div class="statusline"><span class="typing"><span></span><span></span><span></span></span><span class="status-text">Thinking…</span><span class="elapsed"></span></div>
           <div class="md" style="display:none"></div>
         </div>
         <div class="msg-tools" style="display:none"></div>
@@ -268,6 +268,7 @@
       el: m,
       statusEl: m.querySelector(".statusline"),
       statusText: m.querySelector(".status-text"),
+      elapsed: m.querySelector(".elapsed"),
       md: m.querySelector(".md"),
       tools: m.querySelector(".msg-tools"),
     };
@@ -282,9 +283,18 @@
     finalizeTools(h, turn.sources || []);
   }
 
-  function finalizeTools(h, sources) {
+  function finalizeTools(h, sources, meta) {
     h.tools.style.display = "flex";
     h.tools.innerHTML = "";
+    // Speed + model badge (live answers only) — makes the response feel measured, not dull.
+    if (meta && meta.seconds != null) {
+      const badge = document.createElement("span");
+      badge.className = "speed-badge";
+      const model = (meta.model || "").split("/").pop();
+      badge.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M13 2 4.5 13H11l-1 9 8.5-11H12z"/></svg> ${meta.seconds.toFixed(1)}s${model ? " · " + esc(model) : ""}`;
+      badge.title = "Answer time" + (meta.model ? " · " + esc(meta.model) : "");
+      h.tools.appendChild(badge);
+    }
     const copy = document.createElement("button");
     copy.className = "tool-btn";
     copy.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg> Copy`;
@@ -458,6 +468,10 @@
     $("input").disabled = on;
   }
 
+  function currentModelName() {
+    try { return JSON.parse($("modelSel").value).model || ""; } catch { return ""; }
+  }
+
   async function send() {
     const text = $("input").value.trim();
     if (!text || state.streaming || !state.currentId) return;
@@ -473,6 +487,12 @@
     state.nextTurnIndex = userIndex + 2;   // server appends user(+0) then assistant(+1)
     setStreaming(true);
     const h = addAssistantMessage();
+
+    // Live elapsed timer so the user always sees it's working (not frozen).
+    const genStart = performance.now();
+    const timer = setInterval(() => {
+      if (h.elapsed) h.elapsed.textContent = ((performance.now() - genStart) / 1000).toFixed(1) + "s";
+    }, 100);
 
     let answer = "";
     let renderScheduled = false;
@@ -524,10 +544,12 @@
       renderMarkdown(h.md, answer);
     } finally {
       state.abort = null;
+      clearInterval(timer);
+      const secs = (performance.now() - genStart) / 1000;
       // Final clean render (drop the streaming caret).
       h.md.style.display = ""; h.statusEl.style.display = "none";
       renderMarkdown(h.md, answer || "_(no answer)_");
-      finalizeTools(h, state.currentSources);
+      finalizeTools(h, state.currentSources, { seconds: secs, model: currentModelName() });
       setStreaming(false);
       scrollToBottom();
       $("input").focus();
@@ -550,9 +572,13 @@
         h.statusEl.style.display = "none"; h.md.style.display = "";
         renderMarkdown(h.md, "⚠️ " + (ev.message || "Please rephrase your question."));
         break;
-      case "sources":
+      case "sources": {
+        const n = (ev.sources || []).length;
         renderSources(ev.sources || []);
+        if (n) h.statusText.textContent = `Found ${n} relevant passage${n > 1 ? "s" : ""} — writing the answer…`;
+        h.el.classList.add("has-sources");
         break;
+      }
       case "token":
         setAns(getAns() + (ev.text || ""));
         scheduleRender();

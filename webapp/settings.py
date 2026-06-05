@@ -28,17 +28,17 @@ CLOUD: Dict[str, Dict[str, Any]] = {
     # OpenRouter: one key (sk-or-v1-...) serves DeepSeek, Qwen, GPT, Claude and
     # 300+ others. Slugs are "vendor/model"; ":free" variants cost nothing.
     "openrouter": {"key_env": "OPENROUTER_API_KEY", "model_env": "OPENROUTER_MODEL", "label": "OpenRouter", "models": [
+        "deepseek/deepseek-v4-flash",      # fast + accurate -> default
         "deepseek/deepseek-v4-pro",
-        "deepseek/deepseek-v4-flash",
-        "qwen/qwen3.5-35b-a3b",
         "qwen/qwen3-32b",
+        "qwen/qwen3.5-35b-a3b",
         "deepseek/deepseek-chat-v3-0324:free",
         "qwen/qwen3-235b-a22b:free",
     ]},
 }
 VALID_PROVIDERS = ("ollama",) + tuple(CLOUD.keys())
 MODEL_ENV = {"ollama": "OLLAMA_MODEL", **{p: c["model_env"] for p, c in CLOUD.items()}}
-DEFAULT_MODEL = {"ollama": "llama3.2:3b", "openrouter": "deepseek/deepseek-v4-pro"}
+DEFAULT_MODEL = {"ollama": "llama3.2:3b", "openrouter": "deepseek/deepseek-v4-flash"}
 
 
 def _ollama_host() -> str:

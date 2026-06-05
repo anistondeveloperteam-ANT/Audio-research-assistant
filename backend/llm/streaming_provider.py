@@ -228,7 +228,7 @@ OPENAI_COMPATIBLE = {
         "base_url": "https://openrouter.ai/api/v1",
         "key_env": "OPENROUTER_API_KEY",
         "model_env": "OPENROUTER_MODEL",
-        "default_model": "deepseek/deepseek-v4-pro",
+        "default_model": "deepseek/deepseek-v4-flash",
     },
 }
 

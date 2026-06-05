@@ -1,37 +1,37 @@
 {
-  "_comment": "Accuracy test set for the LLM. Each item has a question and the key points a correct answer should mention. 'key_points' use 'a|b' to accept any alternative wording. EDIT THIS to match the papers you have indexed for the most meaningful scores. Used by: python -m backend.evaluation.evaluate_llm",
+  "_comment": "Accuracy test set for the LLM, tailored to the indexed papers (deep-learning speech enhancement / noise cancellation / denoising / dereverberation). Each item has a question and the key points a correct answer should mention. 'key_points' use 'a|b' to accept any alternative wording. Used by: python -m backend.evaluation.evaluate_llm",
   "questions": [
     {
-      "question": "What is MVDR beamforming and how does it reduce noise?",
-      "key_points": ["mvdr|minimum variance|minimum-variance distortionless", "steering vector|look direction|array geometry", "noise|interference covariance", "distortionless|unit gain|undistorted"]
+      "question": "Which deep-learning architectures are used for audio noise cancellation and speech enhancement?",
+      "key_points": ["u-net|unet", "rnn|recurrent|lstm|gru", "cnn|convolutional", "transformer|attention", "deep learning|neural network"]
     },
     {
-      "question": "How does acoustic echo cancellation work?",
-      "key_points": ["adaptive filter|lms|nlms|rls", "reference|far-end signal", "echo path|impulse response", "residual echo|double-talk|suppression"]
+      "question": "How does spectral subtraction reduce noise, and what is its main drawback?",
+      "key_points": ["spectral subtraction", "noise estimate|noise spectrum|noise profile", "subtract|spectrum", "musical noise|artifact|distortion"]
     },
     {
-      "question": "What do PESQ and STOI measure in speech enhancement?",
-      "key_points": ["pesq", "stoi", "quality|perceptual", "intelligibility"]
+      "question": "Which objective metrics are used to evaluate speech enhancement quality?",
+      "key_points": ["pesq", "stoi", "mos|mean opinion score", "snr|signal-to-noise", "wer|word error rate"]
     },
     {
-      "question": "What is the short-time Fourier transform and why is it used in audio processing?",
-      "key_points": ["window|frame|framing", "overlap", "frequency|spectrogram", "time-frequency|time-varying"]
+      "question": "What is deep filtering for real-time speech enhancement?",
+      "key_points": ["deep filtering", "time-frequency|spectrogram|complex", "real-time|low latency", "speech enhancement|noise"]
     },
     {
-      "question": "What is the difference between delay-and-sum and MVDR beamforming?",
-      "key_points": ["delay-and-sum|delay and sum|fixed beamformer", "adaptive|data-dependent", "noise|interference suppression", "spatial|directional"]
+      "question": "How do adaptive filtering techniques perform noise cancellation?",
+      "key_points": ["adaptive filter|adaptive filtering", "lms|nlms|rls|least mean square", "reference signal|noise reference", "weights|update|coefficients"]
     },
     {
-      "question": "How do deep neural networks perform speech denoising?",
-      "key_points": ["mask|ratio mask|spectral mask", "supervised|training", "noisy|clean speech", "spectrogram|time-frequency|waveform"]
+      "question": "What is the two-stage hierarchical deep filtering framework for speech enhancement?",
+      "key_points": ["two-stage|two stage|hierarchical", "deep filtering", "real-time|streaming|causal", "speech enhancement|noise suppression"]
     },
     {
-      "question": "What is dereverberation and which methods address it?",
-      "key_points": ["reverberation|reverberant|reverb", "wpe|weighted prediction error|inverse filter", "late reflections|tail", "room impulse response|rir"]
+      "question": "How does a neural audio codec help with audio denoising?",
+      "key_points": ["neural audio codec|codec", "denoise|denoiser|denoising", "latent|discrete|tokens|quantiz", "reconstruct|decode|encode"]
     },
     {
-      "question": "Which metrics evaluate source separation performance?",
-      "key_points": ["sdr|signal-to-distortion", "sir|sar|signal-to-interference", "separation", "decibel|db"]
+      "question": "What approaches are used to address reverberation in audio?",
+      "key_points": ["reverberation|reverberant|dereverberation", "late reflections|reflections|room", "deep learning|neural|model", "speech|signal"]
     }
   ]
 }

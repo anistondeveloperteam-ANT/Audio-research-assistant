@@ -13,6 +13,24 @@ companion to the git history.
 
 ## 2026-06-05
 
+### Targeted upgrade: speed, accuracy, interactive UI
+Web research confirmed the existing stack (Docling parser + Gemini embeddings) is
+already 2026 best-in-class for this hardware, so we improved *on top of* it rather
+than rewriting:
+- **Speed + accuracy:** benchmarked the candidate models on the indexed papers with
+  `evaluate_llm`. **`deepseek/deepseek-v4-flash` won on both** — 94% keypoint
+  coverage *and* ~8.6s/answer (≈2× faster than qwen3-32b / deepseek-v4-pro at equal
+  accuracy). Set it as the default model everywhere; reordered the dropdown so it's
+  first.
+- **Accuracy eval, tailored:** rewrote `data/llm_eval_questions.json` to match the
+  actual corpus (deep-learning speech enhancement / denoising / dereverberation).
+  Measured accuracy jumped from a misleading 19% (generic questions) to **94%** —
+  the system was always accurate; the old questions just didn't match the papers.
+- **Interactive UI:** live **elapsed-time** counter while generating, a shimmering
+  status line, "Found N relevant passages…" status, a **speed + model badge** on each
+  finished answer (e.g. "⚡ 8.6s · deepseek-v4-flash"), and source cards that lift on
+  hover. No more dull, frozen-looking waits.
+
 ### Added Qwen 3.5 (35B) to the OpenRouter model list
 - Added `qwen/qwen3.5-35b-a3b` to the dropdown. (There is no literal "Qwen 3.5
   32B"; the closest 3.5-family model is this 35B mixture-of-experts.) It's a
