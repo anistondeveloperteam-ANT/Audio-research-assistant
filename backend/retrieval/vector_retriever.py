@@ -5,7 +5,6 @@ import logging
 
 from dotenv import load_dotenv
 import oracledb
-from sentence_transformers import SentenceTransformer
 
 # ---------------------------------------------------------------------
 # Quiet Hugging Face / Transformers warnings for user-friendly output
@@ -23,10 +22,6 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 
 load_dotenv()
-
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
-
-_model = None
 
 
 def read_lob(value):
@@ -46,17 +41,6 @@ def read_lob(value):
     return value
 
 
-def get_model():
-    global _model
-
-    if _model is None:
-        from backend.common.device import resolve_device
-        device = resolve_device("EMBEDDING_DEVICE")
-        _model = SentenceTransformer(EMBEDDING_MODEL, device=device)
-
-    return _model
-
-
 def connect():
     return oracledb.connect(
         user=os.getenv("ORACLE_USER"),
@@ -66,13 +50,9 @@ def connect():
 
 
 def embed_query(query: str):
-    model = get_model()
-    vec = model.encode(
-        [query],
-        normalize_embeddings=True,
-        convert_to_numpy=True,
-    )[0]
-    return [float(x) for x in vec.tolist()]
+    """Embed the query via the configured provider (Google Gemini or local)."""
+    from backend.common.embeddings import embed_query as _embed
+    return _embed(query)
 
 
 def vector_search(query: str, top_k: int = 10):

@@ -17,8 +17,11 @@ ORACLE_USER = os.getenv("ORACLE_USER", "AUDIO_RAG")
 ORACLE_PASSWORD = os.getenv("ORACLE_PASSWORD", "AudioRagPass123")
 ORACLE_DSN = os.getenv("ORACLE_DSN", "localhost:1521/FREEPDB1")
 
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "local").lower()
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-base")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 

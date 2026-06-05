@@ -7,25 +7,8 @@ os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-os.environ.setdefault("HF_HUB_VERBOSITY", "error")
 
 warnings.filterwarnings("ignore")
-logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
-logging.getLogger("transformers").setLevel(logging.ERROR)
-logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
-
-import os
-import warnings
-import logging
-
-os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
-os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
-warnings.filterwarnings("ignore")
-
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
@@ -34,15 +17,17 @@ import json
 import time
 
 import oracledb
-import torch
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
+
+from backend.common.embeddings import embed_documents, provider_label
 
 load_dotenv()
 
-MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
-BATCH_SIZE = 16
+# How many chunks to pull from the DB per loop (the embedding provider may
+# sub-batch further internally).
+BATCH_SIZE = int(os.getenv("EMBED_DB_BATCH", "16"))
+
 
 def connect():
     return oracledb.connect(
@@ -51,19 +36,9 @@ def connect():
         dsn=os.getenv("ORACLE_DSN"),
     )
 
+
 def main():
-    from backend.common.device import resolve_device
-    print("Embedding model:", MODEL_NAME)
-    print("CUDA available:", torch.cuda.is_available())
-
-    device = resolve_device("EMBEDDING_DEVICE")
-    print("Using device:", device)
-
-    if torch.cuda.is_available():
-        print("GPU:", torch.cuda.get_device_name(0))
-
-    print("\nLoading embedding model...")
-    model = SentenceTransformer(MODEL_NAME, device=device)
+    print("Embedding provider:", provider_label())
 
     conn = connect()
     cur = conn.cursor()
@@ -74,9 +49,8 @@ def main():
         WHERE embedding IS NULL
         ORDER BY id
     """)
-
     rows = cur.fetchall()
-    print(f"\nChunks needing embeddings: {len(rows)}")
+    print(f"Chunks needing embeddings: {len(rows)}")
 
     if not rows:
         print("All chunks already have embeddings.")
@@ -93,38 +67,22 @@ def main():
         texts = []
         for row in batch:
             value = row[1]
-            text = value.read() if hasattr(value, "read") else str(value)
-            texts.append(text)
+            texts.append(value.read() if hasattr(value, "read") else str(value))
 
-        embeddings = model.encode(
-            texts,
-            batch_size=BATCH_SIZE,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
+        embeddings = embed_documents(texts)
 
         for chunk_id, emb in zip(ids, embeddings):
             emb_json = json.dumps([float(x) for x in emb])
-
             cur.execute(
-                """
-                UPDATE chunks
-                SET embedding = :embedding
-                WHERE id = :chunk_id
-                """,
-                {
-                    "embedding": emb_json,
-                    "chunk_id": chunk_id,
-                },
+                "UPDATE chunks SET embedding = :embedding WHERE id = :chunk_id",
+                {"embedding": emb_json, "chunk_id": chunk_id},
             )
-
         conn.commit()
 
     elapsed = time.time() - start
 
     cur.execute("SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL")
     embedded_count = cur.fetchone()[0]
-
     cur.execute("SELECT COUNT(*) FROM chunks")
     total_count = cur.fetchone()[0]
 
@@ -134,6 +92,7 @@ def main():
 
     cur.close()
     conn.close()
+
 
 if __name__ == "__main__":
     main()

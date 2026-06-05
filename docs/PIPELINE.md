@@ -111,8 +111,11 @@ fixed-size slices. For every chunk it detects and stores:
 
 ### 3.3 Embed — `backend/ingestion/embed_chunks.py`
 Converts each chunk's text into a **768-dimensional vector** (a numeric
-fingerprint of its meaning) using the embedding model **`BAAI/bge-base-en-v1.5`**
-via `sentence-transformers`. Runs on the **GPU** by default.
+fingerprint of its meaning). The embedding backend is configurable via
+`EMBEDDING_PROVIDER`: **`google`** uses Google's **Gemini Embedding**
+(`gemini-embedding-001`, free tier, 768-dim output) — the default — while
+**`local`** uses a `sentence-transformers` model (e.g. `BAAI/bge-base-en-v1.5`)
+on the GPU. The re-ranker stays local either way.
 
 ### 3.4 Vector migration — `backend/database/vector_migration.py`
 Moves the embeddings into Oracle's **native `VECTOR` column** (`embedding_vec
@@ -243,7 +246,8 @@ flowchart LR
 | **PyTorch** | 2.7.1 (CUDA 12.6) | Tensor/GPU backend |
 | **sentence-transformers** | 5.5 | Loads embedding + reranker models |
 | **transformers** | 4.57 | Model runtime under the hood |
-| **BAAI/bge-base-en-v1.5** | — | **Embedding model** (768-dim) |
+| **Gemini Embedding** (`gemini-embedding-001`) | — | **Embedding model** (768-dim, Google API; default) |
+| **BAAI/bge-base-en-v1.5** | — | Local embedding alternative (`EMBEDDING_PROVIDER=local`) |
 | **BAAI/bge-reranker-v2-m3** | — | **Cross-encoder reranker** |
 | **OpenAI SDK** | 1.109 | OpenAI answer provider |
 | **Anthropic SDK** | 0.46 | Claude answer provider |
@@ -320,7 +324,9 @@ Everything is configured via a single `.env` file. Key settings:
 | Variable | Example | Meaning |
 |----------|---------|---------|
 | `ORACLE_DSN` | `localhost:1521/FREEPDB1` | Oracle connection |
-| `EMBEDDING_MODEL` | `BAAI/bge-base-en-v1.5` | Embedding model |
+| `EMBEDDING_PROVIDER` | `google` \| `local` | Embedding backend |
+| `EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model |
+| `GEMINI_API_KEY` | `…` | Free key for Google embeddings (aistudio.google.com) |
 | `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | Reranker |
 | `EMBEDDING_DIM` | `768` | Vector dimension |
 | `ANSWER_PROVIDER` | `manual` \| `claude` \| `openai` | Answer backend |

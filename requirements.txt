@@ -41,6 +41,9 @@ pypdf==6.11.0
 openai==1.109.1
 anthropic==0.46.0
 
+# --- Google Gemini (embeddings: EMBEDDING_PROVIDER=google) ---
+google-genai==1.75.0
+
 # --- Web search tool ---
 requests==2.34.1
 beautifulsoup4==4.14.3
