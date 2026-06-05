@@ -591,6 +591,7 @@
   // ---------- Init ----------
   async function init() {
     applyTheme(document.documentElement.getAttribute("data-theme") || "light");
+    try { if (localStorage.getItem("ara-sidebar") === "collapsed" && window.innerWidth > 880) $("app").classList.add("collapsed"); } catch {}
     try { state.cfg = await api.config(); } catch {}
     const modeSel = $("modeSel");
     (state.cfg.modes || ["Fast", "Balanced", "Deep"]).forEach((m) => {
@@ -618,7 +619,14 @@
     $("sourcesBtn").addEventListener("click", () => { renderSources(state.currentSources); openDrawer(); });
     $("drawerClose").addEventListener("click", closeDrawer);
     $("scrim").addEventListener("click", closeDrawer);
-    $("menuBtn").addEventListener("click", () => $("sidebar").classList.toggle("open"));
+    $("menuBtn").addEventListener("click", () => {
+      if (window.innerWidth > 880) {
+        const collapsed = $("app").classList.toggle("collapsed");
+        try { localStorage.setItem("ara-sidebar", collapsed ? "collapsed" : "open"); } catch {}
+      } else {
+        $("sidebar").classList.toggle("open");
+      }
+    });
     $("addPaperBtn").addEventListener("click", pickPdf);
     $("pdfInput").addEventListener("change", onPdfChosen);
     $("imDone").addEventListener("click", closeIngestModal);
