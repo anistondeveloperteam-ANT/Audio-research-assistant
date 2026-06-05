@@ -3,9 +3,11 @@
 run.py -- launch the Audio Research Assistant web app (FastAPI).
 
 Usage:
-    python run.py                # http://localhost:8600
-    python run.py --port 9000    # override the port
-    python run.py --no-free-port # do NOT auto-clear a stale server on the port
+    python run.py                # http://localhost:8600 (this PC only)
+    python run.py --share        # also reachable by teammates on your Wi-Fi/LAN
+    python run.py --port 9000     # override the port
+    python run.py --host 0.0.0.0  # bind a specific interface (advanced)
+    python run.py --no-free-port  # do NOT auto-clear a stale server on the port
 
 A thin wrapper around uvicorn. Config is read from the local .env.
 
@@ -32,6 +34,25 @@ ROOT = Path(__file__).resolve().parent
 # ----------------------------------------------------------------------
 # Port helpers -- so a leftover server can never block startup again
 # ----------------------------------------------------------------------
+def lan_ips() -> list[str]:
+    """Best-effort list of this machine's LAN IPv4 addresses (no loopback)."""
+    ips: set[str] = set()
+    # The address used to reach the outside world is almost always the LAN IP.
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ips.add(s.getsockname()[0])
+        s.close()
+    except Exception:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(info[4][0])
+    except Exception:
+        pass
+    return sorted(ip for ip in ips if not ip.startswith("127.") and not ip.startswith("169.254."))
+
+
 def port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     """True if something is already listening on host:port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -150,16 +171,42 @@ def ensure_port_free(port: int) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Launch the Audio Research Assistant web app.")
     parser.add_argument("--port", type=int, default=8600, help="Server port (default: 8600).")
+    parser.add_argument("--share", action="store_true",
+                        help="Make the app reachable by other people on your Wi-Fi/LAN.")
+    parser.add_argument("--host", default=None,
+                        help="Interface to bind (advanced). Default 127.0.0.1, or 0.0.0.0 with --share.")
     parser.add_argument("--no-free-port", action="store_true",
                         help="Do not auto-stop a leftover server occupying the port.")
     args = parser.parse_args()
+
+    # --share => listen on all interfaces so teammates on the same network can reach it.
+    host = args.host or ("0.0.0.0" if args.share else "127.0.0.1")
+    shared = args.share or host not in ("127.0.0.1", "localhost")
 
     if not args.no_free_port:
         if not ensure_port_free(args.port):
             return 1
 
-    cmd = [sys.executable, "-m", "uvicorn", "webapp.server:app", "--port", str(args.port)]
-    print(f"Starting web UI on http://localhost:{args.port}  (open it in your browser; Ctrl+C to stop)")
+    cmd = [sys.executable, "-m", "uvicorn", "webapp.server:app",
+           "--host", host, "--port", str(args.port)]
+
+    if shared:
+        ips = lan_ips()
+        print("=" * 60)
+        print("Sharing the Audio Research Assistant on your network.")
+        print("Your teammate (on the SAME Wi-Fi/LAN) should open:")
+        if ips:
+            for ip in ips:
+                print(f"    ->  http://{ip}:{args.port}")
+        else:
+            print("    (could not detect your LAN IP -- run 'ipconfig' and use the IPv4 address)")
+        print(f"On this PC you can still use:  http://localhost:{args.port}")
+        print("Note: no password -- anyone on the network who has the URL can use it,")
+        print("and questions run on YOUR models/keys. Stop the server (Ctrl+C) when done.")
+        print("If they can't connect, allow port through Windows Firewall (see chat).")
+        print("=" * 60)
+    else:
+        print(f"Starting web UI on http://localhost:{args.port}  (open it in your browser; Ctrl+C to stop)")
     # Run from the project root so `import backend.*` / `import webapp.*` resolve.
     try:
         return subprocess.call(cmd, cwd=str(ROOT))
