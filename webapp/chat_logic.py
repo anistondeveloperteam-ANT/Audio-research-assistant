@@ -7,6 +7,7 @@ this module only wires the proven pieces together for the new UI.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterator, List
@@ -76,16 +77,37 @@ def build_user_message(question: str, evidence: str) -> str:
 _LOW_VALUE_SECTIONS = ("reference", "bibliograph", "acknowledg", "author contribution",
                        "funding", "conflict of interest", "appendix")
 
+# Adaptive source count: keep every chunk whose relevance (reranker score) clears
+# the threshold, bounded by [MIN, MAX]. So an easy/narrow question may return 4
+# sources and a broad one 11 — the number reflects how much is actually relevant,
+# instead of always being a fixed top_k. Tunable via .env.
+SOURCE_MIN_SCORE = float(os.getenv("SOURCE_MIN_SCORE", "0.30"))
+SOURCE_MIN = int(os.getenv("SOURCE_MIN", "3"))
+SOURCE_MAX = int(os.getenv("SOURCE_MAX", "12"))
 
-def _keep_relevant(results: List[Dict[str, Any]], top_k: int) -> List[Dict[str, Any]]:
-    """Drop low-value sections, then keep the top_k most relevant. Falls back to
-    the original list if filtering would leave nothing."""
+
+def _score(r: Dict[str, Any]) -> float:
+    try:
+        return float(r.get("rerank_score") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def select_sources(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop low-value sections, then keep as many *relevant* sources as clear the
+    score threshold (between SOURCE_MIN and SOURCE_MAX). The count varies per
+    query instead of being a fixed number."""
     def is_low_value(r: Dict[str, Any]) -> bool:
         section = (r.get("section") or r.get("section_name") or "").lower()
         return any(key in section for key in _LOW_VALUE_SECTIONS)
 
-    kept = [r for r in results if not is_low_value(r)]
-    return (kept or results)[:top_k]
+    kept = [r for r in results if not is_low_value(r)] or list(results)
+    kept.sort(key=_score, reverse=True)
+
+    relevant = [r for r in kept if _score(r) >= SOURCE_MIN_SCORE]
+    if len(relevant) < SOURCE_MIN:        # too few cleared the bar -> keep the best anyway
+        relevant = kept[:SOURCE_MIN]
+    return relevant[:SOURCE_MAX]
 
 
 def public_source(r: Dict[str, Any], i: int) -> Dict[str, Any]:
@@ -128,14 +150,13 @@ def stream_chat_events(
         pass
 
     try:
-        # Retrieve a few extra so we can drop low-value sections and still keep top_k.
-        k = int(top_k)
-        results = hybrid_retrieve(q, top_k=k + 4) or []
+        # Pull a generous candidate pool, then let relevance decide how many to keep.
+        results = hybrid_retrieve(q, top_k=SOURCE_MAX + 6) or []
     except Exception as exc:
         yield {"type": "error", "message": f"Retrieval failed: {exc}"}
         return
 
-    results = _keep_relevant(results, k)
+    results = select_sources(results)
     sources = [public_source(r, i) for i, r in enumerate(results, 1)]
     yield {"type": "sources", "sources": sources}
     yield {"type": "status", "message": "Writing the answer..."}
