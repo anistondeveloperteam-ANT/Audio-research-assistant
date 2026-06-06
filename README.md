@@ -127,24 +127,27 @@ python run.py --port 9000          # optional: choose another local port
 
 ## External search (automatic — no toggle)
 
-External search is **automatic**: when the local papers don't answer a question
-(or local RAG is off), the assistant **automatically** searches —
+External search is **automatic** and searches **everywhere — with no API key**.
+When the local papers don't answer a question (or local RAG is off), the assistant
+automatically searches:
 
-- **Web pages** (Tavily / Brave / SerpAPI)
-- **Research papers** (arXiv — free, no key)
-- **Patents** (Google Patents, via the web provider)
-- **GitHub** repos / READMEs / code (free; a token enables code search)
+- **Web pages** — DuckDuckGo (free, default) or Tavily / Brave / SerpAPI
+- **Research papers** — **arXiv** + **Semantic Scholar** (free; top papers' full
+  PDFs are downloaded and read, not just abstracts)
+- **Wikipedia** — background/encyclopedic (free)
+- **Patents** — Google Patents (free)
+- **GitHub** — repos / READMEs / code (free; a token enables code search)
 - **Online PDFs** surfaced by the search
 
-— reads them safely, re-ranks against your question, and answers with citations.
-There is no button to flip; it just falls back when needed.
+…reads them safely, re-ranks everything against your question, and answers with
+citations (URL · file:line · page). No button to flip — it just falls back.
 
-**Keys** (in `.env`): nothing is required — **arXiv + GitHub work for free**.
-Add a web key to also get web pages + patents:
+**Keys are optional** — it all works for free. A paid web key gives higher-quality
+general-web results:
 ```
 ENABLE_WEB_SEARCH=true               # on by default; set false to disable entirely
-WEB_SEARCH_PROVIDER=tavily           # tavily | brave | serpapi
-TAVILY_API_KEY=your_key              # (or BRAVE_SEARCH_API_KEY / SERPAPI_API_KEY)
+WEB_SEARCH_PROVIDER=duckduckgo       # free default; or tavily | brave | serpapi
+TAVILY_API_KEY=optional_key          # higher-quality web (or BRAVE_/SERPAPI_)
 GITHUB_TOKEN=optional_token          # raises GitHub limits + enables code search
 ```
 

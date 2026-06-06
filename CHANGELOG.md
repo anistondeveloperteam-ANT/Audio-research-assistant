@@ -13,6 +13,20 @@ companion to the git history.
 
 ## 2026-06-06
 
+### Search everywhere, free, no key
+- Added **free, keyless** channels so external search works with no API key:
+  **DuckDuckGo** general web (POST endpoint), **Semantic Scholar** papers, and
+  **Wikipedia** — alongside arXiv, GitHub, patents (Google Patents via the web
+  provider), and full online-PDF reading.
+- `WEB_SEARCH_PROVIDER=duckduckgo` is the free default; Tavily/Brave/SerpAPI remain
+  optional for higher-quality web. `get_web_provider()` always returns a provider
+  now (free DDG fallback), so web search is always available.
+- Raised breadth: `EXTERNAL_TOP_K=20`, arXiv 6 / Semantic Scholar 6 / web 8 /
+  GitHub 5 / Wikipedia 3 / patents 4. `safe_get` gained POST support (for DDG).
+- Verified live (no key): a query returned ~20 cited sources spanning web, papers,
+  Wikipedia, patents, GitHub, and read PDFs. SSRF guard kept (security, not a
+  content restriction). 55 tests pass.
+
 ### Deeper, more accurate sources + read full papers → code/simulation
 - **Reads full paper PDFs**, not just abstracts: the top arXiv results are
   downloaded and parsed (page-numbered), so the model has the actual methods to

@@ -133,7 +133,7 @@ LOCAL_FOUND_SCORE = float(os.getenv("LOCAL_FOUND_SCORE", "0.45"))
 
 # How many external sources to keep (accuracy > brevity — keep more), and how many
 # tokens the answer may use (large enough for full code / simulations).
-EXTERNAL_TOP_K = int(os.getenv("EXTERNAL_TOP_K", "15"))
+EXTERNAL_TOP_K = int(os.getenv("EXTERNAL_TOP_K", "20"))
 ANSWER_MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "4096"))
 
 

@@ -204,9 +204,11 @@ def safe_get(
     max_bytes: int = MAX_BYTES,
     expect: str = "text",          # "text" | "bytes" | "json"
     retries: int = MAX_RETRIES,
+    data: Optional[Dict[str, Any]] = None,   # if set -> POST
 ) -> Optional[Any]:
-    """Safe GET with SSRF check, timeout, size cap, and retries. Returns the
-    text / bytes / parsed-json body, or None on any failure (never raises)."""
+    """Safe HTTP GET (or POST when `data` is given) with SSRF check, timeout, size
+    cap, and retries. Returns the text / bytes / parsed-json body, or None on any
+    failure (never raises)."""
     ok, reason = is_safe_url(url)
     if not ok:
         logger.warning("blocked unsafe url (%s)", reason)
@@ -215,11 +217,12 @@ def safe_get(
     hdrs = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"}
     if headers:
         hdrs.update(headers)
+    method = "POST" if data is not None else "GET"
 
     for attempt in range(retries + 1):
         try:
-            with requests.get(url, headers=hdrs, params=params, timeout=timeout,
-                              stream=True, allow_redirects=True) as resp:
+            with requests.request(method, url, headers=hdrs, params=params, data=data,
+                                  timeout=timeout, stream=True, allow_redirects=True) as resp:
                 # Re-validate the final URL after redirects (defends against
                 # open redirects into private space).
                 ok, reason = is_safe_url(resp.url)

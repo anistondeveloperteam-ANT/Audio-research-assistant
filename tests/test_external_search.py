@@ -66,10 +66,12 @@ def test_extract_readable_text_empty():
 # ----------------------------------------------------------------------
 # Provider interface
 # ----------------------------------------------------------------------
-def test_get_web_provider_none_without_keys(monkeypatch):
+def test_get_web_provider_falls_back_to_free_duckduckgo(monkeypatch):
+    from backend.external_search.web_search import DuckDuckGoProvider
     for k in ("WEB_SEARCH_PROVIDER", "TAVILY_API_KEY", "BRAVE_SEARCH_API_KEY", "SERPAPI_API_KEY"):
         monkeypatch.delenv(k, raising=False)
-    assert get_web_provider() is None
+    prov = get_web_provider()
+    assert isinstance(prov, DuckDuckGoProvider)   # free web search, no key required
 
 
 def test_tavily_parses_mocked_response(monkeypatch):
@@ -229,6 +231,42 @@ def test_arxiv_search_parses(monkeypatch):
     assert "abstract" in out[0].text.lower()
 
 
+def test_duckduckgo_parses(monkeypatch):
+    from backend.external_search.web_search import DuckDuckGoProvider
+    html = ('<div class="result">'
+            '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage">'
+            'Example Title</a>'
+            '<a class="result__snippet">a useful snippet</a></div>')
+    monkeypatch.setattr("backend.external_search.web_search.safe_get", lambda *a, **k: html)
+    out = DuckDuckGoProvider().search("query", max_results=5)
+    assert len(out) == 1
+    assert out[0].url == "https://example.com/page"
+    assert out[0].source_type == "web" and "Example Title" in out[0].title
+
+
+def test_semantic_scholar_parses(monkeypatch):
+    import backend.external_search.scholar_search as sch
+    data = {"data": [{"title": "Paper X", "abstract": "abstract text", "year": 2026,
+                      "openAccessPdf": {"url": "https://x.com/p.pdf"},
+                      "url": "https://semanticscholar.org/p"}]}
+    monkeypatch.setattr(sch, "cached", lambda key, producer, ttl=None: producer())
+    monkeypatch.setattr(sch, "safe_get", lambda *a, **k: data)
+    out = sch.semantic_scholar_search("query")
+    assert len(out) == 1 and out[0].source_type == "research_paper"
+    assert out[0].url == "https://x.com/p.pdf" and out[0].published == "2026"
+
+
+def test_wikipedia_parses(monkeypatch):
+    import backend.external_search.scholar_search as sch
+    data = {"query": {"search": [{"title": "Noise reduction",
+                                  "snippet": "<b>noise</b> reduction is a method"}]}}
+    monkeypatch.setattr(sch, "cached", lambda key, producer, ttl=None: producer())
+    monkeypatch.setattr(sch, "safe_get", lambda *a, **k: data)
+    out = sch.wikipedia_search("noise")
+    assert len(out) == 1 and out[0].source_type == "web"
+    assert out[0].url.endswith("Noise_reduction") and "<b>" not in out[0].text
+
+
 def test_patent_search_tags_patent(monkeypatch):
     import backend.external_search.scholar_search as sch
     def fake_web_search(q, max_results=3):
@@ -241,16 +279,18 @@ def test_patent_search_tags_patent(monkeypatch):
     assert "patents.google.com" in out[0].url
 
 
-def test_gather_uses_free_sources_without_web_key(monkeypatch):
+def test_gather_uses_free_sources_without_web_provider(monkeypatch):
     import backend.external_search.orchestrator as orch
-    monkeypatch.setattr(orch, "get_web_provider", lambda: None)   # no web key
+    monkeypatch.setattr(orch, "get_web_provider", lambda: None)   # force no web provider
     monkeypatch.setattr(orch, "arxiv_search",
                         lambda q: [ExternalSource(source_type="research_paper", title="P",
                                                   url="http://arxiv.org/abs/1", text="relevant abc")])
+    # Mock the other (network) channels so the test stays offline.
+    monkeypatch.setattr(orch, "semantic_scholar_search", lambda q: [])
+    monkeypatch.setattr(orch, "wikipedia_search", lambda q: [])
     monkeypatch.setattr(orch, "github_search", lambda q: [])
     srcs, warns = orch.gather_external_evidence("query abc", max_results=5)
     assert any(s.source_type == "research_paper" for s in srcs)
-    assert any("No web search key" in w for w in warns)
 
 
 def test_format_evidence_tags_local_and_external():

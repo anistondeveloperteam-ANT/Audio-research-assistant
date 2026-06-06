@@ -12,8 +12,12 @@ import os
 import re
 from abc import ABC, abstractmethod
 from typing import List, Optional
+from urllib.parse import parse_qs, unquote, urlparse
 
 from backend.external_search.base import ExternalSource, cached, logger, safe_get
+
+_BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
 
 # ----------------------------------------------------------------------
@@ -165,19 +169,79 @@ class SerpApiProvider(WebSearchProvider):
         return out
 
 
-_PROVIDERS = {p.name: p for p in (TavilyProvider(), BraveProvider(), SerpApiProvider())}
+def _ddg_unwrap(href: str) -> str:
+    """DuckDuckGo wraps result links as //duckduckgo.com/l/?uddg=<encoded>."""
+    if not href:
+        return ""
+    if href.startswith("//"):
+        href = "https:" + href
+    p = urlparse(href)
+    if "duckduckgo.com" in (p.netloc or "") and p.path.startswith("/l/"):
+        qs = parse_qs(p.query)
+        if "uddg" in qs:
+            return unquote(qs["uddg"][0])
+    return href
+
+
+class DuckDuckGoProvider(WebSearchProvider):
+    """Free general web search — no API key. Best-effort HTML parsing of the
+    DuckDuckGo lite/html endpoint; degrades to [] if the page can't be parsed."""
+    name = "duckduckgo"
+    ENDPOINT = "https://html.duckduckgo.com/html/"
+
+    def is_available(self) -> bool:
+        return True
+
+    def search(self, query: str, max_results: int = 8) -> List[ExternalSource]:
+        # POST (GET is bot-blocked by DuckDuckGo).
+        html = safe_get(self.ENDPOINT, data={"q": query, "kl": "us-en"},
+                        headers={"User-Agent": _BROWSER_UA,
+                                 "Referer": "https://duckduckgo.com/"}, expect="text")
+        if not html:
+            return []
+        try:
+            from bs4 import BeautifulSoup
+        except Exception:
+            return []
+        soup = BeautifulSoup(html, "html.parser")
+        out: List[ExternalSource] = []
+        for res in soup.select(".result, .web-result")[:max_results * 2]:
+            a = res.select_one("a.result__a")
+            if not a:
+                continue
+            url = _ddg_unwrap(a.get("href", ""))
+            if not url.startswith("http"):
+                continue
+            snip = res.select_one(".result__snippet")
+            out.append(ExternalSource(
+                source_type="web",
+                title=a.get_text(" ", strip=True) or url,
+                url=url,
+                snippet=(snip.get_text(" ", strip=True) if snip else "")[:600],
+                provider="duckduckgo",
+            ))
+            if len(out) >= max_results:
+                break
+        return out
+
+
+_KEYED = {p.name: p for p in (TavilyProvider(), BraveProvider(), SerpApiProvider())}
+_FREE_WEB = DuckDuckGoProvider()
 
 
 def get_web_provider() -> Optional[WebSearchProvider]:
-    """Resolve the configured provider (WEB_SEARCH_PROVIDER), else the first one
-    whose API key is set. Returns None if no provider is configured."""
+    """Resolve the web provider: the one named in WEB_SEARCH_PROVIDER if its key is
+    set, else the first keyed provider available, else the FREE DuckDuckGo provider
+    (no key). So general web search always works."""
     name = (os.getenv("WEB_SEARCH_PROVIDER") or "").strip().lower()
-    if name in _PROVIDERS and _PROVIDERS[name].is_available():
-        return _PROVIDERS[name]
-    for prov in _PROVIDERS.values():
+    if name == "duckduckgo":
+        return _FREE_WEB
+    if name in _KEYED and _KEYED[name].is_available():
+        return _KEYED[name]
+    for prov in _KEYED.values():
         if prov.is_available():
             return prov
-    return None
+    return _FREE_WEB
 
 
 def web_search(query: str, max_results: int = 6) -> List[ExternalSource]:

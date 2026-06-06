@@ -11,6 +11,7 @@ Both are best-effort and never raise.
 from __future__ import annotations
 
 import os
+import re
 import xml.etree.ElementTree as ET
 from typing import List
 
@@ -18,7 +19,11 @@ from backend.external_search.base import ExternalSource, cached, logger, safe_ge
 
 ARXIV_API = "https://export.arxiv.org/api/query"
 ARXIV_MAX = int(os.getenv("ARXIV_MAX_RESULTS", "6"))
-PATENT_MAX = int(os.getenv("PATENT_MAX_RESULTS", "3"))
+PATENT_MAX = int(os.getenv("PATENT_MAX_RESULTS", "4"))
+SEMANTIC_API = "https://api.semanticscholar.org/graph/v1/paper/search"
+SEMANTIC_MAX = int(os.getenv("SEMANTIC_SCHOLAR_MAX", "6"))
+WIKI_API = "https://en.wikipedia.org/w/api.php"
+WIKI_MAX = int(os.getenv("WIKIPEDIA_MAX", "3"))
 _ATOM = "{http://www.w3.org/2005/Atom}"
 
 
@@ -64,6 +69,55 @@ def arxiv_search(query: str, max_results: int = ARXIV_MAX) -> List[ExternalSourc
             published=e.get("published") or None,
         ))
     return sources
+
+
+def semantic_scholar_search(query: str, max_results: int = SEMANTIC_MAX) -> List[ExternalSource]:
+    """Semantic Scholar paper search (free, no key; broad cross-publisher corpus)."""
+    def _produce():
+        return safe_get(SEMANTIC_API, params={
+            "query": query, "limit": max_results,
+            "fields": "title,abstract,url,year,openAccessPdf",
+        }, expect="json")
+
+    data = cached(f"s2::{query}::{max_results}", _produce)
+    if not data:
+        return []
+    out: List[ExternalSource] = []
+    for p in (data.get("data") or [])[:max_results]:
+        pdf = (p.get("openAccessPdf") or {}).get("url")
+        out.append(ExternalSource(
+            source_type="research_paper",
+            title=p.get("title") or "Untitled",
+            url=pdf or p.get("url") or "",
+            text=(p.get("abstract") or "")[:4000],
+            snippet=(p.get("abstract") or "")[:600],
+            provider="semantic_scholar",
+            published=str(p["year"]) if p.get("year") else None,
+        ))
+    return out
+
+
+def wikipedia_search(query: str, max_results: int = WIKI_MAX) -> List[ExternalSource]:
+    """Wikipedia search (free, no key) for general/background knowledge."""
+    def _produce():
+        return safe_get(WIKI_API, params={"action": "query", "format": "json",
+                                          "list": "search", "srsearch": query,
+                                          "srlimit": max_results}, expect="json")
+
+    data = cached(f"wiki::{query}::{max_results}", _produce)
+    if not data:
+        return []
+    out: List[ExternalSource] = []
+    for r in ((data.get("query") or {}).get("search") or [])[:max_results]:
+        title = r.get("title", "")
+        snippet = re.sub(r"<[^>]+>", "", r.get("snippet", "") or "")
+        out.append(ExternalSource(
+            source_type="web",
+            title=f"Wikipedia: {title}",
+            url="https://en.wikipedia.org/wiki/" + title.replace(" ", "_"),
+            text=snippet, snippet=snippet, provider="wikipedia",
+        ))
+    return out
 
 
 def patent_search(query: str, max_results: int = PATENT_MAX) -> List[ExternalSource]:

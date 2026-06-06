@@ -17,7 +17,9 @@ from typing import List, Tuple
 from backend.external_search.base import ExternalSource, clean_query, env_flag, logger
 from backend.external_search.github_search import github_search
 from backend.external_search.pdf_reader import looks_like_pdf_url, read_online_pdf
-from backend.external_search.scholar_search import arxiv_search, patent_search
+from backend.external_search.scholar_search import (
+    arxiv_search, patent_search, semantic_scholar_search, wikipedia_search,
+)
 from backend.external_search.source_ranker import rerank_sources
 from backend.external_search.web_search import fetch_page_text, get_web_provider, web_search
 
@@ -59,7 +61,7 @@ def _web_channel(query: str, max_results: int, warnings: List[str]) -> Tuple[Lis
     return sources, pdf_urls
 
 
-def gather_external_evidence(query: str, max_results: int = 8) -> Tuple[List[ExternalSource], List[str]]:
+def gather_external_evidence(query: str, max_results: int = 20) -> Tuple[List[ExternalSource], List[str]]:
     """Collect + rank external evidence across all channels — web pages, research
     papers (arXiv), patents, GitHub repos/code, and online PDFs. Never raises; on
     any channel failure it records a warning and returns whatever else succeeded.
@@ -94,6 +96,16 @@ def gather_external_evidence(query: str, max_results: int = 8) -> Tuple[List[Ext
     except Exception as exc:
         logger.info("arxiv search failed: %s", type(exc).__name__)
         warnings.append("Research-paper (arXiv) search failed.")
+
+    # Semantic Scholar (broad paper corpus) + Wikipedia (background) — free, no key.
+    try:
+        collected.extend(semantic_scholar_search(sq))
+    except Exception as exc:
+        logger.info("semantic scholar failed: %s", type(exc).__name__)
+    try:
+        collected.extend(wikipedia_search(sq))
+    except Exception as exc:
+        logger.info("wikipedia failed: %s", type(exc).__name__)
 
     # Patents — via the web provider (Google Patents focus).
     if have_web:
