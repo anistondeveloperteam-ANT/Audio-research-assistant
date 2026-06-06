@@ -43,13 +43,17 @@ def config():
         provider_label = f"{prov.name} · {prov.model}"
     except Exception:
         provider_label = "unknown"
-    # One optimized retrieval mode now — no Fast/Balanced/Deep options exposed.
+    # Web search is the primary source; local PDF RAG is optional/off by default.
     try:
         from backend.external_search import is_web_search_enabled
         web_search_available = is_web_search_enabled()
     except Exception:
         web_search_available = False
-    return {"provider": provider_label, "web_search_available": web_search_available}
+    return {
+        "provider": provider_label,
+        "web_search_available": web_search_available,
+        "local_rag_enabled": chat_logic.ENABLE_LOCAL_RAG,
+    }
 
 
 # ----------------------------------------------------------------------
@@ -165,7 +169,7 @@ def chat(body: dict = Body(...)):
     question = body.get("question", "")
     mode = body.get("mode", "Default")
     top_k = body.get("top_k", 8)
-    web_search = bool(body.get("web_search", False))
+    web_search = bool(body.get("web_search", True))   # web search is the default source
     if not session_id:
         return JSONResponse({"error": "session_id is required"}, status_code=400)
 

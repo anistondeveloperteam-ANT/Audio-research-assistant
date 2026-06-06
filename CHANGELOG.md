@@ -13,6 +13,19 @@ companion to the git history.
 
 ## 2026-06-06
 
+### Web-search-first (production): local RAG now optional & off by default
+- Flipped the product to a **web-search assistant**: web/GitHub/online-PDF search
+  is the primary, always-on knowledge source. The local Oracle/PDF RAG is now
+  **optional** behind `ENABLE_LOCAL_RAG` (default **false**).
+- The app now **boots and answers with no Oracle and no torch** — verified
+  `import webapp.server` pulls neither at load (heavy local-RAG imports are lazy,
+  only when `ENABLE_LOCAL_RAG=true`). Makes it deployable without the database.
+- External re-ranking defaults to the **fast lexical scorer**; the cross-encoder
+  is opt-in (`EXTERNAL_RERANK_CROSS_ENCODER`) so web-only stays light.
+- `/api/chat` defaults `web_search=true`; `/api/config` reports `local_rag_enabled`.
+  The UI hides the Add-papers / library controls and adapts the welcome copy in
+  web mode. If no source is configured, the answer explains how to enable one.
+
 ### External knowledge retrieval (optional web / GitHub / online-PDF search)
 - New `backend/external_search/` package: a provider layer (web search via
   Tavily/Brave/SerpAPI, GitHub repo/code via the REST API, online PDF reader) with

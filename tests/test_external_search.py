@@ -169,6 +169,7 @@ def _inject_fake_reranker(monkeypatch, predictor):
 
 
 def test_rerank_uses_model_scores(monkeypatch):
+    monkeypatch.setattr("backend.external_search.source_ranker.USE_CROSS_ENCODER", True)
     _inject_fake_reranker(monkeypatch, lambda pairs: [0.1, 0.9])
     srcs = [ExternalSource(source_type="web", title="a", url="https://e.com/1", text="t1"),
             ExternalSource(source_type="web", title="b", url="https://e.com/2", text="t2")]

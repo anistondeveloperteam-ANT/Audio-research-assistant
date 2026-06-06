@@ -147,11 +147,16 @@
   const inner = () => $("transcriptInner");
 
   function showWelcome() {
+    const localRag = !!(state.cfg && state.cfg.local_rag_enabled);
+    const heading = localRag ? "What do your papers say?" : "Ask anything about audio research";
+    const blurb = localRag
+      ? "Ask anything about your audio &amp; speech-enhancement library. Every answer is grounded in your papers — each claim cited to its source, section, and page."
+      : "I search the web, GitHub &amp; online PDFs and answer with cited sources — links, file paths, and page numbers. Toggle <b>Web</b> in the top bar.";
     inner().innerHTML = `
       <div class="welcome">
         <div class="hero-mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zm7 9a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12h-2z"/></svg></div>
-        <h1>What do your papers say?</h1>
-        <p>Ask anything about your audio &amp; speech-enhancement library. Every answer is grounded only in your papers — with each claim cited to its source, section, and page.</p>
+        <h1>${heading}</h1>
+        <p>${blurb}</p>
         <div class="examples" id="examples"></div>
       </div>`;
     const box = $("examples");
@@ -875,7 +880,13 @@
     }
     if (!state.cfg.provider || state.cfg.provider === "unknown") $("provDot").style.background = "var(--amber)";
 
-    loadLibrary();
+    // Web-search assistant mode: hide local-paper UI when local RAG is off.
+    if (state.cfg.local_rag_enabled) {
+      loadLibrary();
+    } else {
+      ["addPaperBtn", "manageBtn"].forEach((id) => { const el = $(id); if (el) el.style.display = "none"; });
+      const lib = $("libLabel"); if (lib) lib.textContent = "Web search mode";
+    }
     loadModels();
     await loadSessions();
 

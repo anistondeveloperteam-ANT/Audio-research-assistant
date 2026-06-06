@@ -1,9 +1,18 @@
 # Audio Research Assistant
 
-A Retrieval-Augmented Generation (RAG) assistant for audio / speech-enhancement
-research papers. It ingests PDFs, builds a hybrid (vector + BM25) retrieval index
-backed by an Oracle vector database, and answers questions with cited sources
-through a fast, interactive **web app** (FastAPI + a no-build front end).
+A cited, source-grounded research assistant for audio / speech topics, served
+through a fast interactive **web app** (FastAPI + a no-build front end).
+
+- **Web search is the primary, production-ready knowledge source** — it searches
+  the public web, GitHub repos/code, and online PDFs, reads them safely, and
+  answers with citations (URL · file:line · page). **No database required.**
+- **Local PDF RAG is optional** (`ENABLE_LOCAL_RAG=true`): a hybrid
+  vector + BM25 retriever over your own PDFs in an Oracle vector DB. Off by
+  default so the app deploys with no Oracle and no uploaded papers.
+
+> **Quick start (web mode):** set `ENABLE_WEB_SEARCH=true` and a provider key
+> (`TAVILY_API_KEY` / `BRAVE_SEARCH_API_KEY` / `SERPAPI_API_KEY`) in `.env`, plus an
+> LLM key (`OPENROUTER_API_KEY`), then `python run.py`. No Oracle/Docker needed.
 
 ## Two entry points
 

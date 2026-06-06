@@ -18,10 +18,14 @@ if str(ROOT) not in sys.path:
 
 from backend.memory.store import MemoryStore, default_db_path
 from backend.answering.query_sanity import check_query_sanity
-from backend.answering.research_modes import apply_research_mode
-from backend.retrieval.hybrid_retrieve import hybrid_retrieve
 from backend.llm.streaming_provider import get_provider
 from backend.external_search import gather_external_evidence, is_web_search_enabled
+
+# Local PDF RAG (Oracle + embeddings + reranker) is OPTIONAL and off by default.
+# Web search is the primary source. `hybrid_retrieve` / `apply_research_mode` are
+# imported lazily inside the chat flow only when this is enabled, so a web-only
+# production deploy doesn't need Oracle or the heavy ML dependencies.
+ENABLE_LOCAL_RAG = (os.getenv("ENABLE_LOCAL_RAG", "false") or "").strip().lower() in ("1", "true", "yes", "on")
 
 # ----------------------------------------------------------------------
 # Singletons
@@ -176,9 +180,14 @@ def stream_chat_events(
     question: str,
     mode: str = "Default",
     top_k: int = 8,
-    web_search: bool = False,
+    web_search: bool = True,
 ) -> Iterator[Dict[str, Any]]:
-    """Yield event dicts: sanity | status | sources | token | warning | done | error."""
+    """Yield event dicts: sanity | status | sources | token | warning | done | error.
+
+    Web search is the PRIMARY knowledge source. The local Oracle/PDF RAG is
+    optional and off unless ENABLE_LOCAL_RAG=true, so the app runs in production
+    with no Oracle database and no uploaded papers — just a web-search key + LLM.
+    """
     q = (question or "").strip()
 
     sanity = check_query_sanity(q)
@@ -189,28 +198,30 @@ def stream_chat_events(
     mem = memory()
     mem.append_turn(session_id, "user", q)
 
-    yield {"type": "status", "message": "Searching your papers..."}
-    try:
-        apply_research_mode(mode)
-    except Exception:
-        pass
+    items: List[Dict[str, Any]] = []
 
-    try:
-        # Pull a generous candidate pool, then let relevance decide how many to keep.
-        results = hybrid_retrieve(q, top_k=SOURCE_MAX + 6) or []
-    except Exception as exc:
-        yield {"type": "error", "message": f"Retrieval failed: {exc}"}
-        return
-
-    results = select_sources(results)
-    # Local evidence (full text for the LLM; trimmed copy for the UI).
-    items: List[Dict[str, Any]] = [_local_evidence_item(r) for r in results]
-
-    # Optional external evidence channel — additive, never blocks local RAG.
-    if web_search and is_web_search_enabled():
-        yield {"type": "status", "message": "Searching the web & repositories..."}
+    # --- Optional local PDF RAG (off by default; needs Oracle + indexed papers) ---
+    if ENABLE_LOCAL_RAG:
+        yield {"type": "status", "message": "Searching your papers..."}
         try:
-            ext_sources, ext_warnings = gather_external_evidence(q, max_results=6)
+            # Imported lazily so a web-only deploy needs no Oracle / heavy ML deps.
+            from backend.answering.research_modes import apply_research_mode
+            from backend.retrieval.hybrid_retrieve import hybrid_retrieve
+            try:
+                apply_research_mode(mode)
+            except Exception:
+                pass
+            results = select_sources(hybrid_retrieve(q, top_k=SOURCE_MAX + 6) or [])
+            items.extend(_local_evidence_item(r) for r in results)
+        except Exception as exc:
+            yield {"type": "warning", "message": f"Local paper search is unavailable: {exc}"}
+
+    # --- Web / GitHub / online-PDF search (primary evidence channel) ---
+    do_web = bool(web_search) and is_web_search_enabled()
+    if do_web:
+        yield {"type": "status", "message": "Searching the web, GitHub & online PDFs..."}
+        try:
+            ext_sources, ext_warnings = gather_external_evidence(q, max_results=8)
         except Exception as exc:
             ext_sources, ext_warnings = [], [f"External search failed: {exc}"]
         for es in ext_sources:
@@ -219,6 +230,17 @@ def stream_chat_events(
             items.append(d)
         for w in ext_warnings:
             yield {"type": "warning", "message": w}
+
+    # --- No knowledge source enabled -> explain instead of guessing ---
+    if not ENABLE_LOCAL_RAG and not do_web:
+        msg = ("No knowledge source is enabled. Turn on web search by setting "
+               "`ENABLE_WEB_SEARCH=true` and a provider key (e.g. `TAVILY_API_KEY`) "
+               "in `.env`, then restart.")
+        yield {"type": "sources", "sources": []}
+        yield {"type": "token", "text": msg}
+        mem.append_turn(session_id, "assistant", msg, sources=[])
+        yield {"type": "done", "answer": msg}
+        return
 
     sources = []
     for i, it in enumerate(items, 1):

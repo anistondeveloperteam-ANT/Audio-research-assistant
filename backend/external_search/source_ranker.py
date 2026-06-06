@@ -10,9 +10,14 @@ from __future__ import annotations
 import re
 from typing import List
 
-from backend.external_search.base import ExternalSource, logger
+from backend.external_search.base import ExternalSource, env_flag, logger
 
 _TOKEN = re.compile(r"[a-z0-9]+")
+
+# Use the local cross-encoder reranker for external sources only when explicitly
+# enabled (it loads torch + the model). Off by default so a web-only production
+# deploy stays light and uses the fast lexical scorer.
+USE_CROSS_ENCODER = env_flag("EXTERNAL_RERANK_CROSS_ENCODER", default=env_flag("ENABLE_LOCAL_RAG"))
 
 
 def deduplicate(sources: List[ExternalSource]) -> List[ExternalSource]:
@@ -40,16 +45,17 @@ def rerank_sources(query: str, sources: List[ExternalSource], top_k: int = 6) ->
         return []
 
     scored_by_model = False
-    try:
-        from backend.retrieval.hybrid_retrieve import get_reranker
-        reranker = get_reranker()
-        pairs = [(query, (s.text or s.snippet or s.title or "")[:1200]) for s in sources]
-        preds = reranker.predict(pairs)
-        for s, p in zip(sources, preds):
-            s.score = float(p)
-        scored_by_model = True
-    except Exception as exc:
-        logger.info("external rerank fell back to lexical (%s)", type(exc).__name__)
+    if USE_CROSS_ENCODER:
+        try:
+            from backend.retrieval.hybrid_retrieve import get_reranker
+            reranker = get_reranker()
+            pairs = [(query, (s.text or s.snippet or s.title or "")[:1200]) for s in sources]
+            preds = reranker.predict(pairs)
+            for s, p in zip(sources, preds):
+                s.score = float(p)
+            scored_by_model = True
+        except Exception as exc:
+            logger.info("external rerank fell back to lexical (%s)", type(exc).__name__)
 
     if not scored_by_model:
         for s in sources:
