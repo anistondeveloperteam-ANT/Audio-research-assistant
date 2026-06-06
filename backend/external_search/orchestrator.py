@@ -14,14 +14,16 @@ from __future__ import annotations
 import os
 from typing import List, Tuple
 
-from backend.external_search.base import ExternalSource, env_flag, logger
+from backend.external_search.base import ExternalSource, clean_query, env_flag, logger
 from backend.external_search.github_search import github_search
 from backend.external_search.pdf_reader import looks_like_pdf_url, read_online_pdf
 from backend.external_search.scholar_search import arxiv_search, patent_search
 from backend.external_search.source_ranker import rerank_sources
 from backend.external_search.web_search import fetch_page_text, get_web_provider, web_search
 
-MAX_PDFS = int(os.getenv("EXTERNAL_MAX_PDFS", "2"))
+MAX_PDFS = int(os.getenv("EXTERNAL_MAX_PDFS", "3"))           # online PDFs from web results
+WEB_MAX = int(os.getenv("WEB_MAX_RESULTS", "8"))              # web pages per query
+ARXIV_READ_PDF_COUNT = int(os.getenv("ARXIV_READ_PDF_COUNT", "3"))  # read this many papers in full
 
 
 def is_web_search_enabled() -> bool:
@@ -65,10 +67,12 @@ def gather_external_evidence(query: str, max_results: int = 8) -> Tuple[List[Ext
     warnings: List[str] = []
     collected: List[ExternalSource] = []
     have_web = get_web_provider() is not None
+    # Keyword query for the search APIs; the full question is kept for re-ranking.
+    sq = clean_query(query)
 
     # Web pages (+ any online PDFs they surface) — needs a web provider key.
     if have_web:
-        web_sources, pdf_urls = _web_channel(query, max_results, warnings)
+        web_sources, pdf_urls = _web_channel(sq, WEB_MAX, warnings)
         collected.extend(web_sources)
         for url in pdf_urls[:MAX_PDFS]:
             try:
@@ -76,9 +80,17 @@ def gather_external_evidence(query: str, max_results: int = 8) -> Tuple[List[Ext
             except Exception:
                 warnings.append("An online PDF could not be read.")
 
-    # Research papers (arXiv) — free, no key.
+    # Research papers (arXiv) — free, no key. READ the top papers' full PDFs
+    # (not just the abstract) so the model has the methods/algorithms to work from.
     try:
-        collected.extend(arxiv_search(query))
+        papers = arxiv_search(sq)
+        collected.extend(papers)
+        for p in papers[:ARXIV_READ_PDF_COUNT]:
+            if p.url and looks_like_pdf_url(p.url):
+                try:
+                    collected.extend(read_online_pdf(p.url))
+                except Exception:
+                    pass
     except Exception as exc:
         logger.info("arxiv search failed: %s", type(exc).__name__)
         warnings.append("Research-paper (arXiv) search failed.")
@@ -86,13 +98,13 @@ def gather_external_evidence(query: str, max_results: int = 8) -> Tuple[List[Ext
     # Patents — via the web provider (Google Patents focus).
     if have_web:
         try:
-            collected.extend(patent_search(query))
+            collected.extend(patent_search(sq))
         except Exception:
             warnings.append("Patent search failed.")
 
     # GitHub repos/code — free (a GITHUB_TOKEN raises limits + enables code search).
     try:
-        collected.extend(github_search(query))
+        collected.extend(github_search(sq))
     except Exception as exc:
         logger.info("github search failed: %s", type(exc).__name__)
         warnings.append("GitHub search failed; continuing without it.")

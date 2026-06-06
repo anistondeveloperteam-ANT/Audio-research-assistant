@@ -13,6 +13,22 @@ companion to the git history.
 
 ## 2026-06-06
 
+### Deeper, more accurate sources + read full papers → code/simulation
+- **Reads full paper PDFs**, not just abstracts: the top arXiv results are
+  downloaded and parsed (page-numbered), so the model has the actual methods to
+  work from. `ARXIV_READ_PDF_COUNT` (default 3).
+- **Much more evidence per source** to the model: `EVIDENCE_CHARS_PER_SOURCE`
+  3500 (was ~900), so answers are deeper and accurate.
+- **Keeps more sources** (`EXTERNAL_TOP_K` 15; arXiv 6 / GitHub 5 / web 8) and a
+  **bigger answer budget** (`ANSWER_MAX_TOKENS` 4096) for complete code / simulations.
+- **Better search queries**: a generic `clean_query()` turns long natural-language
+  questions into keyword queries for the search APIs (the full question is still
+  used for the LLM + re-ranking) — fixes "long question → no results". No domain
+  dictionaries; retrieval stays broad. arXiv switched to HTTPS.
+- Prompt now explicitly: read the method, then write complete runnable original
+  code / a small simulation, cited. Verified: a "explain X and give runnable code"
+  query returned cited sources + a 7k-char answer with working code.
+
 ### Automatic external search (no toggle) + research papers & patents
 - Removed the **Web** toggle button. External search is now **automatic**: if the
   local papers don't answer a question (top relevance < `LOCAL_FOUND_SCORE`), or

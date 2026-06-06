@@ -55,9 +55,13 @@ SYSTEM_PROMPT = (
     "- If external sources conflict with the local papers, say so explicitly.\n"
     "- If the sources do not address the question, say so plainly; never invent facts,\n"
     "  numbers, URLs, or titles.\n"
-    "- For code/algorithm questions: explain the algorithm, cite the source, then write\n"
-    "  ORIGINAL implementation code in this project's style — do NOT copy source code\n"
-    "  verbatim from repositories — and note any license constraints if relevant.\n"
+    "- For code / implementation / simulation requests: read the method from the\n"
+    "  cited paper/source, then write COMPLETE, RUNNABLE, ORIGINAL code (imports +\n"
+    "  a small example / simulation, e.g. NumPy/SciPy) — explain the steps and cite\n"
+    "  the source for each. Do NOT copy code verbatim from repositories; reimplement\n"
+    "  the idea in this project's style and note any license constraints.\n"
+    "- Prefer depth and accuracy over brevity; ground specifics (equations, numbers,\n"
+    "  parameters) in the cited sources.\n"
 )
 
 
@@ -82,7 +86,12 @@ def _evidence_header(n: int, item: Dict[str, Any]) -> str:
     return f"[{n}] (web) {title} -- {item.get('url', '')}"
 
 
-def format_evidence(sources: List[Dict[str, Any]], max_chars: int = 900) -> str:
+# How much of each source's text the model actually reads. Bigger = more accurate,
+# deeper answers (and enough method detail to write code), at higher token cost.
+EVIDENCE_CHARS_PER_SOURCE = int(os.getenv("EVIDENCE_CHARS_PER_SOURCE", "3500"))
+
+
+def format_evidence(sources: List[Dict[str, Any]], max_chars: int = EVIDENCE_CHARS_PER_SOURCE) -> str:
     """Format local and/or external evidence items into a numbered, cited block.
     Works on raw local retrieval dicts (treated as papers) and on external dicts
     that carry a `source_type`."""
@@ -121,6 +130,11 @@ SOURCE_MAX = int(os.getenv("SOURCE_MAX", "12"))
 # If no local paper clears this relevance bar, the answer "isn't in the papers",
 # so we automatically fall back to external search (web / arXiv / patents / GitHub).
 LOCAL_FOUND_SCORE = float(os.getenv("LOCAL_FOUND_SCORE", "0.45"))
+
+# How many external sources to keep (accuracy > brevity — keep more), and how many
+# tokens the answer may use (large enough for full code / simulations).
+EXTERNAL_TOP_K = int(os.getenv("EXTERNAL_TOP_K", "15"))
+ANSWER_MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "4096"))
 
 
 def _score(r: Dict[str, Any]) -> float:
@@ -231,7 +245,7 @@ def stream_chat_events(
             if ENABLE_LOCAL_RAG else
             "Searching the web, research papers, patents & GitHub...")}
         try:
-            ext_sources, ext_warnings = gather_external_evidence(q, max_results=8)
+            ext_sources, ext_warnings = gather_external_evidence(q, max_results=EXTERNAL_TOP_K)
         except Exception as exc:
             ext_sources, ext_warnings = [], [f"External search failed: {exc}"]
         for es in ext_sources:
@@ -283,7 +297,7 @@ def stream_chat_events(
             yield {"type": "token", "text": note}
         else:
             for chunk in provider.stream_chat(
-                messages, system=SYSTEM_PROMPT, max_tokens=2048, temperature=0.3
+                messages, system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS, temperature=0.3
             ):
                 answer_parts.append(chunk)
                 yield {"type": "token", "text": chunk}

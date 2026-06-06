@@ -19,6 +19,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
 import time
 from pathlib import Path
@@ -260,3 +261,29 @@ def safe_get(
 
 def env_flag(name: str, default: bool = False) -> bool:
     return (os.getenv(name, "true" if default else "false") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# Generic filler/instruction words removed when turning a natural-language question
+# into a keyword query for the search APIs. NOT a domain dictionary — it never adds
+# or rewrites terms, only drops generic words, so retrieval stays broad.
+_QUERY_STOP = {
+    "explain", "describe", "give", "show", "write", "provide", "want", "need", "please",
+    "tell", "implement", "implementation", "simulate", "simulation", "code", "program",
+    "script", "runnable", "example", "examples", "demo", "using", "use", "get", "make",
+    "build", "create", "compare", "find", "search", "python", "matlab", "java",
+    "javascript", "the", "a", "an", "of", "for", "and", "or", "is", "are", "was", "were",
+    "be", "to", "in", "on", "with", "how", "what", "why", "which", "does", "do", "can",
+    "could", "would", "this", "that", "these", "those", "it", "its", "me", "my", "i",
+    "you", "your", "we", "our", "as", "at", "by", "from", "about", "into", "then",
+    "through", "like", "also", "vs", "versus", "please",
+}
+_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-\+]*")
+
+
+def clean_query(question: str, max_len: int = 200) -> str:
+    """Turn a question into a compact keyword query for search APIs (the full
+    question is still used for the LLM and for re-ranking). Falls back to the
+    original if cleaning would empty it."""
+    words = _WORD.findall((question or "").lower())
+    kept = [w for w in words if w not in _QUERY_STOP and len(w) > 1]
+    return (" ".join(kept).strip() or (question or "").strip())[:max_len]

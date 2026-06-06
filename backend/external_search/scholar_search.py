@@ -16,8 +16,8 @@ from typing import List
 
 from backend.external_search.base import ExternalSource, cached, logger, safe_get
 
-ARXIV_API = "http://export.arxiv.org/api/query"
-ARXIV_MAX = int(os.getenv("ARXIV_MAX_RESULTS", "4"))
+ARXIV_API = "https://export.arxiv.org/api/query"
+ARXIV_MAX = int(os.getenv("ARXIV_MAX_RESULTS", "6"))
 PATENT_MAX = int(os.getenv("PATENT_MAX_RESULTS", "3"))
 _ATOM = "{http://www.w3.org/2005/Atom}"
 

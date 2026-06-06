@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 from backend.external_search.base import ExternalSource, cached, logger, safe_get
 
 API = "https://api.github.com"
-MAX_REPOS = int(os.getenv("GITHUB_MAX_REPOS", "3"))
+MAX_REPOS = int(os.getenv("GITHUB_MAX_REPOS", "5"))
 MAX_FILES = int(os.getenv("GITHUB_MAX_FILES", "3"))
 MAX_FILE_BYTES = int(os.getenv("GITHUB_MAX_FILE_BYTES", "60000"))
 EXCERPT_LINES = int(os.getenv("GITHUB_EXCERPT_LINES", "120"))
