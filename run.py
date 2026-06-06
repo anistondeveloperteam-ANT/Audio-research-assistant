@@ -47,7 +47,7 @@ def lan_ips() -> list[str]:
         pass
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ips.add(info[4][0])
+            ips.add(str(info[4][0]))
     except Exception:
         pass
     return sorted(ip for ip in ips if not ip.startswith("127.") and not ip.startswith("169.254."))
