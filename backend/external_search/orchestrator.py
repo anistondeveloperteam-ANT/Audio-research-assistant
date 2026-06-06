@@ -17,6 +17,7 @@ from typing import List, Tuple
 from backend.external_search.base import ExternalSource, env_flag, logger
 from backend.external_search.github_search import github_search
 from backend.external_search.pdf_reader import looks_like_pdf_url, read_online_pdf
+from backend.external_search.scholar_search import arxiv_search, patent_search
 from backend.external_search.source_ranker import rerank_sources
 from backend.external_search.web_search import fetch_page_text, get_web_provider, web_search
 
@@ -24,8 +25,11 @@ MAX_PDFS = int(os.getenv("EXTERNAL_MAX_PDFS", "2"))
 
 
 def is_web_search_enabled() -> bool:
-    """True when the feature is on AND a web search provider key is configured."""
-    return env_flag("ENABLE_WEB_SEARCH") and get_web_provider() is not None
+    """Master switch for the automatic external-search fallback (web / arXiv /
+    patents / GitHub). On by default. The web + patent channels additionally need
+    a provider key; arXiv and GitHub work for free, so the fallback is still
+    useful without any key."""
+    return env_flag("ENABLE_WEB_SEARCH", default=True)
 
 
 def _web_channel(query: str, max_results: int, warnings: List[str]) -> Tuple[List[ExternalSource], List[str]]:
@@ -53,26 +57,49 @@ def _web_channel(query: str, max_results: int, warnings: List[str]) -> Tuple[Lis
     return sources, pdf_urls
 
 
-def gather_external_evidence(query: str, max_results: int = 6) -> Tuple[List[ExternalSource], List[str]]:
-    """Collect + rank external evidence for `query`. Never raises; on any channel
-    failure it records a warning and returns whatever else succeeded."""
+def gather_external_evidence(query: str, max_results: int = 8) -> Tuple[List[ExternalSource], List[str]]:
+    """Collect + rank external evidence across all channels — web pages, research
+    papers (arXiv), patents, GitHub repos/code, and online PDFs. Never raises; on
+    any channel failure it records a warning and returns whatever else succeeded.
+    Web + patent channels need a provider key; arXiv + GitHub are free."""
     warnings: List[str] = []
     collected: List[ExternalSource] = []
+    have_web = get_web_provider() is not None
 
-    web_sources, pdf_urls = _web_channel(query, max_results, warnings)
-    collected.extend(web_sources)
+    # Web pages (+ any online PDFs they surface) — needs a web provider key.
+    if have_web:
+        web_sources, pdf_urls = _web_channel(query, max_results, warnings)
+        collected.extend(web_sources)
+        for url in pdf_urls[:MAX_PDFS]:
+            try:
+                collected.extend(read_online_pdf(url))
+            except Exception:
+                warnings.append("An online PDF could not be read.")
 
-    for url in pdf_urls[:MAX_PDFS]:
+    # Research papers (arXiv) — free, no key.
+    try:
+        collected.extend(arxiv_search(query))
+    except Exception as exc:
+        logger.info("arxiv search failed: %s", type(exc).__name__)
+        warnings.append("Research-paper (arXiv) search failed.")
+
+    # Patents — via the web provider (Google Patents focus).
+    if have_web:
         try:
-            collected.extend(read_online_pdf(url))
+            collected.extend(patent_search(query))
         except Exception:
-            warnings.append("An online PDF could not be read.")
+            warnings.append("Patent search failed.")
 
+    # GitHub repos/code — free (a GITHUB_TOKEN raises limits + enables code search).
     try:
         collected.extend(github_search(query))
     except Exception as exc:
         logger.info("github search failed: %s", type(exc).__name__)
         warnings.append("GitHub search failed; continuing without it.")
+
+    if not have_web:
+        warnings.append("No web search key set — used free sources (arXiv, GitHub). "
+                        "Add TAVILY_API_KEY for web pages & patents.")
 
     if not collected:
         return [], warnings

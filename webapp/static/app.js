@@ -37,7 +37,6 @@
     nextTurnIndex: 0,
     mode: "Default",    // single optimized retrieval mode (no Fast/Balanced/Deep)
     topk: 8,            // hint only; the server selects sources adaptively
-    webSearch: false,   // optional external evidence (web / GitHub / online PDFs)
   };
 
   // Icons for the per-question action buttons (copy / edit / delete).
@@ -334,7 +333,8 @@
       return;
     }
     body.innerHTML = "";
-    const TYPE = { local_pdf: "Paper", web: "Web", github_repo: "GitHub", github_code: "GitHub", online_pdf: "PDF" };
+    const TYPE = { local_pdf: "Paper", web: "Web", github_repo: "GitHub", github_code: "GitHub",
+                   online_pdf: "PDF", research_paper: "Research", patent: "Patent" };
     state.currentSources.forEach((s) => {
       const st = s.source_type || "local_pdf";
       const titleInner = esc(prettyName(s.title));
@@ -495,16 +495,6 @@
     try { return JSON.parse($("modelSel").value).model || ""; } catch { return ""; }
   }
 
-  function setWebSearch(on) {
-    state.webSearch = !!on;
-    const btn = $("webToggle");
-    if (btn) {
-      btn.classList.toggle("active", state.webSearch);
-      btn.setAttribute("aria-pressed", state.webSearch ? "true" : "false");
-    }
-    try { localStorage.setItem("ara-web", state.webSearch ? "1" : "0"); } catch {}
-  }
-
   async function send() {
     const text = $("input").value.trim();
     if (!text || state.streaming || !state.currentId) return;
@@ -546,7 +536,7 @@
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: state.currentId, question: text, mode: state.mode, top_k: state.topk, web_search: state.webSearch }),
+        body: JSON.stringify({ session_id: state.currentId, question: text, mode: state.mode, top_k: state.topk }),
         signal: controller.signal,
       });
       const reader = resp.body.getReader();
@@ -868,16 +858,8 @@
     // One optimized retrieval mode now; the server selects how many sources to
     // use adaptively, so there's nothing to configure here.
     $("provLabel").textContent = state.cfg.provider || "ready";
-
-    // Web search toggle — only shown when ENABLE_WEB_SEARCH + a provider key are set.
-    const webBtn = $("webToggle");
-    if (webBtn && state.cfg.web_search_available) {
-      webBtn.hidden = false;
-      let on = true;   // default ON when available (default off otherwise)
-      try { const v = localStorage.getItem("ara-web"); if (v != null) on = v === "1"; } catch {}
-      setWebSearch(on);
-      webBtn.addEventListener("click", () => setWebSearch(!state.webSearch));
-    }
+    // Web search is automatic (no toggle): the server falls back to web / research
+    // papers / patents / GitHub whenever the local papers don't have the answer.
     if (!state.cfg.provider || state.cfg.provider === "unknown") $("provDot").style.background = "var(--amber)";
 
     // Web-search assistant mode: hide local-paper UI when local RAG is off.

@@ -41,7 +41,8 @@ MAX_BYTES = int(os.getenv("EXTERNAL_MAX_BYTES", str(3_000_000)))   # 3 MB hard c
 MAX_RETRIES = int(os.getenv("EXTERNAL_MAX_RETRIES", "2"))
 CACHE_TTL = int(os.getenv("EXTERNAL_CACHE_TTL", str(60 * 60 * 24)))  # 24h
 
-VALID_SOURCE_TYPES = ("local_pdf", "web", "github_repo", "github_code", "online_pdf")
+VALID_SOURCE_TYPES = ("local_pdf", "web", "github_repo", "github_code",
+                      "online_pdf", "research_paper", "patent")
 
 
 # ----------------------------------------------------------------------

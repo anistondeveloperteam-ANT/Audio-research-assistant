@@ -118,6 +118,10 @@ SOURCE_MIN_SCORE = float(os.getenv("SOURCE_MIN_SCORE", "0.30"))
 SOURCE_MIN = int(os.getenv("SOURCE_MIN", "3"))
 SOURCE_MAX = int(os.getenv("SOURCE_MAX", "12"))
 
+# If no local paper clears this relevance bar, the answer "isn't in the papers",
+# so we automatically fall back to external search (web / arXiv / patents / GitHub).
+LOCAL_FOUND_SCORE = float(os.getenv("LOCAL_FOUND_SCORE", "0.45"))
+
 
 def _score(r: Dict[str, Any]) -> float:
     try:
@@ -199,8 +203,9 @@ def stream_chat_events(
     mem.append_turn(session_id, "user", q)
 
     items: List[Dict[str, Any]] = []
+    local_found = False
 
-    # --- Optional local PDF RAG (off by default; needs Oracle + indexed papers) ---
+    # --- 1) Local PDF papers first (when enabled; needs Oracle + indexed papers) ---
     if ENABLE_LOCAL_RAG:
         yield {"type": "status", "message": "Searching your papers..."}
         try:
@@ -211,15 +216,20 @@ def stream_chat_events(
                 apply_research_mode(mode)
             except Exception:
                 pass
-            results = select_sources(hybrid_retrieve(q, top_k=SOURCE_MAX + 6) or [])
-            items.extend(_local_evidence_item(r) for r in results)
+            local = select_sources(hybrid_retrieve(q, top_k=SOURCE_MAX + 6) or [])
+            local_items = [_local_evidence_item(r) for r in local]
+            items.extend(local_items)
+            local_found = any(li["score"] >= LOCAL_FOUND_SCORE for li in local_items)
         except Exception as exc:
             yield {"type": "warning", "message": f"Local paper search is unavailable: {exc}"}
 
-    # --- Web / GitHub / online-PDF search (primary evidence channel) ---
-    do_web = bool(web_search) and is_web_search_enabled()
-    if do_web:
-        yield {"type": "status", "message": "Searching the web, GitHub & online PDFs..."}
+    # --- 2) AUTOMATIC fallback: if the papers don't answer it (or there are no
+    #        papers), search the web, research papers (arXiv), patents & GitHub. ---
+    if not local_found and is_web_search_enabled():
+        yield {"type": "status", "message": (
+            "Not found in your papers — searching the web, research papers, patents & GitHub..."
+            if ENABLE_LOCAL_RAG else
+            "Searching the web, research papers, patents & GitHub...")}
         try:
             ext_sources, ext_warnings = gather_external_evidence(q, max_results=8)
         except Exception as exc:
@@ -231,11 +241,14 @@ def stream_chat_events(
         for w in ext_warnings:
             yield {"type": "warning", "message": w}
 
-    # --- No knowledge source enabled -> explain instead of guessing ---
-    if not ENABLE_LOCAL_RAG and not do_web:
-        msg = ("No knowledge source is enabled. Turn on web search by setting "
-               "`ENABLE_WEB_SEARCH=true` and a provider key (e.g. `TAVILY_API_KEY`) "
-               "in `.env`, then restart.")
+    # --- Nothing available at all -> explain instead of guessing ---
+    if not items:
+        if not ENABLE_LOCAL_RAG and not is_web_search_enabled():
+            msg = ("No knowledge source is enabled. Set `ENABLE_WEB_SEARCH=true` (and "
+                   "optionally `TAVILY_API_KEY` for web pages & patents) in `.env`, or "
+                   "turn on local papers with `ENABLE_LOCAL_RAG=true`.")
+        else:
+            msg = "I couldn't find relevant information for that question in the available sources."
         yield {"type": "sources", "sources": []}
         yield {"type": "token", "text": msg}
         mem.append_turn(session_id, "assistant", msg, sources=[])

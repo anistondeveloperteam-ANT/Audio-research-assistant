@@ -489,11 +489,10 @@ body {
 .chip.type-web { background: rgba(56,139,253,.16); color: #4493f8; }
 .chip.type-github_repo, .chip.type-github_code { background: rgba(130,80,223,.18); color: #a371f7; }
 .chip.type-online_pdf { background: rgba(248,81,73,.16); color: #f85149; }
+.chip.type-research_paper { background: rgba(16,185,129,.16); color: #10b981; }
+.chip.type-patent { background: rgba(234,179,8,.18); color: #d4a017; }
 a.sc-title { color: var(--accent-600); text-decoration: none; }
 a.sc-title:hover { text-decoration: underline; }
-
-/* Web search toggle — active state */
-#webToggle.active { background: var(--accent-weak); color: var(--accent-600); border-color: var(--accent-border); }
 
 /* Non-blocking warning toast */
 .toast.warn { border-left: 3px solid var(--amber); }

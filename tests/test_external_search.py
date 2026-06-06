@@ -210,6 +210,49 @@ def test_external_source_to_public_and_citation():
     assert "src/a.py:10-40" in s.citation()
 
 
+def test_arxiv_search_parses(monkeypatch):
+    import backend.external_search.scholar_search as sch
+    atom = ('<?xml version="1.0"?>'
+            '<feed xmlns="http://www.w3.org/2005/Atom"><entry>'
+            '<title>Deep Noise Suppression</title>'
+            '<summary>An abstract about denoising.</summary>'
+            '<published>2026-01-02T00:00:00Z</published>'
+            '<id>http://arxiv.org/abs/2601.00001v1</id>'
+            '<link title="pdf" href="http://arxiv.org/pdf/2601.00001v1" type="application/pdf"/>'
+            '</entry></feed>')
+    monkeypatch.setattr(sch, "cached", lambda key, producer, ttl=None: producer())
+    monkeypatch.setattr(sch, "safe_get", lambda *a, **k: atom)
+    out = sch.arxiv_search("denoising")
+    assert len(out) == 1
+    assert out[0].source_type == "research_paper"
+    assert out[0].url.endswith("2601.00001v1")
+    assert "abstract" in out[0].text.lower()
+
+
+def test_patent_search_tags_patent(monkeypatch):
+    import backend.external_search.scholar_search as sch
+    def fake_web_search(q, max_results=3):
+        return [ExternalSource(source_type="web", title="US123",
+                               url="https://patents.google.com/patent/US123",
+                               snippet="a claim", provider="tavily")]
+    monkeypatch.setattr("backend.external_search.web_search.web_search", fake_web_search)
+    out = sch.patent_search("noise cancellation")
+    assert out and out[0].source_type == "patent"
+    assert "patents.google.com" in out[0].url
+
+
+def test_gather_uses_free_sources_without_web_key(monkeypatch):
+    import backend.external_search.orchestrator as orch
+    monkeypatch.setattr(orch, "get_web_provider", lambda: None)   # no web key
+    monkeypatch.setattr(orch, "arxiv_search",
+                        lambda q: [ExternalSource(source_type="research_paper", title="P",
+                                                  url="http://arxiv.org/abs/1", text="relevant abc")])
+    monkeypatch.setattr(orch, "github_search", lambda q: [])
+    srcs, warns = orch.gather_external_evidence("query abc", max_results=5)
+    assert any(s.source_type == "research_paper" for s in srcs)
+    assert any("No web search key" in w for w in warns)
+
+
 def test_format_evidence_tags_local_and_external():
     from webapp.chat_logic import format_evidence
     ev = format_evidence([

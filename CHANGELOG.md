@@ -13,6 +13,20 @@ companion to the git history.
 
 ## 2026-06-06
 
+### Automatic external search (no toggle) + research papers & patents
+- Removed the **Web** toggle button. External search is now **automatic**: if the
+  local papers don't answer a question (top relevance < `LOCAL_FOUND_SCORE`), or
+  local RAG is off, the assistant automatically falls back to external sources.
+- Added two channels: **research papers via arXiv** (free, no key — new
+  `research_paper` source type) and **patents** via the web provider (Google
+  Patents focus — new `patent` type), alongside the existing web / GitHub /
+  online-PDF channels. All de-duped + reranked, each cited with URL/file/page.
+- `ENABLE_WEB_SEARCH` defaults **on**; arXiv + GitHub work with **no key**, so the
+  fallback is useful even without a paid web key (a key adds web pages + patents).
+  `/api/chat` no longer needs a `web_search` flag. New source-card badges
+  (Research / Patent). Verified live: a question with no key returned 4 arXiv +
+  3 GitHub cited sources. 52 tests pass.
+
 ### Web-search-first (production): local RAG now optional & off by default
 - Flipped the product to a **web-search assistant**: web/GitHub/online-PDF search
   is the primary, always-on knowledge source. The local Oracle/PDF RAG is now
