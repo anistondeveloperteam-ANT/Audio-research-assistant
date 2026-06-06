@@ -351,8 +351,8 @@ python pipeline.py --incremental   # only changed PDFs
 python pipeline.py --status        # show what's indexed (no rebuild)
 
 # 2. Launch the web app  ->  http://localhost:8600
-python run.py                      # shared on your Wi-Fi/LAN by default
-python run.py --local              # this PC only
+python run.py                      # local to this PC
+python run.py --port 9000          # optional: choose another local port
 ```
 
 Useful checks:
@@ -367,7 +367,7 @@ python -m backend.database.db_status       # show indexed papers / chunks
 
 ```
 Audio-research-assistant/
-├── run.py                  # Launch the web app (auto-frees port, LAN sharing + firewall)
+├── run.py                  # Launch the local web app (auto-frees stale Python servers)
 ├── pipeline.py             # Build / refresh the index (ingest -> embed -> vector)
 ├── backend/
 │   ├── config.py           # Central settings (reads .env)

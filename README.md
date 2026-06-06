@@ -94,12 +94,11 @@ python pipeline.py --status
 python pipeline.py
 
 # Launch the web app
-python run.py                      # http://localhost:8600 — shared on your Wi-Fi by default
-python run.py --local              # restrict to this PC only
+python run.py                      # http://localhost:8600
+python run.py --port 9000          # optional: choose another local port
 ```
-> The web app does not auto-open a browser — visit http://localhost:8600 yourself.
-> `python run.py` shares the app on your network so teammates can open
-> `http://<your-ip>:8600`; the first run adds a firewall rule (one approval prompt).
+> The web app does not auto-open a browser - visit http://localhost:8600 yourself.
+> The launcher binds to 127.0.0.1, so it is available only on this PC.
 
 ## Maintenance tools
 

@@ -11,6 +11,13 @@ companion to the git history.
 
 ---
 
+## 2026-06-06
+
+### Launcher cleanup
+- Simplified `run.py` to a local-only launcher: removed LAN sharing, firewall setup,
+  and the `--share` / `--local` / `--host` CLI paths. Kept `--port` and stale-port
+  cleanup.
+
 ## 2026-06-05
 
 ### Dead-code sweep
@@ -31,8 +38,7 @@ companion to the git history.
 
 ### UX cleanup per feedback
 - **No startup prompt:** `run.py` is now **local by default** (binds 127.0.0.1) — no
-  Windows firewall/permission popup on launch. Use `--share` only when you want
-  teammates on your network to reach it.
+  Windows firewall/permission popup on launch.
 - **Delete a question instantly:** removed the confirmation dialog — the trash icon
   deletes the question + its answer immediately.
 - **Cleaner top bar:** removed the Mode and Sources-count selectors (sensible
