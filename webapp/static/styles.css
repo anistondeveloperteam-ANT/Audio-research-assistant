@@ -167,9 +167,16 @@ body {
 
 .sidebar-foot {
   padding: 12px 18px; border-top: 1px solid var(--border);
-  font-size: 11.5px; color: var(--muted-2); display: flex; align-items: center; gap: 7px;
+  font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 7px;
 }
+/* The model + "papers indexed" labels must stay readable in both themes */
+#provLabel, #libLabel { color: var(--text-soft); font-weight: 500; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; box-shadow: 0 0 0 3px rgba(22,163,74,.14); }
+.sidebar-foot .dot { animation: pulse-dot 2.6s ease-in-out infinite; }
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(22,163,74,.16); }
+  50%      { box-shadow: 0 0 0 6px rgba(22,163,74,.04); }
+}
 
 /* ---------- Main column ---------- */
 .main {
@@ -517,7 +524,7 @@ body {
 
 .sidebar-foot { flex-direction: column; align-items: stretch; gap: 7px; }
 .foot-row { display: flex; align-items: center; gap: 7px; }
-.foot-lib { color: var(--muted-2); }
+.foot-lib { color: var(--muted); }
 .foot-lib svg { opacity: .7; }
 button.foot-lib {
   font: inherit; font-size: 11.5px; background: none; border: 1px solid transparent;

@@ -13,6 +13,12 @@ companion to the git history.
 
 ## 2026-06-06
 
+### Dark-mode footer fix + live status dot
+- The sidebar footer (the **model** label and **"papers indexed"**) was nearly
+  invisible in dark mode — it used `--muted-2` on the dark panel. Bumped those
+  labels to `--text-soft` so they're clearly readable in both themes.
+- Added a gentle pulse to the status dot so the footer feels alive.
+
 ### Launcher cleanup
 - Simplified `run.py` to a local-only launcher: removed LAN sharing, firewall setup,
   and the `--share` / `--local` / `--host` CLI paths. Kept `--port` and stale-port
