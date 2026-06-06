@@ -116,6 +116,42 @@ python run.py --port 9000          # optional: choose another local port
 | `python -m backend.evaluation.evaluate_retrieval` | Score retrieval quality |
 | `python -m backend.evaluation.evaluate_llm` | Measure LLM answer accuracy (keypoint coverage + citations); `--models a,b` to compare, `--judge` for an LLM-graded score |
 
+## External search (optional: web · GitHub · online PDFs)
+
+Off by default. When enabled, the assistant can **also** search public sources —
+web pages, GitHub repos/READMEs/code, and online PDFs — read them safely, and add
+them as a **separate, cited** evidence channel. Your local PDF RAG is unchanged
+and is always preferred for project-specific answers.
+
+**Enable it** in `.env`:
+```
+ENABLE_WEB_SEARCH=true
+WEB_SEARCH_PROVIDER=tavily          # tavily | brave | serpapi
+TAVILY_API_KEY=your_key             # (or BRAVE_SEARCH_API_KEY / SERPAPI_API_KEY)
+GITHUB_TOKEN=optional_token         # raises GitHub limits + enables code search
+```
+Then a **Web** toggle appears in the top bar (top-right). Turn it on per question;
+external source cards show the **URL, file path + line range, and page number**.
+
+**Behavior & citations**
+- Answers cite every claim with `[n]`; cards are tagged **Paper / Web / GitHub / PDF**.
+- Local papers are preferred for project questions; web/PDF for latest info.
+- For code/algorithm questions the assistant explains the algorithm, cites the
+  source, and writes **original** code in this project's style — it does **not**
+  copy repository code; any license is shown.
+- If external search fails, the app keeps answering from local RAG and shows a
+  non-blocking warning.
+
+**Security & limits**
+- Keys are read **server-side only** — never sent to the browser or logged.
+- SSRF-guarded: only `http(s)`, and any host resolving to localhost / private /
+  link-local / cloud-metadata IPs is blocked; `file://` is rejected.
+- Per-request timeouts, retries, and size caps; downloaded content is never executed.
+- Fetches are cached under `data/external_cache/` (gitignored) with a TTL.
+
+**Limitations:** respects provider/API terms and rate limits; results depend on the
+chosen provider; very large pages/PDFs are truncated; code search needs a `GITHUB_TOKEN`.
+
 ## GPU / CPU
 
 The embedding and reranker models pick their device from `.env`:

@@ -41,8 +41,9 @@ openai==1.109.1
 # --- Google Gemini (embeddings: EMBEDDING_PROVIDER=google) ---
 google-genai==1.75.0
 
-# --- HTTP (Ollama calls, model listing) ---
+# --- HTTP + external search (Ollama calls, web/GitHub/PDF retrieval) ---
 requests==2.34.1
+beautifulsoup4==4.14.3    # readable-text extraction for web pages (external search)
 
 # --- Misc utilities ---
 tqdm==4.67.3

@@ -21,6 +21,7 @@ from backend.answering.query_sanity import check_query_sanity
 from backend.answering.research_modes import apply_research_mode
 from backend.retrieval.hybrid_retrieve import hybrid_retrieve
 from backend.llm.streaming_provider import get_provider
+from backend.external_search import gather_external_evidence, is_web_search_enabled
 
 # ----------------------------------------------------------------------
 # Singletons
@@ -40,34 +41,62 @@ def memory() -> MemoryStore:
 # ----------------------------------------------------------------------
 SYSTEM_PROMPT = (
     "You are an expert research assistant for audio signal processing and audio AI.\n"
-    "Answer using ONLY the numbered source excerpts provided in the user's message.\n"
+    "Answer using ONLY the numbered source excerpts in the user's message. Each source\n"
+    "is tagged with its type: (paper) = the user's local papers, (web) = a web page,\n"
+    "(github) = a public repository file, (pdf) = an online PDF.\n"
     "- Be precise, technical, and clear; prefer short paragraphs and bullet points.\n"
-    "- If the sources do not address the question, say so plainly instead of guessing.\n"
-    "- Never invent facts, numbers, or paper titles.\n"
     "- Cite every non-trivial claim with [1], [2], ... matching the numbered sources.\n"
+    "- Prefer the local (paper) sources for project-specific answers; use (web)/(pdf)\n"
+    "  sources for latest/current information.\n"
+    "- If external sources conflict with the local papers, say so explicitly.\n"
+    "- If the sources do not address the question, say so plainly; never invent facts,\n"
+    "  numbers, URLs, or titles.\n"
+    "- For code/algorithm questions: explain the algorithm, cite the source, then write\n"
+    "  ORIGINAL implementation code in this project's style — do NOT copy source code\n"
+    "  verbatim from repositories — and note any license constraints if relevant.\n"
 )
 
 
+def _evidence_header(n: int, item: Dict[str, Any]) -> str:
+    """Build the '[n] (type) title — location' header for one evidence item."""
+    st = item.get("source_type", "local_pdf")
+    title = item.get("title") or "Untitled"
+    if st == "local_pdf":
+        section = item.get("section") or item.get("section_name") or "?"
+        ps = item.get("page_start") or "?"
+        pe = item.get("page_end") or "?"
+        return f"[{n}] (paper) {title} -- {section} (pages {ps}-{pe})"
+    if st in ("github_repo", "github_code"):
+        loc = item.get("file_path") or ""
+        if item.get("line_start"):
+            loc += f":{item['line_start']}" + (f"-{item['line_end']}" if item.get("line_end") else "")
+        lic = f" [license: {item['license']}]" if item.get("license") else ""
+        return f"[{n}] (github) {title} -- {item.get('url', '')} {loc}{lic}".rstrip()
+    if st == "online_pdf":
+        pg = f" p.{item['page']}" if item.get("page") else ""
+        return f"[{n}] (pdf) {title} -- {item.get('url', '')}{pg}"
+    return f"[{n}] (web) {title} -- {item.get('url', '')}"
+
+
 def format_evidence(sources: List[Dict[str, Any]], max_chars: int = 900) -> str:
+    """Format local and/or external evidence items into a numbered, cited block.
+    Works on raw local retrieval dicts (treated as papers) and on external dicts
+    that carry a `source_type`."""
     if not sources:
         return "(no retrieved sources)"
     parts = []
     for i, r in enumerate(sources, 1):
-        title = r.get("title") or "Untitled"
-        section = r.get("section") or r.get("section_name") or "?"
-        ps = r.get("page_start") or "?"
-        pe = r.get("page_end") or "?"
         text = (r.get("text") or r.get("chunk_text") or "").strip()
         if len(text) > max_chars:
             text = text[:max_chars].rsplit(" ", 1)[0] + "..."
-        parts.append(f"[{i}] {title} -- {section} (pages {ps}-{pe})\n{text}")
+        parts.append(_evidence_header(i, r) + "\n" + text)
     return "\n\n".join(parts)
 
 
 def build_user_message(question: str, evidence: str) -> str:
     return (
         f"Question: {question}\n\n"
-        f"Retrieved evidence from the uploaded papers:\n\n{evidence}\n\n"
+        f"Retrieved evidence (your local papers and any external sources):\n\n{evidence}\n\n"
         f"Answer the question using only the evidence above. Cite sources with [n]."
     )
 
@@ -111,14 +140,30 @@ def select_sources(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def public_source(r: Dict[str, Any], i: int) -> Dict[str, Any]:
-    """Trim a retrieval result down to what the UI needs to render a source card."""
+    """Trim a LOCAL retrieval result down to what the UI needs to render a card."""
     return {
         "n": i,
+        "source_type": "local_pdf",
         "title": r.get("title") or "Untitled",
         "section": r.get("section") or r.get("section_name") or "",
         "page_start": r.get("page_start"),
         "page_end": r.get("page_end"),
         "text": (r.get("text") or r.get("chunk_text") or "").strip()[:600],
+        "score": round(float(r.get("rerank_score") or 0.0), 3),
+    }
+
+
+def _local_evidence_item(r: Dict[str, Any]) -> Dict[str, Any]:
+    """Full-text local evidence item (used for the LLM context + UI card)."""
+    return {
+        "source_type": "local_pdf",
+        "title": r.get("title") or "Untitled",
+        "section": r.get("section") or r.get("section_name") or "",
+        "page_start": r.get("page_start"),
+        "page_end": r.get("page_end"),
+        "url": "", "file_path": None, "line_start": None, "line_end": None, "page": None,
+        "provider": "local", "license": None,
+        "text": (r.get("text") or r.get("chunk_text") or "").strip(),
         "score": round(float(r.get("rerank_score") or 0.0), 3),
     }
 
@@ -129,10 +174,11 @@ def public_source(r: Dict[str, Any], i: int) -> Dict[str, Any]:
 def stream_chat_events(
     session_id: str,
     question: str,
-    mode: str = "Balanced",
+    mode: str = "Default",
     top_k: int = 8,
+    web_search: bool = False,
 ) -> Iterator[Dict[str, Any]]:
-    """Yield event dicts: sanity | status | sources | token | done | error."""
+    """Yield event dicts: sanity | status | sources | token | warning | done | error."""
     q = (question or "").strip()
 
     sanity = check_query_sanity(q)
@@ -157,11 +203,33 @@ def stream_chat_events(
         return
 
     results = select_sources(results)
-    sources = [public_source(r, i) for i, r in enumerate(results, 1)]
+    # Local evidence (full text for the LLM; trimmed copy for the UI).
+    items: List[Dict[str, Any]] = [_local_evidence_item(r) for r in results]
+
+    # Optional external evidence channel — additive, never blocks local RAG.
+    if web_search and is_web_search_enabled():
+        yield {"type": "status", "message": "Searching the web & repositories..."}
+        try:
+            ext_sources, ext_warnings = gather_external_evidence(q, max_results=6)
+        except Exception as exc:
+            ext_sources, ext_warnings = [], [f"External search failed: {exc}"]
+        for es in ext_sources:
+            d = es.to_public()
+            d["text"] = (es.text or es.snippet or "").strip()   # full text for the LLM
+            items.append(d)
+        for w in ext_warnings:
+            yield {"type": "warning", "message": w}
+
+    sources = []
+    for i, it in enumerate(items, 1):
+        pub = dict(it)
+        pub["n"] = i
+        pub["text"] = (it.get("text") or "")[:600]
+        sources.append(pub)
     yield {"type": "sources", "sources": sources}
     yield {"type": "status", "message": "Writing the answer..."}
 
-    evidence = format_evidence(results)
+    evidence = format_evidence(items)
     user_msg = build_user_message(q, evidence)
     recent = mem.get_recent_turns(session_id, n_messages=6)
     # Replace the just-stored bare question with the evidence-augmented version.

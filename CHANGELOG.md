@@ -13,6 +13,21 @@ companion to the git history.
 
 ## 2026-06-06
 
+### External knowledge retrieval (optional web / GitHub / online-PDF search)
+- New `backend/external_search/` package: a provider layer (web search via
+  Tavily/Brave/SerpAPI, GitHub repo/code via the REST API, online PDF reader) with
+  SSRF-guarded + size/timeout-capped HTTP, a TTL disk cache (`data/external_cache/`),
+  de-dup, and rerank against the query. Cited `ExternalSource` records carry
+  source_type (web/github_repo/github_code/online_pdf/local_pdf) + url/file/line/page.
+- Wired into `chat_logic` as a **separate, additive** evidence channel — local PDF
+  RAG is unchanged and preferred. A **Web** toggle (top bar) appears when
+  `ENABLE_WEB_SEARCH=true` + a provider key is set; default off otherwise. Failures
+  are non-blocking (warning toast, local answer continues). Source cards show the
+  type badge + URL/file/page. API keys stay server-side; never logged.
+- Tests: mocked-network unit tests for URL safety/SSRF, HTML extraction, provider
+  parsing, GitHub parsing, PDF-failure handling, dedup, ranking, and formatting.
+- Docs + `.env.example` updated; re-added `beautifulsoup4` for HTML extraction.
+
 ### One optimized retrieval mode + richer Gemini embeddings
 - Removed Fast / Balanced / Deep "research modes". The app now always runs a single
   `DEFAULT_RETRIEVAL_SETTINGS` config (vector/BM25/rerank top-k 24, ≤2 sources per

@@ -37,6 +37,7 @@
     nextTurnIndex: 0,
     mode: "Default",    // single optimized retrieval mode (no Fast/Balanced/Deep)
     topk: 8,            // hint only; the server selects sources adaptively
+    webSearch: false,   // optional external evidence (web / GitHub / online PDFs)
   };
 
   // Icons for the per-question action buttons (copy / edit / delete).
@@ -328,21 +329,34 @@
       return;
     }
     body.innerHTML = "";
+    const TYPE = { local_pdf: "Paper", web: "Web", github_repo: "GitHub", github_code: "GitHub", online_pdf: "PDF" };
     state.currentSources.forEach((s) => {
+      const st = s.source_type || "local_pdf";
+      const titleInner = esc(prettyName(s.title));
+      const titleEl = s.url
+        ? `<a class="sc-title" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${titleInner}</a>`
+        : `<span class="sc-title">${titleInner}</span>`;
       const pages = s.page_start ? `pp. ${s.page_start}${s.page_end && s.page_end !== s.page_start ? "–" + s.page_end : ""}` : "";
+      let meta = "";
+      if (s.score) meta += `<span class="chip relevance">${Math.min(100, Math.round(s.score * 100))}% match</span>`;
+      meta += `<span class="chip type type-${st}">${TYPE[st] || "Source"}</span>`;
+      if (st === "local_pdf") {
+        if (s.section) meta += `<span class="chip">${esc(s.section)}</span>`;
+        if (pages) meta += `<span class="chip">${pages}</span>`;
+      } else {
+        if (s.file_path) {
+          const loc = esc(s.file_path) + (s.line_start ? ":" + s.line_start + (s.line_end ? "-" + s.line_end : "") : "");
+          meta += `<span class="chip">${loc}</span>`;
+        }
+        if (s.page) meta += `<span class="chip">p.${s.page}</span>`;
+        if (s.license) meta += `<span class="chip">${esc(s.license)}</span>`;
+      }
       const card = document.createElement("div");
       card.className = "source-card";
       card.id = "src-card-" + s.n;
       card.innerHTML = `
-        <div class="sc-head">
-          <span class="sc-n">${s.n}</span>
-          <span class="sc-title">${esc(prettyName(s.title))}</span>
-        </div>
-        <div class="sc-meta">
-          ${s.score ? `<span class="chip relevance">${Math.min(100, Math.round(s.score * 100))}% match</span>` : ""}
-          ${s.section ? `<span class="chip">${esc(s.section)}</span>` : ""}
-          ${pages ? `<span class="chip">${pages}</span>` : ""}
-        </div>
+        <div class="sc-head"><span class="sc-n">${s.n}</span>${titleEl}</div>
+        <div class="sc-meta">${meta}</div>
         <div class="sc-text">${esc(s.text)}</div>
         ${s.text && s.text.length > 240 ? `<span class="sc-more">Show more</span>` : ""}`;
       const more = card.querySelector(".sc-more");
@@ -476,6 +490,16 @@
     try { return JSON.parse($("modelSel").value).model || ""; } catch { return ""; }
   }
 
+  function setWebSearch(on) {
+    state.webSearch = !!on;
+    const btn = $("webToggle");
+    if (btn) {
+      btn.classList.toggle("active", state.webSearch);
+      btn.setAttribute("aria-pressed", state.webSearch ? "true" : "false");
+    }
+    try { localStorage.setItem("ara-web", state.webSearch ? "1" : "0"); } catch {}
+  }
+
   async function send() {
     const text = $("input").value.trim();
     if (!text || state.streaming || !state.currentId) return;
@@ -517,7 +541,7 @@
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: state.currentId, question: text, mode: state.mode, top_k: state.topk }),
+        body: JSON.stringify({ session_id: state.currentId, question: text, mode: state.mode, top_k: state.topk, web_search: state.webSearch }),
         signal: controller.signal,
       });
       const reader = resp.body.getReader();
@@ -585,6 +609,9 @@
       case "token":
         setAns(getAns() + (ev.text || ""));
         scheduleRender();
+        break;
+      case "warning":
+        toast(ev.message || "Heads up", "warn");
         break;
       case "error":
         toast(ev.message || "Error", "error");
@@ -836,6 +863,16 @@
     // One optimized retrieval mode now; the server selects how many sources to
     // use adaptively, so there's nothing to configure here.
     $("provLabel").textContent = state.cfg.provider || "ready";
+
+    // Web search toggle — only shown when ENABLE_WEB_SEARCH + a provider key are set.
+    const webBtn = $("webToggle");
+    if (webBtn && state.cfg.web_search_available) {
+      webBtn.hidden = false;
+      let on = true;   // default ON when available (default off otherwise)
+      try { const v = localStorage.getItem("ara-web"); if (v != null) on = v === "1"; } catch {}
+      setWebSearch(on);
+      webBtn.addEventListener("click", () => setWebSearch(!state.webSearch));
+    }
     if (!state.cfg.provider || state.cfg.provider === "unknown") $("provDot").style.background = "var(--amber)";
 
     loadLibrary();

@@ -22,6 +22,7 @@ env/
 # Source PDFs and derived/extracted data are large and machine-local.
 data/papers/
 data/extracted/
+data/external_cache/
 data/logs/
 data/audio_samples/
 data/code_repos/

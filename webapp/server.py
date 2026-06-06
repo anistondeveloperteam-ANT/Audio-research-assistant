@@ -44,7 +44,12 @@ def config():
     except Exception:
         provider_label = "unknown"
     # One optimized retrieval mode now — no Fast/Balanced/Deep options exposed.
-    return {"provider": provider_label}
+    try:
+        from backend.external_search import is_web_search_enabled
+        web_search_available = is_web_search_enabled()
+    except Exception:
+        web_search_available = False
+    return {"provider": provider_label, "web_search_available": web_search_available}
 
 
 # ----------------------------------------------------------------------
@@ -158,14 +163,17 @@ def run_ingest():
 def chat(body: dict = Body(...)):
     session_id = body.get("session_id")
     question = body.get("question", "")
-    mode = body.get("mode", "Balanced")
+    mode = body.get("mode", "Default")
     top_k = body.get("top_k", 8)
+    web_search = bool(body.get("web_search", False))
     if not session_id:
         return JSONResponse({"error": "session_id is required"}, status_code=400)
 
     def gen():
         try:
-            for event in chat_logic.stream_chat_events(session_id, question, mode=mode, top_k=top_k):
+            for event in chat_logic.stream_chat_events(
+                session_id, question, mode=mode, top_k=top_k, web_search=web_search
+            ):
                 yield json.dumps(event) + "\n"
         except Exception as exc:  # last-resort guard so the stream always closes cleanly
             yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
