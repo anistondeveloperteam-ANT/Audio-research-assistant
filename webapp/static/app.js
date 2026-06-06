@@ -56,6 +56,14 @@
 
   const esc = (s) => (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+  // Tidy a paper / file name for display: drop ".pdf", underscores -> spaces,
+  // and Title-Case anything that's ALL CAPS (e.g. "REVEREBERATION" -> "Reverberation").
+  const prettyName = (s) => {
+    let t = (s || "").replace(/\.pdf$/i, "").replace(/_+/g, " ").replace(/\s+/g, " ").trim();
+    if (t && !/[a-z]/.test(t)) t = t.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+    return t;
+  };
+
   // ---------- Toasts ----------
   function toast(msg, kind) {
     const t = document.createElement("div");
@@ -94,7 +102,7 @@
     if (!s) return;
     const pop = $("citePop");
     const pages = s.page_start ? ` · pp. ${s.page_start}${s.page_end && s.page_end !== s.page_start ? "–" + s.page_end : ""}` : "";
-    pop.innerHTML = `<div class="cp-title">[${s.n}] ${esc(s.title)}</div>` +
+    pop.innerHTML = `<div class="cp-title">[${s.n}] ${esc(prettyName(s.title))}</div>` +
       `<div class="cp-meta">${esc(s.section || "")}${pages}</div>` +
       `<div>${esc((s.text || "").slice(0, 170))}…</div>`;
     const r = chip.getBoundingClientRect();
@@ -305,7 +313,7 @@
     if (sources && sources.length) {
       const sc = document.createElement("button");
       sc.className = "src-count";
-      sc.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> ${sources.length} source${sources.length > 1 ? "s" : ""}`;
+      sc.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Sources`;
       sc.addEventListener("click", () => { state.currentSources = sources; renderSources(sources); openDrawer(); });
       h.tools.appendChild(sc);
     }
@@ -314,7 +322,6 @@
   // ---------- Sources drawer ----------
   function renderSources(sources) {
     state.currentSources = sources || [];
-    $("srcCount").textContent = String(state.currentSources.length);
     const body = $("drawerBody");
     if (!state.currentSources.length) {
       body.innerHTML = `<div class="drawer-empty">No sources for this answer.</div>`;
@@ -329,7 +336,7 @@
       card.innerHTML = `
         <div class="sc-head">
           <span class="sc-n">${s.n}</span>
-          <span class="sc-title">${esc(s.title)}</span>
+          <span class="sc-title">${esc(prettyName(s.title))}</span>
         </div>
         <div class="sc-meta">
           ${s.section ? `<span class="chip">${esc(s.section)}</span>` : ""}
@@ -645,8 +652,8 @@
       row.className = "paper-row";
       row.innerHTML = `
         <div class="pr-main">
-          <div class="pr-title">${esc(p.title)}</div>
-          <div class="pr-meta">${p.chunks} chunk${p.chunks === 1 ? "" : "s"}${p.file_name ? " · " + esc(p.file_name) : ""}</div>
+          <div class="pr-title">${esc(prettyName(p.title))}</div>
+          <div class="pr-meta">${p.chunks} chunk${p.chunks === 1 ? "" : "s"}</div>
         </div>
         <button class="pr-del">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
