@@ -16,16 +16,25 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.memory.store import MemoryStore, default_db_path
-from backend.answering.query_sanity import check_query_sanity
-from backend.llm.streaming_provider import get_provider
-from backend.external_search import gather_external_evidence, is_web_search_enabled
+# Load .env BEFORE reading the settings below (this module may be imported before
+# anything else triggers dotenv, so the flags must not read a stale environment).
+from dotenv import load_dotenv  # noqa: E402
+load_dotenv(ROOT / ".env")
 
-# Local PDF RAG (Oracle + embeddings + reranker) is OPTIONAL and off by default.
-# Web search is the primary source. `hybrid_retrieve` / `apply_research_mode` are
-# imported lazily inside the chat flow only when this is enabled, so a web-only
-# production deploy doesn't need Oracle or the heavy ML dependencies.
-ENABLE_LOCAL_RAG = (os.getenv("ENABLE_LOCAL_RAG", "false") or "").strip().lower() in ("1", "true", "yes", "on")
+from backend.memory.store import MemoryStore, default_db_path  # noqa: E402
+from backend.answering.query_sanity import check_query_sanity  # noqa: E402
+from backend.llm.streaming_provider import get_provider  # noqa: E402
+from backend.external_search import gather_external_evidence, is_web_search_enabled  # noqa: E402
+
+
+def local_rag_enabled() -> bool:
+    """True when the optional local PDF RAG (Oracle + embeddings) is turned on.
+    Read live so it always reflects the current .env."""
+    return (os.getenv("ENABLE_LOCAL_RAG", "false") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# Back-compat constant (read once after .env is loaded).
+ENABLE_LOCAL_RAG = local_rag_enabled()
 
 # ----------------------------------------------------------------------
 # Singletons
@@ -218,9 +227,10 @@ def stream_chat_events(
 
     items: List[Dict[str, Any]] = []
     local_found = False
+    local_on = local_rag_enabled()
 
     # --- 1) Local PDF papers first (when enabled; needs Oracle + indexed papers) ---
-    if ENABLE_LOCAL_RAG:
+    if local_on:
         yield {"type": "status", "message": "Searching your papers..."}
         try:
             # Imported lazily so a web-only deploy needs no Oracle / heavy ML deps.
@@ -242,7 +252,7 @@ def stream_chat_events(
     if not local_found and is_web_search_enabled():
         yield {"type": "status", "message": (
             "Not found in your papers — searching the web, research papers, patents & GitHub..."
-            if ENABLE_LOCAL_RAG else
+            if local_on else
             "Searching the web, research papers, patents & GitHub...")}
         try:
             ext_sources, ext_warnings = gather_external_evidence(q, max_results=EXTERNAL_TOP_K)
@@ -257,7 +267,7 @@ def stream_chat_events(
 
     # --- Nothing available at all -> explain instead of guessing ---
     if not items:
-        if not ENABLE_LOCAL_RAG and not is_web_search_enabled():
+        if not local_on and not is_web_search_enabled():
             msg = ("No knowledge source is enabled. Set `ENABLE_WEB_SEARCH=true` (and "
                    "optionally `TAVILY_API_KEY` for web pages & patents) in `.env`, or "
                    "turn on local papers with `ENABLE_LOCAL_RAG=true`.")

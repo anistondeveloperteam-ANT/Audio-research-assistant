@@ -188,7 +188,7 @@ flowchart LR
     EV[Top evidence chunks] --> SP[chat_logic.py<br/>system prompt + numbered evidence]
     SP --> PROV[streaming_provider.get_provider]
     PROV --> OLL[Ollama - local]
-    PROV --> OR[OpenRouter - DeepSeek/Qwen/GPT/Claude/300+]
+    PROV --> OR[OpenRouter - DeepSeek/Qwen/GPT/300+]
     OLL --> TOK[Streamed tokens]
     OR --> TOK
     TOK --> ANS[Cited answer in the UI]
@@ -220,7 +220,7 @@ All answer generation goes through one swappable interface,
 | `LLM_PROVIDER` | Endpoint | Key env | Notes |
 |----------------|----------|---------|-------|
 | `ollama` | local `http://localhost:11434` | — | Free, offline (e.g. `llama3.2:3b`, `qwen2.5:7b`). |
-| `openrouter` | `openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | **One key → DeepSeek, Qwen, GPT, Claude & 300+ models**; `:free` slugs cost nothing. |
+| `openrouter` | `openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | **One key → DeepSeek, Qwen, GPT & 300+ models**; `:free` slugs cost nothing. |
 
 OpenRouter is **OpenAI-compatible**, so it reuses the OpenAI client with a custom
 base URL. It deliberately replaces the older per-vendor providers (OpenAI,

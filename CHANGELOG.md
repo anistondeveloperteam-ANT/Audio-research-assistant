@@ -13,6 +13,16 @@ companion to the git history.
 
 ## 2026-06-06
 
+### PDF upload/manage restored + thorough delete + polished README
+- Fixed the upload UI not showing: `chat_logic` now loads `.env` before reading
+  `ENABLE_LOCAL_RAG`, and `local_rag_enabled()` is read live. With local RAG on, the
+  sidebar shows **＋ Add papers**, the indexed **count**, and **Your papers** (delete).
+- **Delete removes everything**: chunks (CLOB embeddings + native vectors), concept
+  links, now-orphaned concepts, the papers row, the PDF file, and any cached parse.
+- Rewrote `README.md` to be friendly and visual (badges, mermaid flow, collapsible
+  quick-start, source/feature tables). Removed model-name mentions of "Claude" from
+  the docs.
+
 ### Search everywhere, free, no key
 - Added **free, keyless** channels so external search works with no API key:
   **DuckDuckGo** general web (POST endpoint), **Semantic Scholar** papers, and

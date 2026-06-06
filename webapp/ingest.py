@@ -140,34 +140,60 @@ def list_papers() -> list:
 
 
 def delete_paper(paper_id: int) -> Dict[str, Any]:
-    """Completely remove a paper: its chunks + embeddings/vectors, the papers
-    row, and the PDF file on disk. Then drop the retrieval caches."""
+    """Completely remove a paper and everything derived from it: its chunks (which
+    hold the embeddings + native vectors), its concept links, any now-orphaned
+    concepts, the papers row, the PDF file, and any cached parse — then drop the
+    in-memory retrieval caches so it disappears from search immediately."""
     conn = _connect()
     cur = conn.cursor()
     cur.execute("SELECT file_name FROM papers WHERE id = :p", {"p": paper_id})
     row = cur.fetchone()
     file_name = row[0] if row else None
 
+    # concept links for this paper's chunks
     try:
         cur.execute(
             "DELETE FROM chunk_concepts WHERE chunk_id IN "
             "(SELECT id FROM chunks WHERE paper_id = :p)", {"p": paper_id}
         )
     except Exception:
-        pass  # table may not exist
-    cur.execute("DELETE FROM chunks WHERE paper_id = :p", {"p": paper_id})  # removes embeddings + embedding_vec
+        pass
+    # chunks (this drops the CLOB embeddings AND the native embedding_vec column)
+    cur.execute("DELETE FROM chunks WHERE paper_id = :p", {"p": paper_id})
     cur.execute("DELETE FROM papers WHERE id = :p", {"p": paper_id})
+    # concepts no longer referenced by any chunk
+    try:
+        cur.execute("DELETE FROM concepts WHERE id NOT IN "
+                    "(SELECT DISTINCT concept_id FROM chunk_concepts)")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 
+    # PDF file + any cached parse artifact for it
     if file_name:
         try:
             (PAPERS_DIR / file_name).unlink(missing_ok=True)
         except Exception:
             pass
+        _purge_parse_cache(file_name)
 
     _clear_retrieval_caches()
     return {"ok": True, "deleted": file_name, "library": library_stats()}
+
+
+def _purge_parse_cache(file_name: str) -> None:
+    """Remove any cached parse output for the deleted PDF (best-effort)."""
+    try:
+        cache_dir = ROOT / "data" / "extracted" / "parser_cache"
+        if not cache_dir.exists():
+            return
+        stem = Path(file_name).stem.lower()
+        for f in cache_dir.iterdir():
+            if stem in f.name.lower():
+                f.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def _clear_retrieval_caches() -> None:

@@ -52,7 +52,7 @@ def config():
     return {
         "provider": provider_label,
         "web_search_available": web_search_available,
-        "local_rag_enabled": chat_logic.ENABLE_LOCAL_RAG,
+        "local_rag_enabled": chat_logic.local_rag_enabled(),
     }
 
 

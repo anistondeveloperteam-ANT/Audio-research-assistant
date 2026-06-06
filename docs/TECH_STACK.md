@@ -19,7 +19,7 @@ database, and answers questions with cited, grounded answers through a fast web 
 | **PDF parsing** | Docling (primary) + PyMuPDF (fallback) + OCR (optional) |
 | **Embeddings** | Google Gemini `gemini-embedding-2` (768‑dim) |
 | **Re‑ranker** | BAAI `bge-reranker-v2-m3` (cross‑encoder) |
-| **Chat models** | Ollama (local) · OpenRouter (cloud gateway — DeepSeek, Qwen, GPT, Claude, 300+) |
+| **Chat models** | Ollama (local) · OpenRouter (cloud gateway — DeepSeek, Qwen, GPT, 300+) |
 | **Conversation memory** | SQLite |
 | **Compute** | GPU (CUDA) and/or CPU, configurable |
 
@@ -69,7 +69,7 @@ Question ──► HyDE + Vector + BM25 ──► RRF fusion ──► Cross‑e
 | Provider | How | Models |
 |----------|-----|--------|
 | **Ollama** | Local HTTP server | Offline models, e.g. `llama3.2:3b`, `qwen2.5:7b` |
-| **OpenRouter** | OpenAI‑compatible cloud gateway (one API key) | DeepSeek, Qwen, GPT, Claude and 300+ — default **`deepseek-v4-flash`** (fast + accurate); plus `:free` model options |
+| **OpenRouter** | OpenAI‑compatible cloud gateway (one API key) | DeepSeek, Qwen, GPT and 300+ — default **`deepseek-v4-flash`** (fast + accurate); plus `:free` model options |
 
 ### ML runtime
 | Tool | Version | Role |
@@ -168,7 +168,7 @@ on a small (6 GB) laptop GPU.
 | Service | Used for | Cost |
 |---------|----------|------|
 | **Google AI Studio (Gemini API)** | Text embeddings | Free tier |
-| **OpenRouter** | Cloud chat models (DeepSeek / Qwen / GPT / Claude / 300+) | Pay‑as‑you‑go; `:free` models available |
+| **OpenRouter** | Cloud chat models (DeepSeek / Qwen / GPT / 300+) | Pay‑as‑you‑go; `:free` models available |
 | **Ollama** | Local chat models | Free (runs on your machine) |
 
 ---
