@@ -339,9 +339,9 @@
           <span class="sc-title">${esc(prettyName(s.title))}</span>
         </div>
         <div class="sc-meta">
+          ${s.score ? `<span class="chip relevance">${Math.round(s.score * 100)}% match</span>` : ""}
           ${s.section ? `<span class="chip">${esc(s.section)}</span>` : ""}
           ${pages ? `<span class="chip">${pages}</span>` : ""}
-          ${s.score ? `<span class="chip">score ${s.score}</span>` : ""}
         </div>
         <div class="sc-text">${esc(s.text)}</div>
         ${s.text && s.text.length > 240 ? `<span class="sc-more">Show more</span>` : ""}`;

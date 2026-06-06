@@ -71,6 +71,23 @@ def build_user_message(question: str, evidence: str) -> str:
     )
 
 
+# Sections that rarely contain real answers — drop them from the evidence so the
+# shown/used sources stay relevant (References lists, acknowledgements, etc.).
+_LOW_VALUE_SECTIONS = ("reference", "bibliograph", "acknowledg", "author contribution",
+                       "funding", "conflict of interest", "appendix")
+
+
+def _keep_relevant(results: List[Dict[str, Any]], top_k: int) -> List[Dict[str, Any]]:
+    """Drop low-value sections, then keep the top_k most relevant. Falls back to
+    the original list if filtering would leave nothing."""
+    def is_low_value(r: Dict[str, Any]) -> bool:
+        section = (r.get("section") or r.get("section_name") or "").lower()
+        return any(key in section for key in _LOW_VALUE_SECTIONS)
+
+    kept = [r for r in results if not is_low_value(r)]
+    return (kept or results)[:top_k]
+
+
 def public_source(r: Dict[str, Any], i: int) -> Dict[str, Any]:
     """Trim a retrieval result down to what the UI needs to render a source card."""
     return {
@@ -111,11 +128,14 @@ def stream_chat_events(
         pass
 
     try:
-        results = hybrid_retrieve(q, top_k=int(top_k)) or []
+        # Retrieve a few extra so we can drop low-value sections and still keep top_k.
+        k = int(top_k)
+        results = hybrid_retrieve(q, top_k=k + 4) or []
     except Exception as exc:
         yield {"type": "error", "message": f"Retrieval failed: {exc}"}
         return
 
+    results = _keep_relevant(results, k)
     sources = [public_source(r, i) for i, r in enumerate(results, 1)]
     yield {"type": "sources", "sources": sources}
     yield {"type": "status", "message": "Writing the answer..."}
