@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-05
 
+### Dead-code sweep
+- Trimmed `backend/config.py` to only what's imported (PAPERS_DIR + ORACLE_* creds
+  + data-dir creation); removed ~10 unused constants that nothing read (the live
+  code reads those settings from the environment directly).
+- Removed the unused `safe_name()` helper in `pdf_parser.py`.
+- Verified: vulture finds no high-confidence dead code; every remaining module is
+  either in the live app chain or an intentional `python -m` CLI tool (DB admin,
+  eval). All 20 tests pass.
+
 ### Q/A distinction + model dropdown fix
 - Added **"You" / "Answer" role tags** so questions and answers are instantly
   distinguishable; the answer bubble gets an accent left-stripe and lifts on hover.

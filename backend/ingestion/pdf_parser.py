@@ -33,12 +33,6 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
-def safe_name(path: Path) -> str:
-    name = path.stem
-    name = re.sub(r"[^A-Za-z0-9_\-]+", "_", name)
-    return name[:120]
-
-
 def estimate_page_count(pdf_path: Path) -> int:
     try:
         doc = fitz.open(pdf_path)
