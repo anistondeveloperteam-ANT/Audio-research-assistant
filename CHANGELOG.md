@@ -13,6 +13,20 @@ companion to the git history.
 
 ## 2026-06-06
 
+### One optimized retrieval mode + richer Gemini embeddings
+- Removed Fast / Balanced / Deep "research modes". The app now always runs a single
+  `DEFAULT_RETRIEVAL_SETTINGS` config (vector/BM25/rerank top-k 24, ≤2 sources per
+  paper, up to 12 sources) tuned for high accuracy with good speed. Back-compat kept:
+  `normalize_mode()`→`"Default"`, `get_mode_settings()`→the single config,
+  `apply_research_mode(mode)` ignores `mode`; `/api/chat` still accepts (and ignores)
+  a `mode` field. Architecture unchanged (vector + HyDE + BM25F + RRF + rerank + MMR).
+- Gemini embeddings now use light structure: queries as
+  `task: question answering | query: …` and documents as
+  `title: … | section: … | concepts: … | text: …` (ingestion joins paper title +
+  section + audio concepts). Re-embedded the corpus (102 chunks) and re-migrated
+  the vector column. Output stays 768-dim, L2-normalized.
+- Updated tests (single-mode assertions + `run.py --help`) and docs.
+
 ### Dark-mode footer fix + live status dot
 - The sidebar footer (the **model** label and **"papers indexed"**) was nearly
   invisible in dark mode — it used `--muted-2` on the dark panel. Bumped those

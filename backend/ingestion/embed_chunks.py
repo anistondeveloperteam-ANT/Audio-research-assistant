@@ -20,7 +20,9 @@ import oracledb
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-from backend.common.embeddings import embed_documents, provider_label
+from backend.common.embeddings import (
+    embed_documents, provider_label, provider, format_retrieval_document,
+)
 
 load_dotenv()
 
@@ -43,11 +45,14 @@ def main():
     conn = connect()
     cur = conn.cursor()
 
+    # Pull metadata alongside the text so document embeddings can be enriched
+    # (title / section / audio concepts) — improves retrieval matching.
     cur.execute("""
-        SELECT id, chunk_text
-        FROM chunks
-        WHERE embedding IS NULL
-        ORDER BY id
+        SELECT c.id, c.chunk_text, c.section_name, c.audio_concepts, p.title
+        FROM chunks c
+        JOIN papers p ON p.id = c.paper_id
+        WHERE c.embedding IS NULL
+        ORDER BY c.id
     """)
     rows = cur.fetchall()
     print(f"Chunks needing embeddings: {len(rows)}")
@@ -59,6 +64,12 @@ def main():
         return
 
     start = time.time()
+    enrich = provider() == "google"   # only Gemini gets the metadata-formatted docs
+
+    def _read(value):
+        if value is None:
+            return ""
+        return value.read() if hasattr(value, "read") else str(value)
 
     for i in tqdm(range(0, len(rows), BATCH_SIZE), desc="Embedding chunks"):
         batch = rows[i:i + BATCH_SIZE]
@@ -66,8 +77,19 @@ def main():
 
         texts = []
         for row in batch:
-            value = row[1]
-            texts.append(value.read() if hasattr(value, "read") else str(value))
+            text = _read(row[1])
+            if enrich:
+                section = _read(row[2])
+                concepts_raw = _read(row[3])
+                try:
+                    concepts = json.loads(concepts_raw) if concepts_raw else None
+                except Exception:
+                    concepts = concepts_raw or None
+                title = row[4]
+                texts.append(format_retrieval_document(
+                    title=title, section=section, concepts=concepts, text=text))
+            else:
+                texts.append(text)
 
         embeddings = embed_documents(texts)
 

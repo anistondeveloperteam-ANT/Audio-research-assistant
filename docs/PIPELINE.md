@@ -109,9 +109,12 @@ its meaning). The backend is set by `EMBEDDING_PROVIDER`:
 
 - **`google`** (default) — Google **Gemini Embedding** (`gemini-embedding-2`,
   free tier, 768-dim, L2-normalized). One embedding per request, parallelized
-  with a thread pool (`EMBED_CONCURRENCY`). Frees the GPU entirely.
+  with a thread pool (`EMBED_CONCURRENCY`). Frees the GPU entirely. Documents are
+  embedded with light structure — `title: … | section: … | concepts: … | text: …`
+  — and queries as `task: question answering | query: …`, which improves
+  query↔document matching.
 - **`local`** — a `sentence-transformers` model (e.g. `BAAI/bge-base-en-v1.5`)
-  on the GPU.
+  on the GPU (raw text, no formatting).
 
 ### 3.4 Vector migration — `backend/database/vector_migration.py`
 Writes the embeddings into Oracle's **native `VECTOR` column**
@@ -167,9 +170,11 @@ Step by step:
    Relevance** trades relevance against redundancy and enforces a **per-paper
    cap**, so you don't get five near-duplicate chunks. `MMR_LAMBDA = 0.7`.
 
-**Research modes** (`research_modes.py`) — *Fast / Balanced / Deep* presets tune
-all of the above (routes, sources, top-k, per-paper cap) for speed vs.
-thoroughness. The mode is chosen in the web UI.
+**Single optimized retrieval mode** (`research_modes.py` → `DEFAULT_RETRIEVAL_SETTINGS`)
+— there are no Fast / Balanced / Deep options. The app always runs **one config
+tuned for high accuracy with good speed** (vector/BM25/rerank top-k = 24,
+≤ 2 sources per paper, up to 12 sources). Nothing to choose in the UI; the number
+of sources used is then selected adaptively by relevance per question.
 
 ---
 

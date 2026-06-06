@@ -35,8 +35,8 @@
     abort: null,
     autoStick: true,
     nextTurnIndex: 0,
-    mode: "Balanced",   // retrieval depth (selector removed from UI; sensible default)
-    topk: 8,            // sources retrieved per question
+    mode: "Default",    // single optimized retrieval mode (no Fast/Balanced/Deep)
+    topk: 8,            // hint only; the server selects sources adaptively
   };
 
   // Icons for the per-question action buttons (copy / edit / delete).
@@ -833,10 +833,8 @@
     applyTheme(document.documentElement.getAttribute("data-theme") || "light");
     try { if (localStorage.getItem("ara-sidebar") === "collapsed" && window.innerWidth > 880) $("app").classList.add("collapsed"); } catch {}
     try { state.cfg = await api.config(); } catch {}
-    // Retrieval depth + source count use sensible defaults (selectors removed from
-    // the top bar to keep it clean).
-    state.mode = state.cfg.default_mode || "Balanced";
-    state.topk = state.cfg.default_top_k || 8;
+    // One optimized retrieval mode now; the server selects how many sources to
+    // use adaptively, so there's nothing to configure here.
     $("provLabel").textContent = state.cfg.provider || "ready";
     if (!state.cfg.provider || state.cfg.provider === "unknown") $("provDot").style.background = "var(--amber)";
 

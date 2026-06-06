@@ -1,4 +1,8 @@
 """Unit tests for the pure backend logic (no DB, no models, no network)."""
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from backend.common.device import resolve_device
@@ -53,21 +57,33 @@ def test_query_sanity_accepts_real_question():
 
 
 # ----------------------------------------------------------------------
-# Research modes
+# Retrieval mode — single optimized "Default" (no Fast/Balanced/Deep)
 # ----------------------------------------------------------------------
-def test_normalize_mode_defaults_to_balanced():
-    assert normalize_mode(None) == "Balanced"
-    assert normalize_mode("not-a-mode") == "Balanced"
+def test_normalize_mode_always_default():
+    # Any input — old mode names, invalid, or None — collapses to "Default".
+    assert normalize_mode(None) == "Default"
+    assert normalize_mode("Fast") == "Default"
+    assert normalize_mode("Deep") == "Default"
+    assert normalize_mode("Balanced") == "Default"
+    assert normalize_mode("not-a-mode") == "Default"
 
 
-def test_normalize_mode_keeps_valid():
-    assert normalize_mode("Fast") == "Fast"
-
-
-def test_get_mode_settings_returns_tuning_dict():
-    settings = get_mode_settings("Fast")
+def test_get_mode_settings_returns_single_default():
+    settings = get_mode_settings()
     assert isinstance(settings, dict)
+    assert settings["mode"] == "Default"
     assert "max_query_routes" in settings
+    # The mode argument is ignored — always the same single config.
+    assert get_mode_settings("Fast") == get_mode_settings("Deep")
+
+
+def test_run_help_still_works():
+    """`python run.py --help` must exit cleanly (launcher unbroken)."""
+    root = Path(__file__).resolve().parents[1]
+    r = subprocess.run([sys.executable, "run.py", "--help"],
+                       cwd=str(root), capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0
+    assert "usage" in (r.stdout + r.stderr).lower()
 
 
 # ----------------------------------------------------------------------

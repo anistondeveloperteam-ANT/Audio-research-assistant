@@ -20,7 +20,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from webapp import chat_logic, ingest, settings
-from backend.answering.research_modes import MODE_SETTINGS
 from backend.llm.streaming_provider import get_provider
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -44,12 +43,8 @@ def config():
         provider_label = f"{prov.name} · {prov.model}"
     except Exception:
         provider_label = "unknown"
-    return {
-        "modes": list(MODE_SETTINGS.keys()),       # Fast / Balanced / Deep
-        "default_mode": "Balanced",
-        "default_top_k": 8,
-        "provider": provider_label,
-    }
+    # One optimized retrieval mode now — no Fast/Balanced/Deep options exposed.
+    return {"provider": provider_label}
 
 
 # ----------------------------------------------------------------------

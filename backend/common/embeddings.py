@@ -39,6 +39,29 @@ def _l2(vec: List[float]) -> List[float]:
 
 
 # ----------------------------------------------------------------------
+# Retrieval text formatting (Gemini gemini-embedding-2)
+# Giving the embedder a little structure — the task for queries, and the
+# title/section/concepts for documents — improves query↔document matching.
+# These are applied only for the Google provider so local models keep raw text.
+# ----------------------------------------------------------------------
+def format_retrieval_query(query: str) -> str:
+    return f"task: question answering | query: {(query or '').strip()}"
+
+
+def format_retrieval_document(title=None, section=None, concepts=None, text: str = "") -> str:
+    """Build a metadata-enriched document string for embedding a chunk."""
+    if isinstance(concepts, (list, tuple)):
+        concepts = ", ".join(str(c).strip() for c in concepts if str(c).strip())
+    parts = [f"title: {str(title).strip() if title else 'none'}"]
+    if section and str(section).strip():
+        parts.append(f"section: {str(section).strip()}")
+    if concepts and str(concepts).strip():
+        parts.append(f"concepts: {str(concepts).strip()}")
+    parts.append(f"text: {(text or '').strip()}")
+    return " | ".join(parts)
+
+
+# ----------------------------------------------------------------------
 # Google Gemini embeddings
 # ----------------------------------------------------------------------
 _genai_client = None
@@ -128,5 +151,5 @@ def embed_documents(texts: List[str]) -> List[List[float]]:
 def embed_query(text: str) -> List[float]:
     """Embed a single search query."""
     if provider() == "google":
-        return _google_embed([text], "RETRIEVAL_QUERY")[0]
+        return _google_embed([format_retrieval_query(text)], "RETRIEVAL_QUERY")[0]
     return _local_embed([text])[0]

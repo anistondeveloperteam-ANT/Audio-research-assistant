@@ -628,11 +628,6 @@ def main() -> None:
     )
     parser.add_argument("--top-k", type=int, default=10,
                         help="How many results to retrieve per question (default 10).")
-    parser.add_argument("--mode", type=str, default=None,
-                        choices=["fast", "balanced", "deep"],
-                        help="Apply a research mode before running (optional).")
-    parser.add_argument("--compare-modes", action="store_true",
-                        help="Run all three modes and print a comparison table.")
     parser.add_argument("--quiet", action="store_true",
                         help="Suppress per-question output, show only summary.")
     args = parser.parse_args()
@@ -640,24 +635,16 @@ def main() -> None:
     questions = load_questions()
     retriever = import_retriever()
 
-    if args.compare_modes:
-        report = run_mode_comparison(retriever, questions, top_k=args.top_k)
-        save_report(report, MODES_REPORT_FILE)
-        return
-
-    if args.mode:
-        apply_mode = try_import_mode_binding()
-        if apply_mode is None:
-            print(f"WARN: research_modes not importable; running without --mode {args.mode}")
-        else:
-            try:
-                apply_mode(args.mode)
-                print(f"Applied research mode: {args.mode}")
-            except Exception as exc:
-                print(f"WARN: apply_research_mode({args.mode!r}) failed: {exc}")
+    # There is one optimized retrieval config now — always bind it before running.
+    apply_mode = try_import_mode_binding()
+    if apply_mode is not None:
+        try:
+            apply_mode(None)
+        except Exception as exc:
+            print(f"WARN: apply_research_mode() failed: {exc}")
 
     report = run_single_pass(retriever, questions, top_k=args.top_k,
-                             quiet=args.quiet, label=(args.mode or ""))
+                             quiet=args.quiet, label="Default")
     print_summary(report)
     save_report(report, REPORT_FILE)
 
