@@ -1,6 +1,6 @@
-# Audio Research Assistant — Technology & Tools
+# Research Assistant — Technology & Tools
 
-**A Retrieval-Augmented Generation (RAG) assistant for audio / speech‑enhancement research papers.**
+**A Retrieval-Augmented Generation (RAG) assistant for research papers.**
 It ingests PDFs, builds a hybrid (vector + keyword) search index in an Oracle vector
 database, and answers questions with cited, grounded answers through a fast web app.
 
@@ -186,4 +186,4 @@ on a small (6 GB) laptop GPU.
 
 ---
 
-*Audio Research Assistant — Python 3.11 · FastAPI · Oracle 23ai · Docling · Gemini · OpenAI.*
+*Research Assistant — Python 3.11 · FastAPI · Oracle 23ai · Docling · Gemini · OpenAI.*

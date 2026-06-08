@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Rebrand: "Research Assistant" (no longer audio-specific)
+- Renamed the product from "Audio Research Assistant" to **Research Assistant**
+  everywhere user-facing: page titles, sidebar + login branding (new 🔬 search mark,
+  not 🔊), welcome copy, example prompts, README/docs, FastAPI title, and code
+  docstrings. The general-purpose engine is unchanged; only the framing is now
+  topic-agnostic. (Repo folder/URL left as-is to avoid breaking paths.)
+
 ### Fresh, latest-first sources + no more truncated answers
 - **Recency:** arXiv now fetches newest **and** most-relevant and merges them;
   Semantic Scholar sorts by publication date; GitHub ranks most-recently-updated

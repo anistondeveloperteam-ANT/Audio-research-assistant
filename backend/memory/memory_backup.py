@@ -350,7 +350,7 @@ def inspect_export(bundle_path: Path) -> Dict[str, Any]:
         raise ValueError(
             f"Bundle schema_version={bundle_version} is newer than this "
             f"installation supports (max {EXPORT_SCHEMA_VERSION}). Upgrade "
-            "your AudioLab AI installation."
+            "your Research Assistant installation."
         )
 
     # Verify checksums

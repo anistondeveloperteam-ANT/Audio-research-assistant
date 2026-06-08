@@ -1,4 +1,4 @@
-# CLAUDE.md - Audio Research Assistant
+# CLAUDE.md - Research Assistant
 
 Project instructions for Claude Code. Keep this file short and trust the code
 when docs and implementation disagree.

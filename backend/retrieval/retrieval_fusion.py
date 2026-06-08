@@ -40,7 +40,7 @@ def tokenize(text: str) -> List[str]:
 # H1 -- Field-weighted BM25 (BM25F-style)
 # ======================================================================
 
-# Field weights for audio research papers.
+# Field weights for research papers.
 # Title is short and high-signal: matches there matter most.
 # 'concepts' is the extracted concept tag list per chunk: also high-signal.
 # Section name is a moderate signal (e.g. "Method" beats "References").

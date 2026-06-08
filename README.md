@@ -1,15 +1,15 @@
 <div align="center">
 
-# 🔊 Audio Research Assistant
+# 🔬 Research Assistant
 
-**A cited, source-grounded research assistant for audio & speech.**
+**A cited, source-grounded research assistant — searches the web, papers, patents & code.**
 Ask a question — it searches **your PDFs and the whole web** (research papers, patents,
 GitHub, Wikipedia), reads the sources, and answers with **citations and runnable code**.
 
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-web%20app-009688?logo=fastapi&logoColor=white)
 ![Oracle](https://img.shields.io/badge/Oracle%2023ai-vector%20DB-F80000?logo=oracle&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-80%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-89%20passing-2ea44f)
 ![No build step](https://img.shields.io/badge/frontend-no%20build%20step-blue)
 
 </div>
@@ -138,8 +138,9 @@ task and it loops **THINK → EXECUTE → REFLECT**: it designs a Python program
 in a **throwaway Docker sandbox** (no network, capped CPU/memory/time), checks the real
 output, and refines until it has the best *verified* solution.
 
-In the browser, flip the **Agent** toggle in the top bar, type a task, and watch each
-step stream live (code → sandbox run → review) ending in the best program. Or use the CLI:
+In the browser, just type a task — coding/algorithm requests ("implement…",
+"benchmark…", "find the best algorithm…") **automatically** run the agent, and you watch
+each step stream live (code → sandbox run → review) ending in the best program. Or the CLI:
 
 ```bash
 python -m backend.agent "Find the fastest correct primality test up to 10^7, and benchmark it"

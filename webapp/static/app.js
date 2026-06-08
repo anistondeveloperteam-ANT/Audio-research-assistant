@@ -1,4 +1,4 @@
-/* Audio Research Assistant — web UI logic (vanilla JS, no build step). */
+/* Research Assistant — web UI logic (vanilla JS, no build step). */
 (() => {
   "use strict";
 
@@ -77,10 +77,10 @@
   const STOP_ICON = '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor"/></svg>';
 
   const EXAMPLES = [
-    ["How does MVDR beamforming work?", "…and how does it compare to delay-and-sum?"],
-    ["Explain acoustic echo cancellation", "with the key signal-processing steps."],
-    ["Which metrics evaluate speech enhancement?", "PESQ, STOI, SDR — what do they mean?"],
-    ["Summarize deep-learning denoising", "approaches across my papers."],
+    ["How does transformer attention work?", "…and why it scales better than RNNs."],
+    ["What's the latest research on", "diffusion models? Summarize recent papers."],
+    ["Implement and benchmark", "quicksort vs mergesort on 100k integers."],
+    ["Find the best algorithm for", "shortest paths in a weighted graph."],
   ];
 
   const esc = (s) => (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -194,13 +194,13 @@
 
   function showWelcome() {
     const localRag = !!(state.cfg && state.cfg.local_rag_enabled);
-    const heading = localRag ? "What do your papers say?" : "Ask anything about audio research";
+    const heading = localRag ? "What do your papers say?" : "What would you like to research?";
     const blurb = localRag
-      ? "Ask anything about your audio &amp; speech-enhancement library. Every answer is grounded in your papers — each claim cited to its source, section, and page."
-      : "I search the web, GitHub &amp; online PDFs and answer with cited sources — links, file paths, and page numbers. Toggle <b>Web</b> in the top bar.";
+      ? "Ask anything about your library. Every answer is grounded in your papers — each claim cited to its source, section, and page."
+      : "Ask anything, or give it a coding task. It searches the web, papers, patents &amp; code, verifies its answer, and cites every source — or writes and runs code to prove the result.";
     inner().innerHTML = `
       <div class="welcome">
-        <div class="hero-mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zm7 9a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12h-2z"/></svg></div>
+        <div class="hero-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div>
         <h1>${heading}</h1>
         <p>${blurb}</p>
         <div class="examples" id="examples"></div>

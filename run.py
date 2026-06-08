@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-run.py -- launch the Audio Research Assistant web app (FastAPI).
+run.py -- launch the Research Assistant web app (FastAPI).
 
 Usage:
     python run.py                # this PC only -> http://localhost:8600 (no prompts)
@@ -148,7 +148,7 @@ def ensure_port_free(port: int) -> bool:
 
 # ----------------------------------------------------------------------
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Launch the Audio Research Assistant web app.")
+    parser = argparse.ArgumentParser(description="Launch the Research Assistant web app.")
     parser.add_argument("--port", type=int, default=8600, help="Server port (default: 8600).")
     parser.add_argument("--no-free-port", action="store_true",
                         help="Do not auto-stop a leftover server occupying the port.")

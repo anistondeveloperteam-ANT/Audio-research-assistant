@@ -1,4 +1,4 @@
-# Audio Research Assistant — Pipeline & Technology Guide
+# Research Assistant — Pipeline & Technology Guide
 
 > A plain-English + technical walkthrough of how this project works end to end,
 > the tools it uses, and why. Written so anyone — engineer or not — can follow
@@ -8,8 +8,8 @@
 
 ## 1. What this project is
 
-The **Audio Research Assistant** is a **RAG** (Retrieval-Augmented Generation)
-system for **audio / speech-enhancement research papers**.
+The **Research Assistant** is a **RAG** (Retrieval-Augmented Generation)
+system for **research papers**.
 
 You give it a folder of PDFs (papers on beamforming, noise suppression, echo
 cancellation, dereverberation, etc.). It reads them, stores them in a searchable
