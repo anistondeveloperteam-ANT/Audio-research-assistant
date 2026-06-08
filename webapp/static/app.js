@@ -159,6 +159,7 @@
   }
   function hideCitePop() { $("citePop").classList.remove("show"); }
   function linkifyCitations(root) {
+    return;   // Sources panel removed — leave [n] markers as plain text.
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
         const p = n.parentElement;
@@ -224,18 +225,10 @@
     // Delegated so the handler survives the wrap being re-rendered (edit mode).
     m.addEventListener("click", (e) => {
       const b = e.target.closest(".ua-btn");
-      if (b && m.contains(b)) {
-        if (b.dataset.act === "copy") copyUserMessage(m);
-        else if (b.dataset.act === "edit") startEditUserMessage(m);
-        else if (b.dataset.act === "delete") deleteUserMessage(m);
-        return;
-      }
-      // Click the question itself -> show that query's sources (if its answer has any).
-      if (e.target.closest(".bubble") && !window.getSelection().toString()) {
-        let p = m.nextElementSibling;
-        while (p && !p.classList.contains("assistant")) p = p.nextElementSibling;
-        if (p && p._sources && p._sources.length) openSourcesForEl(p);
-      }
+      if (!b || !m.contains(b)) return;
+      if (b.dataset.act === "copy") copyUserMessage(m);
+      else if (b.dataset.act === "edit") startEditUserMessage(m);
+      else if (b.dataset.act === "delete") deleteUserMessage(m);
     });
     inner().appendChild(m);
     scrollToBottom(true);
@@ -370,20 +363,6 @@
       navigator.clipboard.writeText(h.md.innerText).then(() => toast("Answer copied"));
     });
     h.tools.appendChild(copy);
-    if (sources && sources.length) {
-      // Remember this answer's sources + its question so the drawer can show them
-      // on their own and let the user step between queries.
-      h.el._sources = sources;
-      h.el._question = questionForAnswer(h.el);
-      const uq = precedingUser(h.el);
-      if (uq) uq.classList.add("has-sources");
-
-      const sc = document.createElement("button");
-      sc.className = "src-count";
-      sc.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Sources · ${sources.length}`;
-      sc.addEventListener("click", () => openSourcesForEl(h.el));
-      h.tools.appendChild(sc);
-    }
   }
 
   // ----- per-query source navigation -----
@@ -442,6 +421,7 @@
   function renderSources(sources) {
     state.currentSources = sources || [];
     const body = $("drawerBody");
+    if (!body) return;   // Sources panel removed.
     if (!state.currentSources.length) {
       body.innerHTML = `<div class="drawer-empty">No sources for this answer.</div>`;
       return;
@@ -489,8 +469,8 @@
       body.appendChild(card);
     });
   }
-  function openDrawer() { $("drawer").classList.add("open"); $("scrim").classList.add("show"); }
-  function closeDrawer() { $("drawer").classList.remove("open"); $("scrim").classList.remove("show"); }
+  function openDrawer() { const d = $("drawer"); if (d) { d.classList.add("open"); $("scrim").classList.add("show"); } }
+  function closeDrawer() { const d = $("drawer"); if (d) { d.classList.remove("open"); $("scrim").classList.remove("show"); } }
   function focusSource(n, chip) {
     // Open the sources for the answer this citation belongs to (with nav), then
     // jump to source [n]. Falls back to the current set if we can't find the message.
@@ -866,9 +846,7 @@
         break;
       case "sources": {
         const n = (ev.sources || []).length;
-        renderSources(ev.sources || []);
-        if (n) h.statusText.textContent = `Found ${n} relevant passage${n > 1 ? "s" : ""} — writing the answer…`;
-        h.el.classList.add("has-sources");
+        if (n) h.statusText.textContent = `Found ${n} relevant source${n > 1 ? "s" : ""} — writing the answer…`;
         break;
       }
       case "token":
@@ -1164,11 +1142,6 @@
     });
     $("transcript").addEventListener("scroll", () => { state.autoStick = nearBottom(); updateToBottomBtn(); });
     $("toBottom").addEventListener("click", () => scrollToBottom(true));
-    $("sourcesBtn").addEventListener("click", () => { state.srcSets = collectSourceSets(); openSourcesAt(state.srcSets.length - 1); });
-    $("drawerClose").addEventListener("click", closeDrawer);
-    $("scrim").addEventListener("click", closeDrawer);
-    $("srcPrev").addEventListener("click", () => openSourcesAt((state.srcIndex || 0) - 1));
-    $("srcNext").addEventListener("click", () => openSourcesAt((state.srcIndex || 0) + 1));
     $("menuBtn").addEventListener("click", () => {
       if (window.innerWidth > 880) {
         const collapsed = $("app").classList.toggle("collapsed");
@@ -1193,12 +1166,7 @@
     });
     document.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); newChat(); }
-      if (e.key === "Escape") { closeDrawer(); closePapers(); }
-      // Step between queries' sources with ← / → while the drawer is open.
-      if ($("drawer").classList.contains("open") && (state.srcSets || []).length > 1) {
-        if (e.key === "ArrowLeft") { e.preventDefault(); openSourcesAt((state.srcIndex || 0) - 1); }
-        if (e.key === "ArrowRight") { e.preventDefault(); openSourcesAt((state.srcIndex || 0) + 1); }
-      }
+      if (e.key === "Escape") { closePapers(); }
     });
   }
 
