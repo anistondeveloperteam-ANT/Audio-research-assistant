@@ -92,13 +92,41 @@ class OpenAIProvider(LLMProvider):
         if system:
             msgs.append({"role": "system", "content": system})
         msgs.extend(messages)
-        stream = client.chat.completions.create(
-            model=self._model,
-            messages=msgs,
-            stream=True,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+
+        # Newer models (GPT-5 family, o-series) require `max_completion_tokens` and
+        # only allow the default temperature; older models (gpt-4o/4.1/3.5) use
+        # `max_tokens` and accept a custom temperature. Try the right shape first,
+        # then fall back so any current or future model just works.
+        newer = self._model.startswith(("gpt-5", "o1", "o3", "o4"))
+        if newer:
+            variants = [
+                {"max_completion_tokens": max_tokens},
+                {"max_completion_tokens": max_tokens, "temperature": temperature},
+                {"max_tokens": max_tokens, "temperature": temperature},
+            ]
+        else:
+            variants = [
+                {"max_tokens": max_tokens, "temperature": temperature},
+                {"max_completion_tokens": max_tokens, "temperature": temperature},
+                {"max_completion_tokens": max_tokens},
+            ]
+
+        stream = None
+        last_err = None
+        for params in variants:
+            try:
+                stream = client.chat.completions.create(
+                    model=self._model, messages=msgs, stream=True, **params)
+                break
+            except openai.BadRequestError as e:
+                last_err = e
+                low = str(e).lower()
+                if not any(k in low for k in
+                           ("max_tokens", "max_completion_tokens", "temperature", "unsupported")):
+                    raise   # a real error (bad model, auth, etc.) — don't mask it
+        if stream is None:
+            raise last_err
+
         for chunk in stream:
             try:
                 delta = chunk.choices[0].delta.content

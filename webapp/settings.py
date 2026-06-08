@@ -18,16 +18,20 @@ if str(ROOT) not in sys.path:
 
 ENV_PATH = ROOT / ".env"
 
-# The single provider: OpenAI. Models shown in the dropdown (chat models that use
-# the standard temperature / max_tokens params).
+# The single provider: OpenAI. Models shown in the dropdown. The provider adapts
+# its API parameters per model, so both the GPT-5 family and the gpt-4o/4.1 models
+# work. Your account may not have every one of these — pick one it has access to.
 OPENAI_MODELS = [
-    "gpt-4o",          # well-rounded default
-    "gpt-4o-mini",     # fast + cheap
+    "gpt-5.5",         # newest flagship -> default
+    "gpt-5.5-pro",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.1",
     "gpt-4.1",
-    "gpt-4.1-mini",
-    "gpt-4.1-nano",
+    "gpt-4o",
+    "gpt-4o-mini",     # fast + cheap
 ]
-DEFAULT_OPENAI_MODEL = "gpt-4o"
+DEFAULT_OPENAI_MODEL = "gpt-5.5"
 
 VALID_PROVIDERS = ("openai",)
 MODEL_ENV = {"openai": "OPENAI_MODEL"}

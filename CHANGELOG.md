@@ -13,6 +13,20 @@ companion to the git history.
 
 ## 2026-06-08
 
+### GPT-5 models in the picker + per-model API compatibility
+- Added the GPT-5 family to the model dropdown (`gpt-5.5` default, plus `gpt-5.5-pro`,
+  `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.1`) alongside `gpt-4.1` / `gpt-4o`.
+- `stream_chat` now adapts parameters per model: GPT-5 / o-series use
+  `max_completion_tokens` and the default temperature; gpt-4o/4.1 keep `max_tokens` +
+  custom temperature — with fallbacks so any current/future model works. Verified
+  `gpt-5.5` answers live.
+
+### Claude Code config
+- Added a minimal tracked Claude Code setup from the ECC recommendation: root
+  `CLAUDE.md`, focused rules, five reviewer agents, six workflow skills, and a
+  tightened `.claude/settings.json`. AgentShield scan: Grade A, no critical/high
+  findings.
+
 ### Login required each visit + redesigned login page
 - The session cookie is now a **session cookie by default** (clears when the browser
   closes), so users sign in every visit. `SESSION_MAX_AGE=<seconds>` keeps them

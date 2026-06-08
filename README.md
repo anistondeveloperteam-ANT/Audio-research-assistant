@@ -149,7 +149,7 @@ python -m backend.graph_rag.build_graph
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `OPENAI_API_KEY` | – | Your OpenAI API key (chat model) |
-| `OPENAI_MODEL` | `gpt-4o` | OpenAI model (e.g. `gpt-4o-mini`, `gpt-4.1`) |
+| `OPENAI_MODEL` | `gpt-5.5` | OpenAI model (e.g. `gpt-5.5-pro`, `gpt-4.1`, `gpt-4o`) |
 | `ENABLE_WEB_SEARCH` | `true` | Automatic external search (web/papers/patents/GitHub) |
 | `WEB_SEARCH_PROVIDER` | `duckduckgo` | `duckduckgo` (free) · `tavily` · `brave` · `serpapi` |
 | `ENABLE_LOCAL_RAG` | `false` | Search your uploaded PDFs first (needs Oracle) |
@@ -190,11 +190,28 @@ stored salted + hashed (PBKDF2-HMAC-SHA256); the session is a signed cookie. Set
 
 **FastAPI** + Uvicorn (SSE streaming) · vanilla **HTML/CSS/JS** (no build) ·
 **Oracle 23ai** native vector search · **Gemini** embeddings · **BAAI bge** cross-encoder
-reranker · **Docling** + PyMuPDF parsing · **OpenAI** LLM (gpt-4o family) ·
+reranker · **Docling** + PyMuPDF parsing · **OpenAI** LLM (GPT-5 family) ·
 hybrid retrieval (vector + BM25F + RRF + rerank + MMR + HyDE).
 
 See **[`docs/PIPELINE.md`](docs/PIPELINE.md)** for the full walkthrough and
 **[`docs/TECH_STACK.md`](docs/TECH_STACK.md)** for versions.
+
+---
+
+## Claude Code setup
+
+This repo includes a small, project-specific Claude Code configuration inspired
+by the ECC review: root `CLAUDE.md`, focused `.claude/rules/`, lightweight
+reviewer agents, and a few workflow skills. It deliberately does **not** bulk
+install ECC, enable bundled MCPs, or copy generic hooks.
+
+Security scan:
+
+```bash
+npx ecc-agentshield scan
+```
+
+Current baseline: Grade A, no critical/high findings.
 
 ---
 
