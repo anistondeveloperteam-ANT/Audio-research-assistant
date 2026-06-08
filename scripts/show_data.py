@@ -1,5 +1,7 @@
 """
-show_my_data.py  --  read-only viewer v2
+show_data.py  --  read-only data inspector
+
+    python scripts/show_data.py
 
 Shows everything your system has stored, in one scrollable pass:
 
@@ -10,7 +12,7 @@ Shows everything your system has stored, in one scrollable pass:
   5.  Top sections
   6.  Top audio concepts
   7.  Sample chunks
-  8.  Memory database            (data/memory.db -- NEW in v2)
+  8.  Memory database            (data/memory.db)
         - Sessions (conversations)
         - Turn counts per session
         - Long-term facts
@@ -29,10 +31,10 @@ import time
 from collections import Counter
 from pathlib import Path
 
-from dotenv import load_dotenv
-load_dotenv()
+ROOT = Path(__file__).resolve().parents[1]
 
-ROOT = Path.cwd()
+from dotenv import load_dotenv
+load_dotenv(ROOT / ".env")
 
 
 def read_lob(value):
@@ -78,7 +80,7 @@ def humanize_time(epoch: float) -> str:
 # ----------------------------------------------------------------------
 # 0. Project root
 # ----------------------------------------------------------------------
-banner("AUDIO RESEARCH PAPER ASSISTANT -- DATA VIEWER v2 (READ-ONLY)")
+banner("AUDIO RESEARCH ASSISTANT -- DATA INSPECTOR (READ-ONLY)")
 print(f"Project root: {ROOT}")
 
 

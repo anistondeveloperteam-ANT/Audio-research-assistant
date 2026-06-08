@@ -13,6 +13,12 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Tidy-up: consolidated the data inspector into scripts/
+- Moved `viewer_tool/show_my_data.py` → `scripts/show_data.py` (all admin CLIs now
+  live under `scripts/`) and made it run from any directory. Refreshed the README
+  structure and PIPELINE docs. Reviewed the rest: the pipeline is already cleanly
+  named and organized, with no dead code to remove.
+
 ### GPT-5 models in the picker + per-model API compatibility
 - Added the GPT-5 family to the model dropdown (`gpt-5.5` default, plus `gpt-5.5-pro`,
   `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.1`) alongside `gpt-4.1` / `gpt-4o`.

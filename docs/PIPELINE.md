@@ -245,7 +245,7 @@ To measure which model answers best, use
 | **Optional GraphRAG** | `backend/graph_rag/` | Builds a Memgraph graph from Oracle papers/chunks/concepts and expands local retrieval through relationships. |
 | **Retrieval evaluation** | `backend/evaluation/evaluate_retrieval.py` | Scores retrieval quality against `data/evaluation_questions.json`. |
 | **LLM accuracy** | `backend/evaluation/evaluate_llm.py` | Scores/compares LLM answer accuracy (keypoint coverage, citation rate, optional LLM-judge) against `data/llm_eval_questions.json`. |
-| **Data viewer** | `viewer_tool/show_my_data.py` | Inspect indexed PDFs, chunks, embeddings, and memory. |
+| **Data viewer** | `scripts/show_data.py` | Inspect indexed PDFs, chunks, embeddings, and memory. |
 
 ---
 
@@ -406,8 +406,7 @@ Audio-research-assistant/
 │   ├── ingest.py           #   PDF upload + live ingestion
 │   ├── settings.py         #   model switcher
 │   └── static/             #   index.html, app.js, styles.css (no build)
-├── scripts/                # CLI tools (memory import/export, chat cleanup)
-├── viewer_tool/            # show_my_data.py — inspect indexed data & memory
+├── scripts/                # admin CLIs: show_accounts, show_data, memory import/export
 ├── tests/                  # pytest unit tests
 ├── data/                   # papers, extracted text, memory.db (gitignored)
 └── docs/                   # this guide + reference PDF

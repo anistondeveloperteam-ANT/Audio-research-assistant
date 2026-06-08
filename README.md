@@ -239,10 +239,12 @@ Audio-research-assistant/
 │   ├── retrieval/          # hybrid_retrieve, vector, fusion, HyDE
 │   ├── ingestion/          # parse → chunk → embed → incremental
 │   ├── llm/                # streaming_provider (OpenAI)
+│   ├── auth/               # user store + password hashing + admin CLI
 │   ├── common/ · answering/ · database/ · memory/ · evaluation/
 │   └── config.py
 ├── webapp/                 # FastAPI server + chat_logic + static UI (index.html, app.js, styles.css)
-├── tests/ · scripts/ · viewer_tool/ · docs/ · data/
+├── scripts/                # admin CLIs: show_accounts · show_data · memory import/export
+├── tests/ · docs/ · data/
 └── requirements.txt · .env.example · CHANGELOG.md
 ```
 </details>
