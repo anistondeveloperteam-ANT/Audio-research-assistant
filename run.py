@@ -32,6 +32,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
+# Load .env so --share can read CLOUDFLARE_TUNNEL_TOKEN / ENABLE_AUTH for warnings.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env")
+except Exception:
+    pass
+
 
 # ----------------------------------------------------------------------
 # Port helpers -- so a leftover server can never block startup again
@@ -228,6 +235,12 @@ def _run_with_tunnel(port: int) -> int:
             uv.terminate()
         return 0
 
+    # Permanent / custom-domain mode: a named tunnel (token from the Cloudflare
+    # dashboard, which also maps your custom hostname -> http://localhost:PORT).
+    token = (os.getenv("CLOUDFLARE_TUNNEL_TOKEN") or "").strip()
+    if token:
+        return _run_named_tunnel(cf, token, uv)
+
     tunnel = subprocess.Popen(
         [cf, "tunnel", "--url", f"http://localhost:{port}", "--no-autoupdate"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -244,6 +257,36 @@ def _run_with_tunnel(port: int) -> int:
                 print("  (Anyone with the link can open it. Keep ENABLE_AUTH=true so a")
                 print("   login is required. Press Ctrl+C to stop sharing.)")
                 print("=" * 64 + "\n")
+    except KeyboardInterrupt:
+        print("\nStopping the tunnel and server…")
+    finally:
+        for p in (tunnel, uv):
+            try:
+                p.terminate()
+            except Exception:
+                pass
+    return 0
+
+
+def _run_named_tunnel(cf: str, token: str, uv: "subprocess.Popen") -> int:
+    """Run a PERMANENT Cloudflare named tunnel (stable URL / custom domain).
+
+    The tunnel + public hostname (e.g. research.yourdomain.com -> http://localhost:PORT)
+    are created once in the Cloudflare Zero Trust dashboard; this just runs it with the
+    token. The hostname comes from the dashboard — set CLOUDFLARE_TUNNEL_HOSTNAME only
+    so we can print it for you.
+    """
+    host = (os.getenv("CLOUDFLARE_TUNNEL_HOSTNAME") or "").strip()
+    host = host.replace("https://", "").replace("http://", "").strip("/")
+    print("\n" + "=" * 64)
+    print("  PERMANENT URL (Cloudflare named tunnel):")
+    print("     https://" + host if host else
+          "     your dashboard hostname (set CLOUDFLARE_TUNNEL_HOSTNAME to show it here)")
+    print("  Keep ENABLE_AUTH=true so visitors must sign in. Ctrl+C to stop.")
+    print("=" * 64 + "\n")
+    tunnel = subprocess.Popen([cf, "tunnel", "run", "--token", token], cwd=str(ROOT))
+    try:
+        tunnel.wait()
     except KeyboardInterrupt:
         print("\nStopping the tunnel and server…")
     finally:

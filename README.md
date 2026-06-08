@@ -103,6 +103,13 @@ python run.py --lan     # reachable by other devices on your Wi-Fi
 `--share` downloads the Cloudflare tunnel client once (no account needed) and prints a
 public URL. Keep **`ENABLE_AUTH=true`** so visitors must sign in, and set
 `EXTERNAL_ALLOW_UNSAFE_URLS=false` before exposing it.
+
+**Permanent URL / custom domain:** the random link changes each run. For a stable URL
+on your own domain, create a **Cloudflare named tunnel** (Zero Trust dashboard →
+Networks → Tunnels), add a Public Hostname (`research.yourdomain.com` → `http://localhost:8600`),
+paste its token into `.env` as `CLOUDFLARE_TUNNEL_TOKEN`, and `python run.py --share`
+will serve your app there every time. *(No domain? ngrok's free tier gives one fixed
+`*.ngrok-free.app` subdomain as an alternative.)*
 </details>
 
 <details>

@@ -13,12 +13,14 @@ companion to the git history.
 
 ## 2026-06-08
 
-### Share a public URL (`run.py --share`)
-- `python run.py --share` now exposes a **public `https://…trycloudflare.com`** link
-  anyone can open — it downloads the Cloudflare tunnel client once into `data/tools/`
-  (gitignored), starts the app on `0.0.0.0`, prints the URL, and warns if
-  `ENABLE_AUTH` is off. `--lan` binds to the local network (prints the LAN URL).
-  No account or paid service required.
+### Share a public URL (`run.py --share`) + permanent custom domain
+- `python run.py --share` exposes a **public `https://…trycloudflare.com`** link anyone
+  can open — downloads the Cloudflare tunnel client once into `data/tools/` (gitignored),
+  starts the app on `0.0.0.0`, prints the URL, and warns if `ENABLE_AUTH` is off.
+- **Permanent / custom domain:** set `CLOUDFLARE_TUNNEL_TOKEN` (from a Cloudflare named
+  tunnel in the Zero Trust dashboard) and `--share` serves your app at your own stable
+  hostname every run (`CLOUDFLARE_TUNNEL_HOSTNAME` is shown for convenience).
+- `--lan` binds to the local network. No paid service required.
 
 ### Rebrand: "Research Assistant" (no longer audio-specific)
 - Renamed the product from "Audio Research Assistant" to **Research Assistant**
