@@ -13,6 +13,16 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Multi-user login (optional)
+- Added `ENABLE_AUTH`: members sign in at `/login` with a user_id + password and
+  each member's conversations are private (per-user `user_id` on the memory store,
+  with ownership checks on every session route).
+- Passwords are salted + hashed with PBKDF2-HMAC-SHA256 in a SQLite user store
+  (`data/auth.db`); sessions are signed cookies (Starlette SessionMiddleware).
+- Admin CLI: `python -m backend.auth.users add|list|passwd|delete`.
+- Optional self-registration via `ENABLE_SIGNUP`. New login page + in-app sign-out.
+- New deps pinned: `itsdangerous`, `python-multipart`. Tests: `tests/test_auth.py`.
+
 ### Optional opt-out for the SSRF guard
 - Added `EXTERNAL_ALLOW_UNSAFE_URLS` (default **false**). When true it disables the
   SSRF guard so the fetcher may hit localhost / private / internal addresses. It

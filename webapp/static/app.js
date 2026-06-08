@@ -4,6 +4,8 @@
 
   const $ = (id) => document.getElementById(id);
   const api = {
+    me: () => fetch("/api/me").then((r) => r.json()),
+    logout: () => fetch("/api/logout", { method: "POST" }),
     config: () => fetch("/api/config").then((r) => r.json()),
     sessions: () => fetch("/api/sessions").then((r) => r.json()),
     createSession: () => fetch("/api/sessions", { method: "POST" }).then((r) => r.json()),
@@ -855,6 +857,19 @@
     applyTheme(document.documentElement.getAttribute("data-theme") || "light");
     try { if (localStorage.getItem("ara-sidebar") === "collapsed" && window.innerWidth > 880) $("app").classList.add("collapsed"); } catch {}
     try { state.cfg = await api.config(); } catch {}
+    // Auth: when login is enabled, show the signed-in user + a sign-out button.
+    try {
+      const me = await api.me();
+      if (me && me.auth) {
+        if (!me.user_id) { window.location.href = "/login"; return; }
+        $("userChip").style.display = "";
+        $("userName").textContent = me.user_id;
+        $("logoutBtn").addEventListener("click", async () => {
+          try { await api.logout(); } catch {}
+          window.location.href = "/login";
+        });
+      }
+    } catch {}
     // One optimized retrieval mode now; the server selects how many sources to
     // use adaptively, so there's nothing to configure here.
     $("provLabel").textContent = state.cfg.provider || "ready";

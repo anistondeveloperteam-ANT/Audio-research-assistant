@@ -130,9 +130,33 @@ Then start your Oracle container and upload PDFs from the sidebar (**＋ Add pap
 | `WEB_SEARCH_PROVIDER` | `duckduckgo` | `duckduckgo` (free) · `tavily` · `brave` · `serpapi` |
 | `ENABLE_LOCAL_RAG` | `false` | Search your uploaded PDFs first (needs Oracle) |
 | `EMBEDDING_PROVIDER` | `google` | `google` (Gemini) or `local` (sentence-transformers) |
+| `ENABLE_AUTH` | `false` | Require login (user_id + password); private per-user chats |
 | `EXTERNAL_TOP_K` · `EVIDENCE_CHARS_PER_SOURCE` · `ANSWER_MAX_TOKENS` | `20` · `3500` · `4096` | Depth/accuracy knobs |
 
 Full list with comments lives in **`.env.example`**. `.env` is gitignored — never commit it.
+
+---
+
+## 👥 Team login (optional)
+
+Turn the app into a multi-user tool — members sign in and each gets their **own
+private conversations**.
+
+```bash
+# 1. Enable it in .env
+ENABLE_AUTH=true
+AUTH_SECRET_KEY=<python -c "import secrets;print(secrets.token_hex(32))">
+
+# 2. Create accounts (admin)
+python -m backend.auth.users add alice      # prompts for a password
+python -m backend.auth.users list
+python -m backend.auth.users passwd alice   # reset a password
+python -m backend.auth.users delete alice
+```
+
+Members then visit the app, get redirected to **`/login`**, and sign in. Passwords are
+stored salted + hashed (PBKDF2-HMAC-SHA256); the session is a signed cookie. Set
+`ENABLE_SIGNUP=true` to let members self-register.
 
 ---
 

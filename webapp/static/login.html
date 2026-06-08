@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in · Audio Research Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #ffffff; --text: #1b1f2a; --muted: #6b7280;
+      --border: #e5e7eb; --accent: #4f46e5; --accent-ring: rgba(79,70,229,.28);
+      --danger: #dc2626; --ok: #059669;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#0e1220; --card:#171c2c; --text:#e7e9f2; --muted:#9aa1b5;
+              --border:#2a3146; --accent:#7c83ff; --accent-ring:rgba(124,131,255,.34); }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      font-family: Inter, system-ui, -apple-system, sans-serif;
+      background:
+        radial-gradient(900px 500px at 50% -10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent),
+        var(--bg);
+      color: var(--text); padding: 24px;
+    }
+    .card {
+      width: 100%; max-width: 380px; background: var(--card);
+      border: 1px solid var(--border); border-radius: 18px; padding: 34px 30px;
+      box-shadow: 0 18px 50px rgba(15,23,42,.12);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+    .brand .logo { font-size: 26px; }
+    .brand h1 { font-size: 18px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
+    .sub { color: var(--muted); font-size: 13.5px; margin: 0 0 22px; }
+    label { display: block; font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; }
+    input {
+      width: 100%; padding: 11px 13px; font-size: 14.5px; color: var(--text);
+      background: transparent; border: 1px solid var(--border); border-radius: 10px;
+      font-family: inherit; transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-ring); }
+    button {
+      width: 100%; margin-top: 22px; padding: 12px; font-size: 14.5px; font-weight: 600;
+      color: #fff; background: var(--accent); border: none; border-radius: 10px;
+      cursor: pointer; font-family: inherit; transition: filter .15s, transform .05s;
+    }
+    button:hover { filter: brightness(1.06); }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: .6; cursor: progress; }
+    .msg { margin-top: 16px; font-size: 13px; min-height: 18px; text-align: center; }
+    .msg.error { color: var(--danger); }
+    .msg.ok { color: var(--ok); }
+    .toggle { margin-top: 18px; text-align: center; font-size: 13px; color: var(--muted); }
+    .toggle a { color: var(--accent); font-weight: 600; text-decoration: none; cursor: pointer; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <form class="card" id="form" autocomplete="on">
+    <div class="brand"><span class="logo">🔊</span><h1>Audio Research Assistant</h1></div>
+    <p class="sub" id="subtitle">Sign in with your company account.</p>
+
+    <label for="user_id">User ID</label>
+    <input id="user_id" name="username" type="text" autocomplete="username"
+           autocapitalize="none" spellcheck="false" required autofocus />
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+    <button type="submit" id="submit">Sign in</button>
+    <div class="msg" id="msg"></div>
+
+    <div class="toggle hidden" id="toggleRow">
+      <span id="toggleText">No account?</span>
+      <a id="toggleLink">Create one</a>
+    </div>
+  </form>
+
+  <script>
+    const form = document.getElementById('form');
+    const msg = document.getElementById('msg');
+    const submit = document.getElementById('submit');
+    const subtitle = document.getElementById('subtitle');
+    const toggleRow = document.getElementById('toggleRow');
+    const toggleText = document.getElementById('toggleText');
+    const toggleLink = document.getElementById('toggleLink');
+    let mode = 'login';   // 'login' | 'signup'
+    let signupAllowed = false;
+
+    // Show the "create account" option only if the server allows self sign-up.
+    fetch('/api/me').then(r => r.json()).then(d => {
+      signupAllowed = !!d.signup;
+      if (signupAllowed) toggleRow.classList.remove('hidden');
+    }).catch(() => {});
+
+    function setMode(m) {
+      mode = m;
+      const login = m === 'login';
+      submit.textContent = login ? 'Sign in' : 'Create account';
+      subtitle.textContent = login ? 'Sign in with your company account.' : 'Choose a user ID and password.';
+      document.getElementById('password').autocomplete = login ? 'current-password' : 'new-password';
+      toggleText.textContent = login ? 'No account?' : 'Already have an account?';
+      toggleLink.textContent = login ? 'Create one' : 'Sign in';
+      msg.textContent = ''; msg.className = 'msg';
+    }
+    toggleLink.addEventListener('click', () => setMode(mode === 'login' ? 'signup' : 'login'));
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const user_id = document.getElementById('user_id').value.trim();
+      const password = document.getElementById('password').value;
+      if (!user_id || !password) return;
+      submit.disabled = true;
+      msg.className = 'msg'; msg.textContent = mode === 'login' ? 'Signing in…' : 'Creating account…';
+      try {
+        const res = await fetch('/api/' + (mode === 'login' ? 'login' : 'signup'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id, password }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.ok) {
+          msg.className = 'msg ok'; msg.textContent = 'Welcome! Loading…';
+          window.location.href = '/';
+        } else {
+          msg.className = 'msg error';
+          msg.textContent = data.error || 'Sign in failed.';
+          submit.disabled = false;
+        }
+      } catch (err) {
+        msg.className = 'msg error'; msg.textContent = 'Network error. Try again.';
+        submit.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -15,6 +15,8 @@
 fastapi==0.136.1
 uvicorn==0.46.0
 python-dotenv==1.2.2
+itsdangerous==2.2.0          # signs the session cookie (SessionMiddleware / login)
+python-multipart==0.0.28     # PDF upload form parsing
 
 # --- Data / numerics ---
 numpy==2.3.5

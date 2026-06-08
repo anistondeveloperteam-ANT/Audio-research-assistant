@@ -4,6 +4,10 @@ FastAPI server for the Audio Research Assistant web UI.
 Run from the project root so `import backend.*` resolves:
     python run.py --web                 # -> http://localhost:8600
     uvicorn webapp.server:app --port 8600
+
+Multi-user (optional): set ENABLE_AUTH=true and create accounts with
+    python -m backend.auth.users add <user_id>
+Members then sign in at /login; each member's conversations are private.
 """
 from __future__ import annotations
 
@@ -11,31 +15,115 @@ import json
 import sys
 from pathlib import Path
 
-from fastapi import Body, FastAPI, File, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import (
+    FileResponse, JSONResponse, RedirectResponse, StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from webapp import chat_logic, ingest, settings
+from webapp import auth as webauth, chat_logic, ingest, settings
+from backend.auth.users import create_user, verify_user
 from backend.llm.streaming_provider import get_provider
 
 STATIC = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Audio Research Assistant")
+
+def require_login(request: Request) -> None:
+    """Global gate: when ENABLE_AUTH, every non-public route needs a session."""
+    if not webauth.auth_enabled() or webauth.is_public_path(request.url.path):
+        return
+    if not request.session.get("user_id"):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+
+app = FastAPI(title="Audio Research Assistant", dependencies=[Depends(require_login)])
+# Signs the session cookie. Set AUTH_SECRET_KEY in .env for stable, production sessions.
+app.add_middleware(
+    SessionMiddleware, secret_key=webauth.session_secret(),
+    same_site="lax", https_only=False, max_age=60 * 60 * 24 * 7,  # 1 week
+)
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 
+def _require_owner(request: Request, session_id: str) -> None:
+    """Ensure the current user owns this conversation (404 if missing, 403 if not theirs)."""
+    owner = chat_logic.memory().session_owner(session_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="No such conversation")
+    if owner != webauth.current_user(request):
+        raise HTTPException(status_code=403, detail="Not your conversation")
+
+
 # ----------------------------------------------------------------------
-# Page + config
+# Pages
 # ----------------------------------------------------------------------
 @app.get("/")
-def index():
+def index(request: Request):
+    if webauth.auth_enabled() and not request.session.get("user_id"):
+        return RedirectResponse("/login")
     return FileResponse(str(STATIC / "index.html"))
 
 
+@app.get("/login")
+def login_page():
+    return FileResponse(str(STATIC / "login.html"))
+
+
+# ----------------------------------------------------------------------
+# Auth
+# ----------------------------------------------------------------------
+@app.get("/api/me")
+def whoami(request: Request):
+    if not webauth.auth_enabled():
+        return {"auth": False, "user_id": webauth.LOCAL_USER}
+    return {
+        "auth": True,
+        "user_id": request.session.get("user_id"),
+        "signup": webauth.signup_enabled(),
+    }
+
+
+@app.post("/api/login")
+def api_login(request: Request, body: dict = Body(default={})):
+    uid = (body.get("user_id") or "").strip()
+    pw = body.get("password") or ""
+    if verify_user(uid, pw):
+        request.session["user_id"] = uid
+        return {"ok": True, "user_id": uid}
+    return JSONResponse({"ok": False, "error": "Invalid user ID or password."},
+                        status_code=401)
+
+
+@app.post("/api/logout")
+def api_logout(request: Request):
+    request.session.clear()
+    return {"ok": True}
+
+
+@app.post("/api/signup")
+def api_signup(request: Request, body: dict = Body(default={})):
+    if not webauth.signup_enabled():
+        return JSONResponse(
+            {"error": "Sign-ups are disabled. Ask an admin to create your account."},
+            status_code=403)
+    uid = (body.get("user_id") or "").strip()
+    pw = body.get("password") or ""
+    try:
+        create_user(uid, pw)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    request.session["user_id"] = uid
+    return {"ok": True, "user_id": uid}
+
+
+# ----------------------------------------------------------------------
+# Config
+# ----------------------------------------------------------------------
 @app.get("/api/config")
 def config():
     try:
@@ -57,56 +145,61 @@ def config():
 
 
 # ----------------------------------------------------------------------
-# Sessions
+# Sessions (scoped to the current user)
 # ----------------------------------------------------------------------
 @app.get("/api/sessions")
-def list_sessions():
-    return chat_logic.memory().list_sessions(limit=50)
+def list_sessions(request: Request):
+    return chat_logic.memory().list_sessions(limit=50, user_id=webauth.current_user(request))
 
 
 @app.post("/api/sessions")
-def create_session():
+def create_session(request: Request):
     mem = chat_logic.memory()
-    sid = mem.create_session()
+    sid = mem.create_session(user_id=webauth.current_user(request))
     return mem.get_session(sid)
 
 
 @app.put("/api/sessions/{session_id}")
-def rename_session(session_id: str, body: dict = Body(default={})):
+def rename_session(session_id: str, request: Request, body: dict = Body(default={})):
+    _require_owner(request, session_id)
     title = (body.get("title") or "").strip() or "Untitled"
     chat_logic.memory().rename_session(session_id, title)
     return {"ok": True, "title": title}
 
 
 @app.delete("/api/sessions/{session_id}")
-def delete_session(session_id: str):
+def delete_session(session_id: str, request: Request):
+    _require_owner(request, session_id)
     chat_logic.memory().delete_session(session_id)
     return {"ok": True}
 
 
 @app.get("/api/sessions/{session_id}/turns")
-def get_turns(session_id: str):
+def get_turns(session_id: str, request: Request):
+    _require_owner(request, session_id)
     return chat_logic.memory().get_turns(session_id)
 
 
 @app.delete("/api/sessions/{session_id}/turns/{turn_index}")
-def delete_turn(session_id: str, turn_index: int):
+def delete_turn(session_id: str, turn_index: int, request: Request):
     """Delete one question and its answer (a single user turn + the assistant
     reply that follows it)."""
+    _require_owner(request, session_id)
     deleted = chat_logic.memory().delete_turn_pair(session_id, turn_index)
     return {"ok": True, "deleted": deleted}
 
 
 @app.post("/api/sessions/{session_id}/turns/{turn_index}/truncate")
-def truncate_turns(session_id: str, turn_index: int):
+def truncate_turns(session_id: str, turn_index: int, request: Request):
     """Delete the turn at turn_index and everything after it (used when the user
     edits an earlier question and we re-generate from that point)."""
+    _require_owner(request, session_id)
     deleted = chat_logic.memory().delete_turns_from(session_id, turn_index)
     return {"ok": True, "deleted": deleted}
 
 
 # ----------------------------------------------------------------------
-# Library: upload a PDF + stream ingestion
+# Library: upload a PDF + stream ingestion (shared knowledge base)
 # ----------------------------------------------------------------------
 @app.get("/api/library")
 def library():
@@ -164,7 +257,7 @@ def run_ingest():
 # Chat (streaming, newline-delimited JSON)
 # ----------------------------------------------------------------------
 @app.post("/api/chat")
-def chat(body: dict = Body(...)):
+def chat(request: Request, body: dict = Body(...)):
     session_id = body.get("session_id")
     question = body.get("question", "")
     mode = body.get("mode", "Default")
@@ -172,6 +265,7 @@ def chat(body: dict = Body(...)):
     web_search = bool(body.get("web_search", True))   # web search is the default source
     if not session_id:
         return JSONResponse({"error": "session_id is required"}, status_code=400)
+    _require_owner(request, session_id)   # raises before streaming if not the user's
 
     def gen():
         try:

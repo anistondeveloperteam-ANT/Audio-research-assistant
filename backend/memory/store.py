@@ -49,6 +49,7 @@ _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
     id            TEXT PRIMARY KEY,
     title         TEXT NOT NULL DEFAULT 'New conversation',
+    user_id       TEXT NOT NULL DEFAULT 'local',
     created_at    REAL NOT NULL,
     updated_at    REAL NOT NULL
 );
@@ -107,6 +108,10 @@ def _open_conn(db_path: Path) -> sqlite3.Connection:
 def _migrate(conn: sqlite3.Connection) -> None:
     cur = conn.cursor()
     cur.executescript(_SCHEMA_SQL)
+    # Add user_id to pre-existing sessions tables (per-user conversation isolation).
+    cols = {r[1] for r in cur.execute("PRAGMA table_info(sessions)").fetchall()}
+    if "user_id" not in cols:
+        cur.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'")
     current = cur.execute("PRAGMA user_version;").fetchone()[0]
     if current < SCHEMA_VERSION:
         cur.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
@@ -158,16 +163,25 @@ class MemoryStore:
                 pass
 
     # ------- Sessions ------------------------------------------------
-    def create_session(self, title: str = "New conversation") -> str:
+    def create_session(self, title: str = "New conversation",
+                       user_id: str = "local") -> str:
         sid = uuid.uuid4().hex[:12]
         now = time.time()
         with self._conn() as conn:
             conn.execute(
-                "INSERT INTO sessions (id, title, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?)",
-                (sid, title, now, now),
+                "INSERT INTO sessions (id, title, user_id, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (sid, title, user_id or "local", now, now),
             )
         return sid
+
+    def session_owner(self, session_id: str) -> Optional[str]:
+        """Return the user_id that owns a session, or None if it doesn't exist."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT user_id FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            return row["user_id"] if row else None
 
     def touch_session(self, session_id: str) -> None:
         with self._conn() as conn:
@@ -197,13 +211,21 @@ class MemoryStore:
                 (session_id,),
             )
 
-    def list_sessions(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def list_sessions(self, limit: int = 50,
+                     user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         with self._conn() as conn:
-            cur = conn.execute(
-                "SELECT id, title, created_at, updated_at "
-                "FROM sessions ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
-            )
+            if user_id is None:
+                cur = conn.execute(
+                    "SELECT id, title, user_id, created_at, updated_at "
+                    "FROM sessions ORDER BY updated_at DESC LIMIT ?",
+                    (limit,),
+                )
+            else:
+                cur = conn.execute(
+                    "SELECT id, title, user_id, created_at, updated_at "
+                    "FROM sessions WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+                    (user_id, limit),
+                )
             return [dict(r) for r in cur.fetchall()]
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
