@@ -13,6 +13,12 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Login page: Sign in / Sign up tabs + Forgot password
+- Redesigned `/login` with segmented **Sign in / Sign up** tabs (sign-up posts to
+  `/api/signup`, gated by `ENABLE_SIGNUP`) and a **Forgot password?** link that
+  shows the admin reset step (`python -m backend.auth.users passwd <id>`).
+  Self-service email reset is intentionally not included (needs SMTP).
+
 ### Multi-user login (optional)
 - Added `ENABLE_AUTH`: members sign in at `/login` with a user_id + password and
   each member's conversations are private (per-user `user_id` on the memory store,
