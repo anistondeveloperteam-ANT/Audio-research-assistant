@@ -196,10 +196,12 @@ to the browser. This is orchestrated by **`webapp/chat_logic.py`**.
 ```mermaid
 flowchart LR
     EV[Top evidence chunks] --> SP[chat_logic.py<br/>system prompt + numbered evidence]
-    SP --> PROV[streaming_provider.get_provider]
-    PROV --> OAI[OpenAI - gpt-4o family]
-    OAI --> TOK[Streamed tokens]
-    TOK --> ANS[Cited answer in the UI]
+    SP --> DRAFT[Draft answer]
+    DRAFT --> SIM[Optional Docker run<br/>for fenced Python]
+    SIM --> VERIFY[Verify against evidence]
+    VERIFY -->|gaps| SEARCH[Follow-up search]
+    SEARCH --> SP
+    VERIFY -->|passes / budget hit| ANS[Checked cited answer in the UI]
 ```
 
 1. **Build the prompt** — `chat_logic.py` formats the retrieved chunks as numbered
@@ -216,6 +218,14 @@ flowchart LR
 4. **Persist the turn** — the question, answer, and its sources are saved to the
    conversation store (`backend/memory/store.py`) so history survives a refresh.
    Each question supports **copy / edit-and-resend / delete** in the UI.
+
+Current default: before the final answer is emitted, `backend/answering/agentic_answer.py`
+runs a bounded draft -> verify -> refine loop (`ENABLE_AGENTIC_ANSWER_LOOP=true`).
+The verifier checks evidence support, citation use, and completeness. If it finds
+missing support, the app searches local PDFs plus web/research/patents/GitHub again
+with a follow-up query and rewrites against the expanded evidence. If the draft
+contains fenced Python, the longest block is run in the existing network-less
+Docker sandbox and that run result is included in verification.
 
 ---
 

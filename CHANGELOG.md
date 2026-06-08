@@ -13,6 +13,17 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Agentic verified web answers
+- Upgraded the browser chat path from one-shot retrieval -> answer to a bounded
+  agentic loop: draft a cited answer, verify it against the numbered evidence,
+  search local/web/research/patents/GitHub again when support is missing, then
+  rewrite and return the best checked answer.
+- Fenced Python in answers is optionally executed in the existing network-less
+  Docker sandbox, and the run result is included in verification. New knobs:
+  `ENABLE_AGENTIC_ANSWER_LOOP`, `AGENTIC_MAX_VERIFY_ROUNDS`,
+  `AGENTIC_MIN_VERIFY_SCORE`, `AGENTIC_EXTRA_SEARCH_K`, `AGENTIC_SIMULATE_CODE`.
+- Added focused offline tests for the agentic answer helpers. 80 tests pass.
+
 ### Autonomous research agent (write → run → verify)
 - New `backend/agent/`: a THINK→EXECUTE→REFLECT loop that designs a Python program,
   runs it in a **throwaway Docker sandbox** (`--network none`, capped mem/CPU/PIDs,

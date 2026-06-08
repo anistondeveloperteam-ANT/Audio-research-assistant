@@ -1,8 +1,6 @@
 """Tests for the research agent loop — fully mocked (no Docker, no LLM, no network)."""
 import json
 
-import pytest
-
 from backend.agent import loop
 from backend.agent.code_runner import RunResult
 

@@ -23,6 +23,17 @@ load_dotenv(ROOT / ".env")
 
 from backend.memory.store import MemoryStore, default_db_path  # noqa: E402
 from backend.answering.query_sanity import check_query_sanity  # noqa: E402
+from backend.answering.agentic_answer import (  # noqa: E402
+    agentic_loop_enabled,
+    build_revision_message,
+    complete_text,
+    followup_query,
+    max_verify_rounds,
+    run_best_python_block,
+    verification_footer,
+    verification_passed,
+    verify_answer,
+)
 from backend.llm.streaming_provider import get_provider  # noqa: E402
 from backend.external_search import gather_external_evidence, is_web_search_enabled  # noqa: E402
 
@@ -140,6 +151,7 @@ SOURCE_MAX = int(os.getenv("SOURCE_MAX", "12"))
 # tokens the answer may use (large enough for full code / simulations).
 EXTERNAL_TOP_K = int(os.getenv("EXTERNAL_TOP_K", "20"))
 ANSWER_MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "4096"))
+AGENTIC_EXTRA_SEARCH_K = int(os.getenv("AGENTIC_EXTRA_SEARCH_K", "8"))
 
 
 def _score(r: Dict[str, Any]) -> float:
@@ -200,6 +212,72 @@ def _local_evidence_item(r: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _gather_local_items(query: str, mode: str) -> tuple[List[Dict[str, Any]], List[str]]:
+    """Search the optional local PDF RAG and return full-text evidence items."""
+    try:
+        # Imported lazily so a web-only deploy needs no Oracle / heavy ML deps.
+        from backend.answering.research_modes import apply_research_mode
+        from backend.retrieval.hybrid_retrieve import hybrid_retrieve
+
+        try:
+            apply_research_mode(mode)
+        except Exception:
+            pass
+        local = select_sources(hybrid_retrieve(query, top_k=SOURCE_MAX + 6) or [])
+        return [_local_evidence_item(r) for r in local], []
+    except Exception as exc:
+        return [], [f"Local paper search is unavailable: {exc}"]
+
+
+def _external_item(es: Any) -> Dict[str, Any]:
+    d = es.to_public()
+    d["text"] = (getattr(es, "text", "") or getattr(es, "snippet", "") or "").strip()
+    return d
+
+
+def _gather_external_items(query: str, max_results: int) -> tuple[List[Dict[str, Any]], List[str]]:
+    try:
+        ext_sources, warnings = gather_external_evidence(query, max_results=max_results)
+    except Exception as exc:
+        return [], [f"External search failed: {exc}"]
+    return [_external_item(es) for es in ext_sources], warnings
+
+
+def _item_key(item: Dict[str, Any]) -> tuple:
+    text = (item.get("text") or "").strip().lower()[:240]
+    return (
+        item.get("source_type") or "",
+        (item.get("url") or "").strip().lower().rstrip("/"),
+        (item.get("file_path") or "").strip().lower(),
+        item.get("page") or item.get("page_start") or "",
+        (item.get("title") or "").strip().lower(),
+        text,
+    )
+
+
+def _extend_unique(items: List[Dict[str, Any]], new_items: List[Dict[str, Any]]) -> int:
+    seen = {_item_key(it) for it in items}
+    added = 0
+    for it in new_items:
+        key = _item_key(it)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(it)
+        added += 1
+    return added
+
+
+def _public_sources(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    sources = []
+    for i, it in enumerate(items, 1):
+        pub = dict(it)
+        pub["n"] = i
+        pub["text"] = (it.get("text") or "")[:600]
+        sources.append(pub)
+    return sources
+
+
 # ----------------------------------------------------------------------
 # The streaming orchestration
 # ----------------------------------------------------------------------
@@ -232,18 +310,10 @@ def stream_chat_events(
     # --- 1) Local PDF papers (when enabled; needs Oracle + indexed papers) ---
     if local_on:
         yield {"type": "status", "message": "Searching your papers..."}
-        try:
-            # Imported lazily so a web-only deploy needs no Oracle / heavy ML deps.
-            from backend.answering.research_modes import apply_research_mode
-            from backend.retrieval.hybrid_retrieve import hybrid_retrieve
-            try:
-                apply_research_mode(mode)
-            except Exception:
-                pass
-            local = select_sources(hybrid_retrieve(q, top_k=SOURCE_MAX + 6) or [])
-            items.extend(_local_evidence_item(r) for r in local)
-        except Exception as exc:
-            yield {"type": "warning", "message": f"Local paper search is unavailable: {exc}"}
+        local_items, local_warnings = _gather_local_items(q, mode)
+        _extend_unique(items, local_items)
+        for w in local_warnings:
+            yield {"type": "warning", "message": w}
 
     # --- 2) ALWAYS search everywhere too: web, research papers (arXiv + Semantic
     #        Scholar), Wikipedia, patents & GitHub — combined with the papers. ---
@@ -252,14 +322,8 @@ def stream_chat_events(
             "Searching your papers + the web, research papers, patents & GitHub..."
             if local_on else
             "Searching the web, research papers, patents & GitHub...")}
-        try:
-            ext_sources, ext_warnings = gather_external_evidence(q, max_results=EXTERNAL_TOP_K)
-        except Exception as exc:
-            ext_sources, ext_warnings = [], [f"External search failed: {exc}"]
-        for es in ext_sources:
-            d = es.to_public()
-            d["text"] = (es.text or es.snippet or "").strip()   # full text for the LLM
-            items.append(d)
+        ext_items, ext_warnings = _gather_external_items(q, EXTERNAL_TOP_K)
+        _extend_unique(items, ext_items)
         for w in ext_warnings:
             yield {"type": "warning", "message": w}
 
@@ -277,21 +341,12 @@ def stream_chat_events(
         yield {"type": "done", "answer": msg}
         return
 
-    sources = []
-    for i, it in enumerate(items, 1):
-        pub = dict(it)
-        pub["n"] = i
-        pub["text"] = (it.get("text") or "")[:600]
-        sources.append(pub)
+    sources = _public_sources(items)
     yield {"type": "sources", "sources": sources}
-    yield {"type": "status", "message": "Writing the answer..."}
 
-    evidence = format_evidence(items)
-    user_msg = build_user_message(q, evidence)
     recent = mem.get_recent_turns(session_id, n_messages=6)
     # Replace the just-stored bare question with the evidence-augmented version.
     history = recent[:-1] if recent and recent[-1]["role"] == "user" else recent
-    messages = history + [{"role": "user", "content": user_msg}]
 
     answer_parts: List[str] = []
     try:
@@ -303,7 +358,110 @@ def stream_chat_events(
             )
             answer_parts.append(note)
             yield {"type": "token", "text": note}
+        elif agentic_loop_enabled():
+            answer = ""
+            verdict: Dict[str, Any] = {}
+            run_info: Dict[str, Any] | None = None
+            rounds_done = 0
+            for round_no in range(1, max_verify_rounds() + 1):
+                rounds_done = round_no
+                evidence = format_evidence(items)
+                if answer and verdict:
+                    user_msg = build_revision_message(
+                        question=q,
+                        evidence=evidence,
+                        previous_answer=answer,
+                        verdict=verdict,
+                        run_info=run_info,
+                    )
+                else:
+                    user_msg = build_user_message(q, evidence)
+                messages = history + [{"role": "user", "content": user_msg}]
+
+                yield {"type": "status", "message": (
+                    f"Agent loop {round_no}/{max_verify_rounds()}: drafting a grounded answer..."
+                )}
+                answer = complete_text(
+                    provider,
+                    messages,
+                    system=SYSTEM_PROMPT,
+                    max_tokens=ANSWER_MAX_TOKENS,
+                    temperature=0.3,
+                )
+
+                yield {"type": "status", "message": "Checking for runnable Python simulation..."}
+                run_info = run_best_python_block(answer)
+                if run_info:
+                    if run_info.get("attempted"):
+                        yield {"type": "status", "message": f"Sandbox result: {run_info.get('summary')}"}
+                    else:
+                        yield {"type": "warning", "message": run_info.get("summary", "Simulation was not run.")}
+
+                yield {"type": "status", "message": "Verifying answer against the retrieved evidence..."}
+                try:
+                    verdict = verify_answer(
+                        provider,
+                        question=q,
+                        evidence=evidence,
+                        answer=answer,
+                        run_info=run_info,
+                    )
+                except Exception as exc:
+                    verdict = {
+                        "ok": False,
+                        "score": 0,
+                        "needs_more_search": False,
+                        "feedback": f"Verification failed: {exc}",
+                    }
+                    yield {"type": "warning", "message": f"Verification failed: {exc}"}
+                    break
+
+                run_failed = bool(run_info and run_info.get("attempted") and not run_info.get("ok"))
+                if run_failed and not verdict.get("feedback"):
+                    verdict["feedback"] = "Generated Python did not run successfully; fix the code and rerun it."
+
+                if (verification_passed(verdict) and not run_failed) or round_no >= max_verify_rounds():
+                    break
+
+                added = 0
+                needs_search = bool(
+                    verdict.get("needs_more_search")
+                    or verdict.get("followup_query")
+                    or verdict.get("missing_evidence")
+                )
+                if needs_search:
+                    search_q = followup_query(q, verdict)
+                    yield {"type": "status", "message": "Verification found gaps; searching again..."}
+                    if local_on:
+                        local_items, local_warnings = _gather_local_items(search_q, mode)
+                        added += _extend_unique(items, local_items)
+                        for w in local_warnings:
+                            yield {"type": "warning", "message": w}
+                    if is_web_search_enabled():
+                        ext_items, ext_warnings = _gather_external_items(search_q, AGENTIC_EXTRA_SEARCH_K)
+                        added += _extend_unique(items, ext_items)
+                        for w in ext_warnings:
+                            yield {"type": "warning", "message": w}
+                    if added:
+                        sources = _public_sources(items)
+                        yield {"type": "sources", "sources": sources}
+                    else:
+                        yield {"type": "warning", "message": "Follow-up search did not find new sources."}
+                else:
+                    yield {"type": "status", "message": "Verification requested a rewrite; refining answer..."}
+
+            final_answer = (answer or "(no answer)") + verification_footer(
+                verdict=verdict,
+                rounds=rounds_done,
+                run_info=run_info,
+            )
+            answer_parts.append(final_answer)
+            yield {"type": "token", "text": final_answer}
         else:
+            yield {"type": "status", "message": "Writing the answer..."}
+            evidence = format_evidence(items)
+            user_msg = build_user_message(q, evidence)
+            messages = history + [{"role": "user", "content": user_msg}]
             for chunk in provider.stream_chat(
                 messages, system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS, temperature=0.3
             ):
@@ -315,5 +473,6 @@ def stream_chat_events(
         yield {"type": "token", "text": msg}
 
     answer = "".join(answer_parts).strip() or "(no answer)"
+    sources = _public_sources(items)
     mem.append_turn(session_id, "assistant", answer, sources=sources)
     yield {"type": "done", "answer": answer}

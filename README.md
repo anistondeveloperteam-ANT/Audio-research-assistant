@@ -9,7 +9,7 @@ GitHub, Wikipedia), reads the sources, and answers with **citations and runnable
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-web%20app-009688?logo=fastapi&logoColor=white)
 ![Oracle](https://img.shields.io/badge/Oracle%2023ai-vector%20DB-F80000?logo=oracle&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-68%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-80%20passing-2ea44f)
 ![No build step](https://img.shields.io/badge/frontend-no%20build%20step-blue)
 
 </div>
@@ -178,9 +178,16 @@ Tune via `.env` (`AGENT_MAX_ITERS`, `AGENT_DOCKER_IMAGE`, `AGENT_RUN_TIMEOUT`, �
 | `MEMGRAPH_URI` | `bolt://localhost:7687` | Memgraph Bolt endpoint when GraphRAG is enabled |
 | `EMBEDDING_PROVIDER` | `google` | `google` (Gemini) or `local` (sentence-transformers) |
 | `ENABLE_AUTH` | `false` | Require login (user_id + password); private per-user chats |
+| `ENABLE_AGENTIC_ANSWER_LOOP` | `true` | Web chat drafts, verifies, searches again if needed, then returns the best checked answer |
 | `EXTERNAL_TOP_K` · `EVIDENCE_CHARS_PER_SOURCE` · `ANSWER_MAX_TOKENS` | `20` · `3500` · `4096` | Depth/accuracy knobs |
 
 Full list with comments lives in **`.env.example`**. `.env` is gitignored — never commit it.
+
+The web chat uses an **agentic answer loop** by default: search all enabled sources,
+draft a grounded answer, verify it against the numbered evidence, search again if
+the verifier finds missing support, then return the best checked answer. If the
+answer contains fenced Python, the app tries to run it in the same network-less
+Docker sandbox used by the CLI agent and includes the run result in verification.
 
 ---
 
