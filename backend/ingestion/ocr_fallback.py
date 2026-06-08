@@ -1,6 +1,11 @@
 from pathlib import Path
 import fitz
 
+try:
+    fitz.TOOLS.mupdf_display_errors(False)  # silence noisy "MuPDF error: ..." stderr spam
+except Exception:
+    pass
+
 
 TESSERACT_EXE = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 

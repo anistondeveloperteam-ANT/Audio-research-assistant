@@ -6,6 +6,11 @@ import fitz
 from backend.ingestion.ocr_fallback import ocr_pdf_fallback
 from dotenv import load_dotenv
 
+try:
+    fitz.TOOLS.mupdf_display_errors(False)  # silence noisy "MuPDF error: ..." stderr spam
+except Exception:
+    pass
+
 load_dotenv()
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")

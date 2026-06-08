@@ -22,6 +22,10 @@ def _extract_pages(pdf_bytes: bytes) -> List[Dict]:
     """Per-page text + a best-effort document title via PyMuPDF."""
     try:
         import fitz  # PyMuPDF
+        try:
+            fitz.TOOLS.mupdf_display_errors(False)  # silence noisy MuPDF stderr spam
+        except Exception:
+            pass
     except Exception:
         logger.info("PyMuPDF not available; cannot read online PDF")
         return []

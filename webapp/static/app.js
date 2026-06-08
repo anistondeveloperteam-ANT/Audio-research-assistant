@@ -2,6 +2,19 @@
 (() => {
   "use strict";
 
+  // When the session is missing/expired the API replies 401 — send the user to
+  // the login page instead of leaving the app in a broken, empty state. This also
+  // recovers a stale page cached from before login was enabled.
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const res = await _origFetch(...args);
+    if (res.status === 401) {
+      window.location.replace("/login");
+      return new Promise(() => {});   // halt callers; the page is navigating away
+    }
+    return res;
+  };
+
   const $ = (id) => document.getElementById(id);
   const api = {
     me: () => fetch("/api/me").then((r) => r.json()),

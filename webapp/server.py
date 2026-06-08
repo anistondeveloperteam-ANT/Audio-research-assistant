@@ -62,16 +62,20 @@ def _require_owner(request: Request, session_id: str) -> None:
 # ----------------------------------------------------------------------
 # Pages
 # ----------------------------------------------------------------------
+_NO_STORE = {"Cache-Control": "no-store, must-revalidate"}
+
+
 @app.get("/")
 def index(request: Request):
     if webauth.auth_enabled() and not request.session.get("user_id"):
         return RedirectResponse("/login")
-    return FileResponse(str(STATIC / "index.html"))
+    # no-store so the browser always re-checks auth on "/" (never serves a stale shell).
+    return FileResponse(str(STATIC / "index.html"), headers=_NO_STORE)
 
 
 @app.get("/login")
 def login_page():
-    return FileResponse(str(STATIC / "login.html"))
+    return FileResponse(str(STATIC / "login.html"), headers=_NO_STORE)
 
 
 # ----------------------------------------------------------------------
