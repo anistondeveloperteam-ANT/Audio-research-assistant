@@ -131,6 +131,27 @@ python -m backend.graph_rag.build_graph
 
 ---
 
+## 🤖 Autonomous agent (write → run → verify)
+
+Beyond Q&A, the assistant can **solve a problem by actually running code**. Give it a
+task and it loops **THINK → EXECUTE → REFLECT**: it designs a Python program, runs it
+in a **throwaway Docker sandbox** (no network, capped CPU/memory/time), checks the real
+output, and refines until it has the best *verified* solution.
+
+```bash
+python -m backend.agent "Find the fastest correct primality test up to 10^7, and benchmark it"
+python -m backend.agent --no-search --iters 6 "Implement and compare quicksort vs mergesort on 100k ints"
+```
+
+Requirements: **Docker running** + `OPENAI_API_KEY`. It prints each attempt (code, run
+result, review) and ends with the best working program, its output, and a one-line answer.
+Tune via `.env` (`AGENT_MAX_ITERS`, `AGENT_DOCKER_IMAGE`, `AGENT_RUN_TIMEOUT`, …).
+
+> Safety: the agent executes **AI-generated code**. It only ever runs inside a
+> network-less, resource-capped, auto-removed container — never directly on your host.
+
+---
+
 ## 🔌 Knowledge sources
 
 | Source | Provider | API key? |

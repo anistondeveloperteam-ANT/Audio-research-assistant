@@ -13,6 +13,17 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Autonomous research agent (write → run → verify)
+- New `backend/agent/`: a THINK→EXECUTE→REFLECT loop that designs a Python program,
+  runs it in a **throwaway Docker sandbox** (`--network none`, capped mem/CPU/PIDs,
+  wall-clock timeout, `--rm`, code piped via stdin so no host fs is touched), reviews
+  the real output, and refines until it has the best *verified* solution.
+- `code_runner.py` (sandbox), `loop.py` (the loop, optional web/paper research to seed
+  attempt 1), CLI `python -m backend.agent "task"`. Knobs: `AGENT_MAX_ITERS`,
+  `AGENT_DOCKER_IMAGE`, `AGENT_RUN_TIMEOUT`, `AGENT_MEM_LIMIT`, `AGENT_CPUS`.
+- Verified live (gpt-5.5 + Docker): solved a task in 1 cycle, score 100. Tests:
+  `tests/test_agent.py` (fully mocked — no Docker/LLM/network). 74 tests pass.
+
 ### Tidy-up: consolidated the data inspector into scripts/
 - Moved `viewer_tool/show_my_data.py` → `scripts/show_data.py` (all admin CLIs now
   live under `scripts/`) and made it run from any directory. Refreshed the README
