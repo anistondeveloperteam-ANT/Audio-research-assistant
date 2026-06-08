@@ -23,5 +23,5 @@ for folder in (DATA_DIR, PAPERS_DIR, EXTRACTED_DIR):
     folder.mkdir(parents=True, exist_ok=True)
 
 ORACLE_USER = os.getenv("ORACLE_USER", "AUDIO_RAG")
-ORACLE_PASSWORD = os.getenv("ORACLE_PASSWORD", "AudioRagPass123")
+ORACLE_PASSWORD = os.getenv("ORACLE_PASSWORD", "change_me")
 ORACLE_DSN = os.getenv("ORACLE_DSN", "localhost:1521/FREEPDB1")

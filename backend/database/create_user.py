@@ -8,8 +8,9 @@ SYSTEM_USER = "system"
 SYSTEM_PASSWORD = os.getenv("ORACLE_PASSWORD")
 DSN = os.getenv("ORACLE_DSN")
 
-APP_USER = "AUDIO_RAG"
-APP_PASSWORD = "AudioRagPass123"
+APP_USER = os.getenv("ORACLE_USER", "AUDIO_RAG")
+# Read from .env — never hard-code credentials in source.
+APP_PASSWORD = os.getenv("ORACLE_PASSWORD", "change_me")
 
 print("Connecting as SYSTEM...")
 
