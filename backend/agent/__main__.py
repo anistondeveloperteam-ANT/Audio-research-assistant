@@ -40,6 +40,8 @@ def _print_event(e: dict) -> None:
             print(f"   found {e['chars']} chars of relevant background")
     elif t == "directive":
         print(f"\n[STEER] new instruction picked up: {e['text']}")
+    elif t == "blocked":
+        print(f"\n[BLOCKED] pre-run policy blocked this program: {e.get('reason')}")
     elif t == "think":
         print(f"\n{_rule('=')}\n[THINK] {e['message']}")
     elif t == "code":

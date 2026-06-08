@@ -13,6 +13,16 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Agent pre-execution hook (idea from kimi-code)
+- Adopted the *one* fitting idea from `MoonshotAI/kimi-code` (a TypeScript coding-agent
+  product — full repo not used): **lifecycle hooks**. New `backend/agent/hooks.py`
+  `pre_run(code, task)` audits every program the agent runs to
+  `data/logs/agent_audit.jsonl` and applies an optional policy gate
+  (`AGENT_BLOCK_PATTERNS` regexes / `AGENT_PRERUN_HOOK` command) that can block a run
+  before the Docker sandbox. Default = allow + audit. Loop emits a `blocked` step.
+- Original Python implementation (kimi-code is TS; nothing copied). Focused write-up in
+  `docs/KIMI_CODE_ADOPTION.md`. 86 tests pass.
+
 ### IDE-style code blocks
 - Code in answers and Agent mode now renders as a polished panel: syntax
   highlighting (highlight.js, atom-one-dark), a header with a language badge +

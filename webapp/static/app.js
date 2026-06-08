@@ -691,6 +691,7 @@
       case "error":    return `\n\n**❌ ${e.message}**\n\n`;
       case "context":  return e.chars ? `_gathered ${e.chars} chars of background_\n\n` : "";
       case "directive":return `_🧭 steer: ${e.text}_\n\n`;
+      case "blocked":  return `\n**🛡️ Blocked by policy:** ${e.reason || ""}\n`;
       case "think":    return `\n\n### 🧠 Attempt ${e.iteration}\n`;
       case "code":     return "```python\n" + (e.code || "") + "\n```\n";
       case "run":      return "_▶ Running in the Docker sandbox…_\n";

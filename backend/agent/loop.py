@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from backend.agent.code_runner import RunResult, docker_available, run_python
+from backend.agent.hooks import pre_run
 from backend.agent.memory import TwoTierMemory
 from backend.llm.streaming_provider import get_provider
 
@@ -232,8 +233,14 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         code = _generate_code(provider, memory.context(), last_code, directive)
         emit({"type": "code", "iteration": i, "code": code})
 
-        emit({"type": "run", "iteration": i, "message": "Running it in the Docker sandbox…"})
-        result = run_python(code)
+        # Pre-execution lifecycle hook (kimi-code idea): audit + allow/block gate.
+        gate = pre_run(code, task=task)
+        if not gate.allowed:
+            emit({"type": "blocked", "iteration": i, "reason": gate.reason})
+            result = RunResult(False, -1, "", "", 0.0, f"blocked by policy: {gate.reason}")
+        else:
+            emit({"type": "run", "iteration": i, "message": "Running it in the Docker sandbox…"})
+            result = run_python(code)
         emit({"type": "run_result", "iteration": i, "ok": result.ok, "summary": result.summary,
               "stdout": result.stdout, "stderr": result.stderr, "error": result.error})
 

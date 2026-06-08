@@ -2,8 +2,45 @@
 import json
 
 from backend.agent import loop
+from backend.agent import hooks
 from backend.agent.code_runner import RunResult
+from backend.agent.hooks import HookDecision
 from backend.agent.memory import TwoTierMemory
+
+
+# ---- pre-execution lifecycle hook (kimi-code idea) -------------------
+def test_hook_allows_by_default_and_audits(tmp_path, monkeypatch):
+    log = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(hooks, "AUDIT_LOG", str(log))
+    monkeypatch.setattr(hooks, "BLOCK_PATTERNS", "")
+    monkeypatch.setattr(hooks, "PRERUN_HOOK", "")
+    d = hooks.pre_run("print(1)", task="demo")
+    assert d.allowed is True
+    rec = json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
+    assert rec["allowed"] is True and rec["code_len"] == len("print(1)")
+
+
+def test_hook_blocks_on_pattern(tmp_path, monkeypatch):
+    monkeypatch.setattr(hooks, "AUDIT_LOG", str(tmp_path / "a.jsonl"))
+    monkeypatch.setattr(hooks, "BLOCK_PATTERNS", r"os\.system,shutil\.rmtree")
+    monkeypatch.setattr(hooks, "PRERUN_HOOK", "")
+    d = hooks.pre_run("import shutil; shutil.rmtree('/x')", task="x")
+    assert not d.allowed and "blocked pattern" in d.reason
+
+
+def test_hook_blocks_via_prerun_command(tmp_path, monkeypatch):
+    monkeypatch.setattr(hooks, "AUDIT_LOG", str(tmp_path / "a.jsonl"))
+    monkeypatch.setattr(hooks, "BLOCK_PATTERNS", "")
+    monkeypatch.setattr(hooks, "PRERUN_HOOK", "mygate")
+    monkeypatch.setattr(hooks.shutil, "which", lambda name: "/usr/bin/mygate")
+
+    class _R:
+        returncode = 1
+        stdout = "rejected by gate"
+        stderr = ""
+    monkeypatch.setattr(hooks.subprocess, "run", lambda *a, **k: _R())
+    d = hooks.pre_run("print(1)", task="x")
+    assert not d.allowed and "rejected" in d.reason
 
 
 # ---- two-tier memory -------------------------------------------------
@@ -105,6 +142,23 @@ def test_agent_refines_after_a_failure(monkeypatch):
     assert res.success is True
     assert len(res.attempts) == 2
     assert res.best_output.strip() == "ok"
+
+
+def test_loop_blocks_without_running(monkeypatch):
+    provider = _FakeProvider([
+        "```python\nprint(1)\n```",
+        _verdict(False, False, 0, feedback="was blocked"),
+    ])
+    monkeypatch.setattr(loop, "get_provider", lambda: provider)
+    monkeypatch.setattr(loop, "docker_available", lambda: True)
+    ran = []
+    monkeypatch.setattr(loop, "run_python", lambda code, **k: ran.append(1) or RunResult(True, 0, "", "", 0.1))
+    monkeypatch.setattr(loop, "pre_run", lambda code, task="": HookDecision(False, "matched blocked pattern"))
+    events = []
+    res = loop.run_agent("x", use_search=False, max_iters=1, on_event=events.append)
+    assert ran == []                                    # never executed in the sandbox
+    assert any(e.get("type") == "blocked" for e in events)
+    assert res.success is False
 
 
 def test_agent_stops_clean_when_docker_missing(monkeypatch):
