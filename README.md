@@ -94,6 +94,18 @@ Then start your Oracle container and upload PDFs from the sidebar (**＋ Add pap
 > It binds to `127.0.0.1` (this PC only).
 
 <details>
+<summary><b>🔗 Share it with others</b></summary>
+
+```bash
+python run.py --share   # public https://…trycloudflare.com link (anyone can open)
+python run.py --lan     # reachable by other devices on your Wi-Fi
+```
+`--share` downloads the Cloudflare tunnel client once (no account needed) and prints a
+public URL. Keep **`ENABLE_AUTH=true`** so visitors must sign in, and set
+`EXTERNAL_ALLOW_UNSAFE_URLS=false` before exposing it.
+</details>
+
+<details>
 <summary><b>Optional Memgraph GraphRAG for your local papers</b></summary>
 
 GraphRAG adds relationship-aware expansion over your indexed PDFs: paper -> chunk
