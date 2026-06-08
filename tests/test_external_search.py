@@ -15,7 +15,33 @@ from backend.external_search.base import ExternalSource, is_safe_url
 def _ssrf_guard_on(monkeypatch):
     """Ensure the SSRF guard is active for tests regardless of the local .env."""
     monkeypatch.delenv("EXTERNAL_ALLOW_UNSAFE_URLS", raising=False)
-from backend.external_search.source_ranker import deduplicate, rerank_sources
+from backend.external_search.source_ranker import (
+    deduplicate, rerank_sources, _wants_latest, _recency_score,
+)
+
+
+def test_wants_latest_detection():
+    assert _wants_latest("latest beamforming methods")
+    assert _wants_latest("MVDR papers in 2026")
+    assert not _wants_latest("what is MVDR beamforming")
+
+
+def test_recency_score_prefers_newer():
+    assert _recency_score("2026-06-08") > _recency_score("2018")
+    assert _recency_score(None) == 0.0
+
+
+def test_rerank_boosts_recent_when_latest_requested(monkeypatch):
+    import backend.external_search.source_ranker as _sr
+    monkeypatch.setattr(_sr, "USE_CROSS_ENCODER", False)
+    old = ExternalSource(source_type="research_paper", title="beamforming",
+                         url="http://x/old", text="beamforming mvdr old", published="2014")
+    new = ExternalSource(source_type="research_paper", title="beamforming",
+                         url="http://x/new", text="beamforming mvdr new", published="2026")
+    ranked = rerank_sources("latest beamforming mvdr", [old, new], top_k=2)
+    assert ranked[0].published == "2026"
+
+
 from backend.external_search.web_search import (
     BraveProvider, TavilyProvider, extract_readable_text, get_web_provider,
 )

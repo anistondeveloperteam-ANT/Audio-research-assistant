@@ -50,15 +50,27 @@ def _parse_arxiv(xml_text: str) -> List[dict]:
 
 def arxiv_search(query: str, max_results: int = ARXIV_MAX) -> List[ExternalSource]:
     """Search arXiv for relevant research papers (free, no API key)."""
-    def _produce():
-        xml_text = safe_get(ARXIV_API, params={"search_query": f"all:{query}",
-                                               "start": 0, "max_results": max_results},
-                            expect="text")
+    def _fetch(by_date: bool):
+        params = {"search_query": f"all:{query}", "start": 0, "max_results": max_results}
+        if by_date:
+            params.update({"sortBy": "submittedDate", "sortOrder": "descending"})
+        xml_text = safe_get(ARXIV_API, params=params, expect="text")
         return _parse_arxiv(xml_text) if xml_text else None
 
-    entries = cached(f"arxiv::{query}::{max_results}", _produce) or []
+    # Fetch the most-relevant AND the newest, then merge (newest first). The
+    # recency-aware reranker downstream picks the best relevant+recent combination,
+    # so today's papers can surface without losing on-topic ones.
+    by_date = cached(f"arxiv::{query}::{max_results}::date", lambda: _fetch(True)) or []
+    by_rel = cached(f"arxiv::{query}::{max_results}::rel", lambda: _fetch(False)) or []
+    seen, entries = set(), []
+    for e in list(by_date) + list(by_rel):
+        k = e.get("url") or e.get("title")
+        if k and k not in seen:
+            seen.add(k)
+            entries.append(e)
+
     sources: List[ExternalSource] = []
-    for e in entries[:max_results]:
+    for e in entries[:max_results * 2]:
         sources.append(ExternalSource(
             source_type="research_paper",
             title=e["title"],
@@ -75,15 +87,19 @@ def semantic_scholar_search(query: str, max_results: int = SEMANTIC_MAX) -> List
     """Semantic Scholar paper search (free, no key; broad cross-publisher corpus)."""
     def _produce():
         return safe_get(SEMANTIC_API, params={
-            "query": query, "limit": max_results,
-            "fields": "title,abstract,url,year,openAccessPdf",
+            "query": query, "limit": max(max_results, 12),
+            "fields": "title,abstract,url,year,publicationDate,openAccessPdf",
         }, expect="json")
 
-    data = cached(f"s2::{query}::{max_results}", _produce)
+    data = cached(f"s2::{query}::{max_results}::recent", _produce)
     if not data:
         return []
+    papers = list(data.get("data") or [])
+    # Newest-first: sort by publicationDate (fallback year), descending.
+    papers.sort(key=lambda p: (p.get("publicationDate") or (str(p.get("year")) if p.get("year") else "")),
+                reverse=True)
     out: List[ExternalSource] = []
-    for p in (data.get("data") or [])[:max_results]:
+    for p in papers[:max_results]:
         pdf = (p.get("openAccessPdf") or {}).get("url")
         out.append(ExternalSource(
             source_type="research_paper",
@@ -92,7 +108,7 @@ def semantic_scholar_search(query: str, max_results: int = SEMANTIC_MAX) -> List
             text=(p.get("abstract") or "")[:4000],
             snippet=(p.get("abstract") or "")[:600],
             provider="semantic_scholar",
-            published=str(p["year"]) if p.get("year") else None,
+            published=p.get("publicationDate") or (str(p["year"]) if p.get("year") else None),
         ))
     return out
 

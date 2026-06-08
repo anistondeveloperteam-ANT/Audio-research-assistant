@@ -625,6 +625,7 @@ body {
 .chip.type-online_pdf { background: rgba(248,81,73,.16); color: #f85149; }
 .chip.type-research_paper { background: rgba(16,185,129,.16); color: #10b981; }
 .chip.type-patent { background: rgba(234,179,8,.18); color: #d4a017; }
+.source-card .sc-meta .chip.date { background: var(--accent-weak); color: var(--accent-600, var(--accent)); font-weight: 600; }
 a.sc-title { color: var(--accent-600); text-decoration: none; }
 a.sc-title:hover { text-decoration: underline; }
 

@@ -13,6 +13,16 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Fresh, latest-first sources + no more truncated answers
+- **Recency:** arXiv now fetches newest **and** most-relevant and merges them;
+  Semantic Scholar sorts by publication date; GitHub ranks most-recently-updated
+  (`GITHUB_REPO_SORT`). A recency boost in the reranker surfaces recent results —
+  strongly when the query says "latest/recent/2026". External cache window cut
+  24h → 1h so today's papers/repos/pages appear fast. Source cards show the date.
+- **Completeness:** raised `ANSWER_MAX_TOKENS` 4096 → 8000 (fixes the truncated-code
+  answer) and `AGENTIC_MAX_VERIFY_ROUNDS` 2 → 3 (more draft→verify→refine passes,
+  better verification scores). Verified live: arXiv returns relevant + recent. 89 tests pass.
+
 ### Per-query sources with prev/next navigation
 - Sources are now **per question**. Click a question (or its **Sources · N** chip, or a
   `[n]` citation) and the drawer shows *only that query's* sources, with a header

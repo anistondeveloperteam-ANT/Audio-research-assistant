@@ -459,6 +459,7 @@
       let meta = "";
       if (s.score) meta += `<span class="chip relevance">${Math.min(100, Math.round(s.score * 100))}% match</span>`;
       meta += `<span class="chip type type-${st}">${TYPE[st] || "Source"}</span>`;
+      if (s.published) meta += `<span class="chip date" title="Published / updated">🗓 ${esc(String(s.published))}</span>`;
       if (st === "local_pdf") {
         if (s.section) meta += `<span class="chip">${esc(s.section)}</span>`;
         if (pages) meta += `<span class="chip">${pages}</span>`;

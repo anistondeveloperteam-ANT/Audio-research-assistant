@@ -58,11 +58,16 @@ def _excerpt(text: str) -> str:
     return "\n".join(lines[:EXCERPT_LINES])
 
 
+# Default to most-recently-updated so today's repos surface; override with
+# GITHUB_REPO_SORT=stars for popularity instead.
+_REPO_SORT = os.getenv("GITHUB_REPO_SORT", "updated")
+
+
 def search_repositories(query: str, max_repos: int = MAX_REPOS) -> List[Dict[str, Any]]:
     data = cached(
-        f"gh_repos::{query}::{max_repos}",
+        f"gh_repos::{query}::{max_repos}::{_REPO_SORT}",
         lambda: _api_get(f"{API}/search/repositories",
-                         {"q": query, "sort": "stars", "order": "desc", "per_page": max_repos}),
+                         {"q": query, "sort": _REPO_SORT, "order": "desc", "per_page": max_repos}),
     )
     if not data:
         return []
@@ -141,6 +146,8 @@ def github_search(query: str, max_repos: int = MAX_REPOS) -> List[ExternalSource
         readme = fetch_readme(full_name)
         if readme:
             readme.license = (repo.get("license") or {}).get("spdx_id") or fetch_license_name(full_name)
+            # Surface recency: when the repo was last pushed/updated.
+            readme.published = (repo.get("pushed_at") or repo.get("updated_at") or "")[:10] or None
             sources.append(readme)
     try:
         sources.extend(search_code(query))

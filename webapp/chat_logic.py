@@ -150,7 +150,7 @@ SOURCE_MAX = int(os.getenv("SOURCE_MAX", "12"))
 # How many external sources to keep (accuracy > brevity — keep more), and how many
 # tokens the answer may use (large enough for full code / simulations).
 EXTERNAL_TOP_K = int(os.getenv("EXTERNAL_TOP_K", "20"))
-ANSWER_MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "4096"))
+ANSWER_MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "8000"))  # room for full code, no truncation
 AGENTIC_EXTRA_SEARCH_K = int(os.getenv("AGENTIC_EXTRA_SEARCH_K", "8"))
 
 
