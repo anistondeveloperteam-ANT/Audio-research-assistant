@@ -22,8 +22,8 @@ GitHub, Wikipedia), reads the sources, and answers with **citations and runnable
   (arXiv + Semantic Scholar), Wikipedia, patents (Google Patents), and GitHub
   repos/code. **Works with no API key.**
 - 📄 **Your own PDFs too** — upload papers; they're parsed, chunked, embedded, and
-  searched *first*. Web search kicks in automatically only when your papers don't
-  have the answer.
+  searched **together with every external source on every question**, then merged
+  and re-ranked so the best evidence wins.
 - 🎯 **Grounded & cited** — every claim cites its source (URL · file:line · page).
   It says so plainly when the sources don't cover something.
 - 💻 **Reads papers → writes code** — for "how does X work / implement it", it reads
@@ -39,11 +39,11 @@ GitHub, Wikipedia), reads the sources, and answers with **citations and runnable
 
 ```mermaid
 flowchart LR
-    Q[Your question] --> P{Your PDFs<br/>have it?}
-    P -- yes --> CTX[Build cited evidence]
-    P -- no / not enough --> EXT[Search the web, arXiv,<br/>Semantic Scholar, patents,<br/>GitHub, Wikipedia]
-    EXT --> RR[Re-rank vs. your question<br/>+ read full PDFs]
-    RR --> CTX
+    Q[Your question] --> L[Your PDFs]
+    Q --> EXT[Web · arXiv · Semantic Scholar<br/>Wikipedia · patents · GitHub]
+    L --> RR[Merge + re-rank vs. your question<br/>read full PDFs]
+    EXT --> RR
+    RR --> CTX[Build cited evidence]
     CTX --> LLM[LLM writes a cited answer + code]
     LLM --> UI[Streamed to the browser]
 ```
@@ -79,9 +79,9 @@ GitHub) out of the box. Optionally add `TAVILY_API_KEY` for higher-quality web.
 </details>
 
 <details>
-<summary><b>📄 With your own papers (papers-first + web fallback)</b></summary>
+<summary><b>📄 With your own papers (searched together with the web)</b></summary>
 
-Adds a local PDF library searched before the web. In `.env`:
+Adds a local PDF library that's searched alongside every web source. In `.env`:
 ```
 ENABLE_LOCAL_RAG=true
 ORACLE_DSN=localhost:1521/FREEPDB1    # Oracle 23ai (e.g. in Docker)

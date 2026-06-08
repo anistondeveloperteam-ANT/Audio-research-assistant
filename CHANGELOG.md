@@ -11,6 +11,15 @@ companion to the git history.
 
 ---
 
+## 2026-06-08
+
+### Always search everywhere (no fallback gating)
+- External search now runs on **every** question, combined with the local papers —
+  not only when the papers miss. One query pulls from your PDFs **and** the web,
+  arXiv, Semantic Scholar, Wikipedia, patents, and GitHub; results are merged and
+  re-ranked. Verified live: a single query returned 32 sources across all channels.
+- Removed the `LOCAL_FOUND_SCORE` fallback gate; updated the README flow.
+
 ## 2026-06-06
 
 ### PDF upload/manage restored + thorough delete + polished README

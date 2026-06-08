@@ -136,10 +136,6 @@ SOURCE_MIN_SCORE = float(os.getenv("SOURCE_MIN_SCORE", "0.30"))
 SOURCE_MIN = int(os.getenv("SOURCE_MIN", "3"))
 SOURCE_MAX = int(os.getenv("SOURCE_MAX", "12"))
 
-# If no local paper clears this relevance bar, the answer "isn't in the papers",
-# so we automatically fall back to external search (web / arXiv / patents / GitHub).
-LOCAL_FOUND_SCORE = float(os.getenv("LOCAL_FOUND_SCORE", "0.45"))
-
 # How many external sources to keep (accuracy > brevity — keep more), and how many
 # tokens the answer may use (large enough for full code / simulations).
 EXTERNAL_TOP_K = int(os.getenv("EXTERNAL_TOP_K", "20"))
@@ -226,10 +222,9 @@ def stream_chat_events(
     mem.append_turn(session_id, "user", q)
 
     items: List[Dict[str, Any]] = []
-    local_found = False
     local_on = local_rag_enabled()
 
-    # --- 1) Local PDF papers first (when enabled; needs Oracle + indexed papers) ---
+    # --- 1) Local PDF papers (when enabled; needs Oracle + indexed papers) ---
     if local_on:
         yield {"type": "status", "message": "Searching your papers..."}
         try:
@@ -241,17 +236,15 @@ def stream_chat_events(
             except Exception:
                 pass
             local = select_sources(hybrid_retrieve(q, top_k=SOURCE_MAX + 6) or [])
-            local_items = [_local_evidence_item(r) for r in local]
-            items.extend(local_items)
-            local_found = any(li["score"] >= LOCAL_FOUND_SCORE for li in local_items)
+            items.extend(_local_evidence_item(r) for r in local)
         except Exception as exc:
             yield {"type": "warning", "message": f"Local paper search is unavailable: {exc}"}
 
-    # --- 2) AUTOMATIC fallback: if the papers don't answer it (or there are no
-    #        papers), search the web, research papers (arXiv), patents & GitHub. ---
-    if not local_found and is_web_search_enabled():
+    # --- 2) ALWAYS search everywhere too: web, research papers (arXiv + Semantic
+    #        Scholar), Wikipedia, patents & GitHub — combined with the papers. ---
+    if is_web_search_enabled():
         yield {"type": "status", "message": (
-            "Not found in your papers — searching the web, research papers, patents & GitHub..."
+            "Searching your papers + the web, research papers, patents & GitHub..."
             if local_on else
             "Searching the web, research papers, patents & GitHub...")}
         try:
