@@ -19,7 +19,7 @@ database, and answers questions with cited, grounded answers through a fast web 
 | **PDF parsing** | Docling (primary) + PyMuPDF (fallback) + OCR (optional) |
 | **Embeddings** | Google Gemini `gemini-embedding-2` (768‑dim) |
 | **Re‑ranker** | BAAI `bge-reranker-v2-m3` (cross‑encoder) |
-| **Chat models** | Ollama (local) · OpenRouter (cloud gateway — DeepSeek, Qwen, GPT, 300+) |
+| **Chat models** | OpenAI — `gpt-4o` (default), `gpt-4o-mini`, `gpt-4.1` |
 | **Conversation memory** | SQLite |
 | **Compute** | GPU (CUDA) and/or CPU, configurable |
 
@@ -65,18 +65,17 @@ Question ──► HyDE + Vector + BM25 ──► RRF fusion ──► Cross‑e
 |------|------|
 | **BAAI `bge-reranker-v2-m3`** | Cross‑encoder that reads the question + passage together to score relevance |
 
-### Chat / answer models (two providers)
+### Chat / answer models (OpenAI)
 | Provider | How | Models |
 |----------|-----|--------|
-| **Ollama** | Local HTTP server | Offline models, e.g. `llama3.2:3b`, `qwen2.5:7b` |
-| **OpenRouter** | OpenAI‑compatible cloud gateway (one API key) | DeepSeek, Qwen, GPT and 300+ — default **`deepseek-v4-flash`** (fast + accurate); plus `:free` model options |
+| **OpenAI** | `OPENAI_API_KEY` (cloud) | `gpt-4o` (default), `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini` — pick in the UI |
 
 ### ML runtime
 | Tool | Version | Role |
 |------|---------|------|
 | **PyTorch** | 2.7.1 (CUDA 12.6 build) | Tensor / GPU backend for the local models |
 | **transformers** | 4.57.6 | Model runtime under sentence‑transformers |
-| **OpenAI SDK** | 1.109.1 | Client used to talk to OpenRouter |
+| **OpenAI SDK** | 1.109.1 | Client for the OpenAI chat API (streaming) |
 
 ---
 
@@ -168,8 +167,7 @@ on a small (6 GB) laptop GPU.
 | Service | Used for | Cost |
 |---------|----------|------|
 | **Google AI Studio (Gemini API)** | Text embeddings | Free tier |
-| **OpenRouter** | Cloud chat models (DeepSeek / Qwen / GPT / 300+) | Pay‑as‑you‑go; `:free` models available |
-| **Ollama** | Local chat models | Free (runs on your machine) |
+| **OpenAI** | Cloud chat models (`gpt-4o` family) | Pay‑as‑you‑go |
 
 ---
 
@@ -178,8 +176,8 @@ on a small (6 GB) laptop GPU.
 - **Docling + Gemini embeddings** are independently rated **best‑in‑class for 2026**
   for self‑hosted scientific‑paper RAG on modest hardware (the only stronger embedding
   model needs 16 GB+ of GPU memory).
-- **OpenRouter** gives access to every major chat model through **one API key**, so the
-  code stays simple while remaining flexible.
+- **OpenAI** (`gpt-4o` family) provides strong, reliable answer quality through a single
+  API key, and the model is switchable from the UI.
 - **No‑build front end** (plain HTML/CSS/JS) keeps the UI fast, dependency‑free, and
   easy for anyone to read and modify.
 - **Hybrid retrieval** (semantic + keyword + re‑rank + diversify) is more accurate than
@@ -188,4 +186,4 @@ on a small (6 GB) laptop GPU.
 
 ---
 
-*Audio Research Assistant — Python 3.11 · FastAPI · Oracle 23ai · Docling · Gemini · OpenRouter.*
+*Audio Research Assistant — Python 3.11 · FastAPI · Oracle 23ai · Docling · Gemini · OpenAI.*

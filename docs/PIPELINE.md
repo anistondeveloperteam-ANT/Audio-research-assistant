@@ -197,10 +197,8 @@ to the browser. This is orchestrated by **`webapp/chat_logic.py`**.
 flowchart LR
     EV[Top evidence chunks] --> SP[chat_logic.py<br/>system prompt + numbered evidence]
     SP --> PROV[streaming_provider.get_provider]
-    PROV --> OLL[Ollama - local]
-    PROV --> OR[OpenRouter - DeepSeek/Qwen/GPT/300+]
-    OLL --> TOK[Streamed tokens]
-    OR --> TOK
+    PROV --> OAI[OpenAI - gpt-4o family]
+    OAI --> TOK[Streamed tokens]
     TOK --> ANS[Cited answer in the UI]
 ```
 
@@ -223,19 +221,18 @@ flowchart LR
 
 ## 6. LLM providers (chat models)
 
-All answer generation goes through one swappable interface,
-`backend/llm/streaming_provider.py`. There are **two** providers — select with
-`LLM_PROVIDER` in `.env`; switch live in the UI.
+All answer generation goes through one interface,
+`backend/llm/streaming_provider.py`, backed by **OpenAI**. Configure with
+`OPENAI_API_KEY` in `.env`; switch the model live in the UI.
 
-| `LLM_PROVIDER` | Endpoint | Key env | Notes |
-|----------------|----------|---------|-------|
-| `ollama` | local `http://localhost:11434` | — | Free, offline (e.g. `llama3.2:3b`, `qwen2.5:7b`). |
-| `openrouter` | `openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | **One key → DeepSeek, Qwen, GPT & 300+ models**; `:free` slugs cost nothing. |
+| Setting | Value | Notes |
+|---------|-------|-------|
+| `OPENAI_API_KEY` | `sk-…` | Your OpenAI key (required). |
+| `OPENAI_MODEL` | `gpt-4o` (default) | e.g. `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`. |
+| `OPENAI_BASE_URL` | *(optional)* | Only for Azure OpenAI or an OpenAI-compatible proxy. |
 
-OpenRouter is **OpenAI-compatible**, so it reuses the OpenAI client with a custom
-base URL. It deliberately replaces the older per-vendor providers (OpenAI,
-Anthropic, DeepSeek, Qwen direct) — one key covers them all. To measure which
-model answers best, use `python -m backend.evaluation.evaluate_llm --models …`.
+To measure which model answers best, use
+`python -m backend.evaluation.evaluate_llm --models "openai:gpt-4o,openai:gpt-4o-mini"`.
 
 ---
 
@@ -271,8 +268,7 @@ model answers best, use `python -m backend.evaluation.evaluate_llm --models …`
 | **BAAI/bge-base-en-v1.5** | Local embedding alternative (`EMBEDDING_PROVIDER=local`) |
 | **BAAI/bge-reranker-v2-m3** | Cross-encoder reranker |
 | **PyTorch / sentence-transformers / transformers** | Run the reranker (and local embeddings) on GPU/CPU |
-| **OpenAI SDK** | Client for OpenRouter (the OpenAI-compatible cloud gateway) |
-| **Ollama** | Local/offline chat models |
+| **OpenAI SDK** | Client for the OpenAI chat API (streaming answers) |
 
 ### Document processing
 | Technology | Role |
@@ -339,8 +335,8 @@ settings:
 | Variable | Example | Meaning |
 |----------|---------|---------|
 | `ORACLE_DSN` | `localhost:1521/FREEPDB1` | Oracle connection |
-| `LLM_PROVIDER` | `openrouter` | Active chat provider (see §6) |
-| `OPENROUTER_API_KEY` / `OPENAI_API_KEY` / … | `…` | Keys for whichever providers you use |
+| `OPENAI_API_KEY` | `sk-…` | OpenAI key (chat model; see §6) |
+| `OPENAI_MODEL` | `gpt-4o` | OpenAI model |
 | `EMBEDDING_PROVIDER` | `google` \| `local` | Embedding backend |
 | `EMBEDDING_MODEL` | `gemini-embedding-2` | Embedding model |
 | `GEMINI_API_KEY` | `…` | Free key for Google embeddings (aistudio.google.com) |

@@ -45,7 +45,7 @@ evidence → give it to a language model → get a grounded, cited answer.*
 | **Re-ranking** | BAAI `bge-reranker-v2-m3` cross-encoder | Reads (question, passage) together to score true relevance precisely. |
 | **Diversity** | MMR (Maximal Marginal Relevance) | Avoids near-duplicate evidence; caps passages per source. |
 | **External search** | DuckDuckGo · arXiv · Semantic Scholar · Wikipedia · Google Patents · GitHub | Searches the public world; reads full paper PDFs; cites URL/file/page. |
-| **Answer model** | OpenRouter (DeepSeek / Qwen / GPT / 300+) or local Ollama | Writes the grounded, cited answer and original code/simulations. |
+| **Answer model** | OpenAI (`gpt-4o` family) | Writes the grounded, cited answer and original code/simulations. |
 | **Memory** | SQLite | Stores conversations + the sources used. |
 | **Safety** | SSRF guard, timeouts, size caps, caching | Blocks private-network fetches; bounds every request; never logs keys. |
 
@@ -63,7 +63,7 @@ and `evaluate_retrieval.py`), not guesswork.
 
 | Area | Before | After | Why it matters |
 |------|--------|-------|----------------|
-| **Answer model** | mixed / slow | **deepseek-v4-flash**: 94% answer accuracy, ~8.6 s | Benchmarked head-to-head — equal accuracy, **~2× faster** than alternatives. |
+| **Answer model** | mixed / inconsistent | **OpenAI `gpt-4o`** (switchable in the UI) | A single, reliable, high-quality model; a built-in eval harness scores any model you pick. |
 | **Evidence depth** | ~900 chars/source | **3,500 chars/source** | The model reads real method detail → deeper, more accurate answers + code. |
 | **Paper reading** | abstract only | **full PDF downloaded & read** | "Implement this paper" actually works — it has the methods. |
 | **Sources returned** | fixed 8 | **adaptive (up to ~32 combined)** | Count reflects how much is actually relevant; nothing useful is dropped. |
@@ -92,7 +92,7 @@ on 2026 benchmarks — MTEB for embeddings, public PDF-parser comparisons.)
 | **Re-ranker** | `bge-reranker-v2-m3` (open, strong) | **Cohere Rerank 3** (paid API) | bge-v2-m3 is the top *open* cross-encoder; Cohere is a paid, slightly stronger option. ✅ |
 | **Vector DB** | Oracle 23ai native vectors | Pinecone / Weaviate / Milvus / pgvector | All are excellent; Oracle keeps data + vectors in one enterprise DB. ✅ (swap is easy) |
 | **Web search** | DuckDuckGo (free) | **Tavily** (built for RAG), Brave, SerpAPI | Tavily gives cleaner RAG results; we support it as a drop-in. Free DDG works without a key. ◐ |
-| **Answer LLM** | OpenRouter → DeepSeek/Qwen/GPT/300+ | Frontier GPT / Gemini Ultra etc. | One key reaches *all* frontier models; pick the best per task. ✅ |
+| **Answer LLM** | OpenAI `gpt-4o` family | Other frontier models (Claude, Gemini) | Top-tier answer quality; the model is switchable in the UI and an eval harness compares them. ✅ |
 | **Retrieval method** | Hybrid (vector+BM25+RRF+rerank+MMR+HyDE) | — | This *is* the current state-of-the-art RAG recipe. ✅ |
 
 **Bottom line:** every component is either the best available or the best *practical*

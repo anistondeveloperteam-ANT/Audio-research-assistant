@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-08
 
+### LLM is now OpenAI-only
+- Dropped the Ollama and OpenRouter providers. `streaming_provider.py` is a single
+  **OpenAI** client (`OPENAI_API_KEY`, `OPENAI_MODEL`, optional `OPENAI_BASE_URL`);
+  default model `gpt-4o`, switchable in the UI (`gpt-4o-mini`, `gpt-4.1`, …).
+- Updated settings/model picker, the eval harness examples, `.env(.example)`, and
+  the README/PIPELINE/TECH_STACK docs. 68 tests pass.
+
 ### Optional Memgraph GraphRAG
 - Added an optional `backend.graph_rag` layer that builds a Memgraph graph from
   Oracle papers/chunks/concepts and uses it to expand local retrieval before

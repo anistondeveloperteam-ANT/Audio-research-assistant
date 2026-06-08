@@ -2,7 +2,7 @@
 Central compute-device selection for the embedding + reranker models.
 
 Lets you spread model load across GPU and CPU via .env, which matters on
-small GPUs (e.g. a 6 GB laptop card shared with a local Ollama LLM):
+small GPUs (e.g. a 6 GB laptop card; the chat LLM runs in the cloud via OpenAI):
 
     DEVICE            global default: auto | cuda | cpu        (default: auto)
     EMBEDDING_DEVICE  override for the embedding model         (falls back to DEVICE)

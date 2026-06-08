@@ -72,7 +72,7 @@ The simplest setup — no Oracle, no PDFs. In `.env`:
 ```
 ENABLE_LOCAL_RAG=false
 ENABLE_WEB_SEARCH=true
-OPENROUTER_API_KEY=sk-or-v1-...       # your LLM (or use Ollama locally)
+OPENAI_API_KEY=sk-...                 # your OpenAI API key
 ```
 Web search runs on free sources (DuckDuckGo, arXiv, Semantic Scholar, Wikipedia,
 GitHub) out of the box. Optionally add `TAVILY_API_KEY` for higher-quality web.
@@ -148,8 +148,8 @@ python -m backend.graph_rag.build_graph
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `LLM_PROVIDER` | `openrouter` | `ollama` (local) or `openrouter` (one key → DeepSeek/Qwen/GPT & 300+) |
-| `OPENROUTER_API_KEY` | – | Cloud LLM key (or run Ollama locally) |
+| `OPENAI_API_KEY` | – | Your OpenAI API key (chat model) |
+| `OPENAI_MODEL` | `gpt-4o` | OpenAI model (e.g. `gpt-4o-mini`, `gpt-4.1`) |
 | `ENABLE_WEB_SEARCH` | `true` | Automatic external search (web/papers/patents/GitHub) |
 | `WEB_SEARCH_PROVIDER` | `duckduckgo` | `duckduckgo` (free) · `tavily` · `brave` · `serpapi` |
 | `ENABLE_LOCAL_RAG` | `false` | Search your uploaded PDFs first (needs Oracle) |
@@ -190,7 +190,7 @@ stored salted + hashed (PBKDF2-HMAC-SHA256); the session is a signed cookie. Set
 
 **FastAPI** + Uvicorn (SSE streaming) · vanilla **HTML/CSS/JS** (no build) ·
 **Oracle 23ai** native vector search · **Gemini** embeddings · **BAAI bge** cross-encoder
-reranker · **Docling** + PyMuPDF parsing · **OpenRouter / Ollama** LLMs ·
+reranker · **Docling** + PyMuPDF parsing · **OpenAI** LLM (gpt-4o family) ·
 hybrid retrieval (vector + BM25F + RRF + rerank + MMR + HyDE).
 
 See **[`docs/PIPELINE.md`](docs/PIPELINE.md)** for the full walkthrough and
@@ -219,7 +219,7 @@ Audio-research-assistant/
 │   ├── graph_rag/          # optional Memgraph graph over local paper chunks/concepts
 │   ├── retrieval/          # hybrid_retrieve, vector, fusion, HyDE
 │   ├── ingestion/          # parse → chunk → embed → incremental
-│   ├── llm/                # streaming_provider (Ollama + OpenRouter)
+│   ├── llm/                # streaming_provider (OpenAI)
 │   ├── common/ · answering/ · database/ · memory/ · evaluation/
 │   └── config.py
 ├── webapp/                 # FastAPI server + chat_logic + static UI (index.html, app.js, styles.css)
