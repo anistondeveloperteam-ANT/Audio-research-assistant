@@ -137,6 +137,11 @@ def is_safe_url(url: str) -> Tuple[bool, str]:
     host = parsed.hostname
     if not host:
         return False, "missing host"
+    # Opt-out: EXTERNAL_ALLOW_UNSAFE_URLS=true disables the SSRF guard entirely
+    # (allows localhost / private / internal addresses). Default OFF — only flip it
+    # on a trusted single-user machine; NEVER on a public/shared deployment.
+    if env_flag("EXTERNAL_ALLOW_UNSAFE_URLS"):
+        return True, "ok (SSRF guard disabled by EXTERNAL_ALLOW_UNSAFE_URLS)"
     if host.lower() in ("localhost", "localhost.localdomain", "ip6-localhost"):
         return False, "localhost blocked"
     # Resolve and verify every address is public.

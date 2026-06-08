@@ -13,6 +13,12 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Optional opt-out for the SSRF guard
+- Added `EXTERNAL_ALLOW_UNSAFE_URLS` (default **false**). When true it disables the
+  SSRF guard so the fetcher may hit localhost / private / internal addresses. It
+  adds no public-search reach — keep it false except on a trusted single-user
+  machine; never on a public deployment. Tests pin the guard on regardless of env.
+
 ### Always search everywhere (no fallback gating)
 - External search now runs on **every** question, combined with the local papers —
   not only when the papers miss. One query pulls from your PDFs **and** the web,

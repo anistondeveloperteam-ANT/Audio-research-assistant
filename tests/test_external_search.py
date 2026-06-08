@@ -9,6 +9,12 @@ import types
 import pytest
 
 from backend.external_search.base import ExternalSource, is_safe_url
+
+
+@pytest.fixture(autouse=True)
+def _ssrf_guard_on(monkeypatch):
+    """Ensure the SSRF guard is active for tests regardless of the local .env."""
+    monkeypatch.delenv("EXTERNAL_ALLOW_UNSAFE_URLS", raising=False)
 from backend.external_search.source_ranker import deduplicate, rerank_sources
 from backend.external_search.web_search import (
     BraveProvider, TavilyProvider, extract_readable_text, get_web_provider,
