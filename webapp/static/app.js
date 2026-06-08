@@ -52,8 +52,19 @@
     nextTurnIndex: 0,
     mode: "Default",    // single optimized retrieval mode (no Fast/Balanced/Deep)
     topk: 8,            // hint only; the server selects sources adaptively
-    agentMode: false,   // when on, tasks go to the code-writing agent (/api/agent)
   };
+
+  // Auto-routing: a clear "build / run / solve code" task goes to the autonomous
+  // agent (write -> run in Docker -> verify -> refine). Everything else uses the
+  // chat path, which already verifies its answer and runs any code it writes.
+  function looksLikeCodingTask(t) {
+    const s = " " + (t || "").toLowerCase().replace(/[^a-z0-9+ ]/g, " ") + " ";
+    return /\b(implement|benchmark|simulate|simulation|leetcode|refactor|debug|optimi[sz]e)\b/.test(s)
+      || /\bwrite\s+(a|an|me|the)?\s*(python|program|code|script|function|class)\b/.test(s)
+      || /\b(code|program|script|function)\s+(to|that|for|which)\b/.test(s)
+      || /\bsolve\b[^.]*\b(problem|equation|puzzle|leetcode|sudoku|maze)\b/.test(s)
+      || /\b(find|compute|calculate|build)\b[^.]*\b(fastest|most efficient|optimal|best)\b[^.]*\b(algorithm|code|program|way|method)\b/.test(s);
+  }
 
   // Icons for the per-question action buttons (copy / edit / delete).
   const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
@@ -533,7 +544,7 @@
   async function send() {
     const text = $("input").value.trim();
     if (!text || state.streaming || !state.currentId) return;
-    if (state.agentMode) { sendAgent(text); return; }
+    if (looksLikeCodingTask(text)) { sendAgent(text); return; }
 
     // First message in a fresh session -> title it from the question.
     const sess = state.sessions.find((s) => s.id === state.currentId);
@@ -635,7 +646,8 @@
       if (h.elapsed) h.elapsed.textContent = ((performance.now() - genStart) / 1000).toFixed(1) + "s";
     }, 100);
 
-    let md = "", scheduled = false;
+    let md = "_🤖 This looks like a coding task — writing code, running it in a sandbox, and verifying…_\n\n";
+    let scheduled = false;
     const render = () => {
       if (scheduled) return;
       scheduled = true;
@@ -719,17 +731,6 @@
     }
   }
 
-  function toggleAgent() {
-    state.agentMode = !state.agentMode;
-    const btn = $("agentBtn");
-    btn.classList.toggle("active", state.agentMode);
-    btn.setAttribute("aria-pressed", state.agentMode ? "true" : "false");
-    const input = $("input");
-    if (input) input.placeholder = state.agentMode
-      ? "Give the agent a task — it writes code, runs it in a sandbox, and verifies…"
-      : (input.dataset.basePlaceholder || "Ask anything…");
-    if (state.agentMode) toast("Agent mode on — tasks run code in a Docker sandbox.", "");
-  }
 
   function handleEvent(ev, h, getAns, setAns, scheduleRender) {
     switch (ev.type) {
@@ -1008,6 +1009,7 @@
         if (!me.user_id) { window.location.href = "/login"; return; }
         $("userChip").style.display = "";
         $("userName").textContent = me.user_id;
+        $("userAvatar").textContent = (me.user_id || "?").trim().charAt(0).toUpperCase();
         $("logoutBtn").addEventListener("click", async () => {
           try { await api.logout(); } catch {}
           window.location.href = "/login";
@@ -1054,8 +1056,6 @@
     $("pdfInput").addEventListener("change", onPdfChosen);
     $("imDone").addEventListener("click", closeIngestModal);
     $("themeBtn").addEventListener("click", toggleTheme);
-    $("agentBtn").addEventListener("click", toggleAgent);
-    { const inp = $("input"); if (inp) inp.dataset.basePlaceholder = inp.placeholder; }
     $("modelSel").addEventListener("change", onModelChange);
     $("manageBtn").addEventListener("click", openPapers);
     $("pmClose").addEventListener("click", closePapers);

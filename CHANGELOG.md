@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Agent is automatic now (no toggle) + polished user chip
+- Removed the manual **Agent** button. Coding/solve tasks ("implement…", "benchmark…",
+  "write a function…", "find the fastest algorithm…") **auto-route** to the autonomous
+  write→run→verify agent; every other question uses chat, which already verifies its
+  answer and runs any code it writes (LLM + agent always work together). A lead line
+  tells the user when the agent engaged.
+- Signed-in user chip redesigned: a coloured avatar with the member's initial, their
+  name, and a clear **Sign out** button.
+
 ### Agent pre-execution hook (idea from kimi-code)
 - Adopted the *one* fitting idea from `MoonshotAI/kimi-code` (a TypeScript coding-agent
   product — full repo not used): **lifecycle hooks**. New `backend/agent/hooks.py`

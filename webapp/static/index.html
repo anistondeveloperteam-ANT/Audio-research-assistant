@@ -67,18 +67,15 @@
           <label for="modelSel">Model</label>
           <select class="select" id="modelSel" title="Choose the language model"></select>
         </span>
-        <button class="ghost-btn" id="agentBtn" title="Agent mode: write code, run it in a sandbox, verify, and refine" aria-pressed="false">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 2v3M5 8h14v11H5zM9 13h.01M15 13h.01M9 17h6"/></svg>
-          Agent
-        </button>
         <button class="ghost-btn" id="sourcesBtn" title="Show the sources behind the last answer">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
           Sources
         </button>
         <button class="icon-btn theme-toggle" id="themeBtn" title="Toggle dark / light theme" aria-label="Toggle theme"></button>
-        <span class="control user-chip" id="userChip" style="display:none">
+        <span class="user-chip" id="userChip" style="display:none">
+          <span class="avatar" id="userAvatar" aria-hidden="true"></span>
           <span class="user-name" id="userName" title="Signed in"></span>
-          <button class="ghost-btn" id="logoutBtn" title="Sign out">Sign out</button>
+          <button class="signout-btn" id="logoutBtn" title="Sign out">Sign out</button>
         </span>
       </header>
 
