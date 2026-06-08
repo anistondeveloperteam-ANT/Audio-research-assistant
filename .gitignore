@@ -49,5 +49,14 @@ archive/
 .DS_Store
 Thumbs.db
 
-# Local Claude Code / agent settings (machine-specific)
-.claude/
+# Claude Code project guidance is tracked; local/private overrides stay ignored.
+.claude/*
+!.claude/settings.json
+!.claude/ECC_LICENSE
+!.claude/rules/
+!.claude/rules/**
+!.claude/agents/
+!.claude/agents/**
+!.claude/skills/
+!.claude/skills/**
+.claude/settings.local.json

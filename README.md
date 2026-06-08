@@ -200,10 +200,12 @@ See **[`docs/PIPELINE.md`](docs/PIPELINE.md)** for the full walkthrough and
 
 ## Claude Code setup
 
-This repo includes a small, project-specific Claude Code configuration inspired
-by the ECC review: root `CLAUDE.md`, focused `.claude/rules/`, lightweight
-reviewer agents, and a few workflow skills. It deliberately does **not** bulk
-install ECC, enable bundled MCPs, or copy generic hooks.
+This repo includes a project-specific Claude Code configuration based on the ECC
+review and the selected files from `affaan-m/ecc`: root `CLAUDE.md`, focused
+local rule overlays, ECC common/python reference rules, five reviewer agents, and
+six workflow skills. It deliberately does **not** bulk install ECC, enable
+bundled MCPs, or copy generic hook settings. Imported ECC material is MIT
+licensed; see `.claude/ECC_LICENSE`.
 
 Security scan:
 

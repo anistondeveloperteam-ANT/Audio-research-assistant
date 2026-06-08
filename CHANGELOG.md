@@ -22,10 +22,11 @@ companion to the git history.
   `gpt-5.5` answers live.
 
 ### Claude Code config
-- Added a minimal tracked Claude Code setup from the ECC recommendation: root
-  `CLAUDE.md`, focused rules, five reviewer agents, six workflow skills, and a
-  tightened `.claude/settings.json`. AgentShield scan: Grade A, no critical/high
-  findings.
+- Added a tracked Claude Code setup from the ECC recommendation and the selected
+  `affaan-m/ecc` files: root `CLAUDE.md`, local rule overlays, ECC common/python
+  reference rules, five reviewer agents, six workflow skills, MIT attribution,
+  and a tightened `.claude/settings.json`. AgentShield scan: Grade A, no
+  critical/high findings.
 
 ### Login required each visit + redesigned login page
 - The session cookie is now a **session cookie by default** (clears when the browser

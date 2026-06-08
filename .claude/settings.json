@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit -m *)",
+      "Bash(.\\.venv\\Scripts\\python.exe -m pytest*)",
+      "Bash(.\\.venv\\Scripts\\pyflakes backend webapp tests)",
+      "Bash(.\\.venv\\Scripts\\python.exe -m py_compile *)",
+      "Bash(python run.py --help)",
+      "Bash(python pipeline.py --status)",
+      "WebFetch(domain:openrouter.ai)",
+      "WebFetch(domain:ai.google.dev)",
+      "WebFetch(domain:memgraph.com)"
+    ],
+    "deny": [
+      "Bash(git reset --hard*)",
+      "Bash(git rm -r*)",
+      "Bash(git rm *)",
+      "Bash(rm -rf*)",
+      "Bash(Remove-Item * -Recurse -Force*)",
+      "Bash(netsh*)",
+      "Bash(sudo*)",
+      "Bash(chmod 777*)",
+      "Bash(ssh*)",
+      "Bash(*> /dev/*)",
+      "Bash(*/dev/*)",
+      "Bash(*--share*)",
+      "Bash(*EXTERNAL_ALLOW_UNSAFE_URLS=true*)"
+    ],
+    "additionalDirectories": []
+  }
+}
