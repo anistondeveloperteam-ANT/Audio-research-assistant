@@ -9,7 +9,7 @@ GitHub, Wikipedia), reads the sources, and answers with **citations and runnable
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-web%20app-009688?logo=fastapi&logoColor=white)
 ![Oracle](https://img.shields.io/badge/Oracle%2023ai-vector%20DB-F80000?logo=oracle&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-55%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-68%20passing-2ea44f)
 ![No build step](https://img.shields.io/badge/frontend-no%20build%20step-blue)
 
 </div>
@@ -93,6 +93,30 @@ Then start your Oracle container and upload PDFs from the sidebar (**＋ Add pap
 > The app does not auto-open a browser — visit **http://localhost:8600** yourself.
 > It binds to `127.0.0.1` (this PC only).
 
+<details>
+<summary><b>Optional Memgraph GraphRAG for your local papers</b></summary>
+
+GraphRAG adds relationship-aware expansion over your indexed PDFs: paper -> chunk
+-> concept / section / chunk type. It is useful for comparison and multi-hop
+questions, while Oracle remains the source of truth for full text and citations.
+
+```bash
+docker run -p 7687:7687 -p 7444:7444 --name memgraph memgraph/memgraph-mage
+```
+
+In `.env`:
+```
+ENABLE_LOCAL_RAG=true
+ENABLE_GRAPH_RAG=true
+MEMGRAPH_URI=bolt://localhost:7687
+```
+
+Build or refresh the graph after indexing PDFs:
+```
+python -m backend.graph_rag.build_graph
+```
+</details>
+
 ---
 
 ## 💬 Using it
@@ -129,6 +153,8 @@ Then start your Oracle container and upload PDFs from the sidebar (**＋ Add pap
 | `ENABLE_WEB_SEARCH` | `true` | Automatic external search (web/papers/patents/GitHub) |
 | `WEB_SEARCH_PROVIDER` | `duckduckgo` | `duckduckgo` (free) · `tavily` · `brave` · `serpapi` |
 | `ENABLE_LOCAL_RAG` | `false` | Search your uploaded PDFs first (needs Oracle) |
+| `ENABLE_GRAPH_RAG` | `false` | Optional Memgraph expansion across local paper concepts/sections |
+| `MEMGRAPH_URI` | `bolt://localhost:7687` | Memgraph Bolt endpoint when GraphRAG is enabled |
 | `EMBEDDING_PROVIDER` | `google` | `google` (Gemini) or `local` (sentence-transformers) |
 | `ENABLE_AUTH` | `false` | Require login (user_id + password); private per-user chats |
 | `EXTERNAL_TOP_K` · `EVIDENCE_CHARS_PER_SOURCE` · `ANSWER_MAX_TOKENS` | `20` · `3500` · `4096` | Depth/accuracy knobs |
@@ -190,6 +216,7 @@ Audio-research-assistant/
 ├── pipeline.py             # build / refresh the local PDF index
 ├── backend/
 │   ├── external_search/    # web · arXiv · Semantic Scholar · Wikipedia · patents · GitHub
+│   ├── graph_rag/          # optional Memgraph graph over local paper chunks/concepts
 │   ├── retrieval/          # hybrid_retrieve, vector, fusion, HyDE
 │   ├── ingestion/          # parse → chunk → embed → incremental
 │   ├── llm/                # streaming_provider (Ollama + OpenRouter)

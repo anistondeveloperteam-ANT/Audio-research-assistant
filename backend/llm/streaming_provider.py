@@ -176,7 +176,7 @@ class OpenAIProvider(LLMProvider):
         if not self.api_key:
             return False
         try:
-            import openai  # noqa: F401
+            __import__("openai")
             return True
         except ImportError:
             return False

@@ -363,6 +363,7 @@
       if (st === "local_pdf") {
         if (s.section) meta += `<span class="chip">${esc(s.section)}</span>`;
         if (pages) meta += `<span class="chip">${pages}</span>`;
+        if (s.graph_reason) meta += `<span class="chip">Graph: ${esc(s.graph_reason)}</span>`;
       } else {
         if (s.file_path) {
           const loc = esc(s.file_path) + (s.line_start ? ":" + s.line_start + (s.line_end ? "-" + s.line_end : "") : "");

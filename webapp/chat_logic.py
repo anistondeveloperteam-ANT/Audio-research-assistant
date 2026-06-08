@@ -177,6 +177,8 @@ def public_source(r: Dict[str, Any], i: int) -> Dict[str, Any]:
         "page_end": r.get("page_end"),
         "text": (r.get("text") or r.get("chunk_text") or "").strip()[:600],
         "score": round(float(r.get("rerank_score") or 0.0), 3),
+        "retrieval_sources": r.get("retrieval_sources") or [],
+        "graph_reason": r.get("graph_reason") or "",
     }
 
 
@@ -192,6 +194,9 @@ def _local_evidence_item(r: Dict[str, Any]) -> Dict[str, Any]:
         "provider": "local", "license": None,
         "text": (r.get("text") or r.get("chunk_text") or "").strip(),
         "score": round(float(r.get("rerank_score") or 0.0), 3),
+        "retrieval_sources": r.get("retrieval_sources") or [],
+        "graph_reason": r.get("graph_reason") or "",
+        "concepts": r.get("concepts") or "",
     }
 
 

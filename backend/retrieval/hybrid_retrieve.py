@@ -43,6 +43,9 @@ from backend.retrieval.retrieval_fusion import (
     mmr_diversify,
 )
 from backend.retrieval.hyde_generator import hyde_expand
+from backend.graph_rag.config import graph_rag_enabled
+from backend.graph_rag.fusion import merge_graph_candidates
+from backend.graph_rag.retrieve_graph import graph_retrieve
 
 # ---------------------------------------------------------------------
 # Quiet backend output
@@ -396,6 +399,22 @@ def _hybrid_retrieve_core(query: str, top_k: int = 10):
 
     candidates = fused[:max(rerank_n, 30)]
     debug_print("Candidates before rerank:", len(candidates))
+
+    if graph_rag_enabled():
+        try:
+            seed_ids = [int(c["id"]) for c in candidates if c.get("id") is not None]
+            graph_hits = graph_retrieve(query, seed_chunk_ids=seed_ids)
+            if graph_hits:
+                chunks_by_id = {int(c["id"]): c for c in load_chunks()}
+                candidates = merge_graph_candidates(
+                    candidates,
+                    graph_hits,
+                    chunks_by_id,
+                    max_new=len(graph_hits),
+                )
+                debug_print("Candidates after Memgraph expansion:", len(candidates))
+        except Exception as exc:
+            debug_print(f"Memgraph GraphRAG expansion failed (non-fatal): {exc}")
 
     # Reranker uses the ORIGINAL question (not HyDE expansion) because
     # cross-encoders are trained on natural-language query / doc pairs.

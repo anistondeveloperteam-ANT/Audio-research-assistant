@@ -13,6 +13,12 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Optional Memgraph GraphRAG
+- Added an optional `backend.graph_rag` layer that builds a Memgraph graph from
+  Oracle papers/chunks/concepts and uses it to expand local retrieval before
+  reranking. It is disabled by default (`ENABLE_GRAPH_RAG=false`) and falls back
+  cleanly when Memgraph is unavailable.
+
 ### Login page: Sign in / Sign up tabs + Forgot password
 - Redesigned `/login` with segmented **Sign in / Sign up** tabs (sign-up posts to
   `/api/signup`, gated by `ENABLE_SIGNUP`) and a **Forgot password?** link that

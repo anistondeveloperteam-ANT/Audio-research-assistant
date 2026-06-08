@@ -43,6 +43,8 @@ flowchart LR
         VEC --> SEARCH
         SEARCH --> FUSE[RRF fusion]
         BM --> FUSE
+        FUSE --> GRAPH[Optional Memgraph GraphRAG]
+        GRAPH --> RERANK
         FUSE --> RERANK[Cross-encoder rerank]
         RERANK --> MMR[MMR diversify]
     end
@@ -170,6 +172,14 @@ Step by step:
    Relevance** trades relevance against redundancy and enforces a **per-paper
    cap**, so you don't get five near-duplicate chunks. `MMR_LAMBDA = 0.7`.
 
+**Optional Memgraph GraphRAG** (`backend/graph_rag/`) can be enabled with
+`ENABLE_GRAPH_RAG=true` after local PDFs are indexed. The graph is built from
+Oracle papers, chunks, sections, chunk types, and detected concepts. During
+retrieval, fused local chunks become seed nodes; Memgraph expands to related
+Oracle chunks through shared concepts, sections, papers, and concept
+co-occurrence. It never returns graph-only evidence: every graph hit maps back to
+an Oracle chunk/page before reranking and citation.
+
 **Single optimized retrieval mode** (`research_modes.py` → `DEFAULT_RETRIEVAL_SETTINGS`)
 — there are no Fast / Balanced / Deep options. The app always runs **one config
 tuned for high accuracy with good speed** (vector/BM25/rerank top-k = 24,
@@ -235,6 +245,7 @@ model answers best, use `python -m backend.evaluation.evaluate_llm --models …`
 |------------|--------|--------------|
 | **Conversation memory** | `backend/memory/store.py` | Three-tier memory in SQLite (`data/memory.db`): sessions, turns (with saved sources), and facts. Supports edit/delete of individual turns. |
 | **Memory backup** | `backend/memory/memory_backup.py` | Human-readable, checksummed, secret-masked export/import of memory (used by `scripts/`). |
+| **Optional GraphRAG** | `backend/graph_rag/` | Builds a Memgraph graph from Oracle papers/chunks/concepts and expands local retrieval through relationships. |
 | **Retrieval evaluation** | `backend/evaluation/evaluate_retrieval.py` | Scores retrieval quality against `data/evaluation_questions.json`. |
 | **LLM accuracy** | `backend/evaluation/evaluate_llm.py` | Scores/compares LLM answer accuracy (keypoint coverage, citation rate, optional LLM-judge) against `data/llm_eval_questions.json`. |
 | **Data viewer** | `viewer_tool/show_my_data.py` | Inspect indexed PDFs, chunks, embeddings, and memory. |
@@ -251,6 +262,7 @@ model answers best, use `python -m backend.evaluation.evaluate_llm --models …`
 | **HTML / CSS / vanilla JS** | Front end — **no build step** (`webapp/static/`) |
 | **Oracle Database Free (23ai)** | Relational store **+ native vector search** (Docker) |
 | **python-oracledb** | Oracle driver |
+| **Memgraph** *(optional)* | GraphRAG relationship expansion over local paper chunks |
 
 ### AI / ML
 | Technology | Role |
@@ -338,6 +350,8 @@ settings:
 | `MAX_QUERY_ROUTES`, `RETRIEVAL_TOP_K`, `TOTAL_SOURCE_LIMIT` | `4 / 8 / 14` | Retrieval tuning |
 | `ENABLE_OCR` | `true` | OCR fallback for scanned PDFs |
 | `CREATE_VECTOR_INDEX` | `false` | Opt in to an approximate HNSW/IVF vector index |
+| `ENABLE_GRAPH_RAG` | `false` | Opt in to optional Memgraph expansion over local PDFs |
+| `MEMGRAPH_URI` | `bolt://localhost:7687` | Memgraph Bolt endpoint |
 
 > Embeddings use the Gemini API by default, so the GPU is free for the reranker
 > and Docling. `DEVICE=cuda` runs everything local on the GPU.
@@ -354,6 +368,9 @@ docker start oracle-ai-db
 python pipeline.py                 # full rebuild
 python pipeline.py --incremental   # only changed PDFs
 python pipeline.py --status        # show what's indexed (no rebuild)
+
+# Optional: build the Memgraph graph after local PDF indexing
+python -m backend.graph_rag.build_graph
 
 # 2. Launch the web app  ->  http://localhost:8600
 python run.py                      # local to this PC
@@ -379,6 +396,7 @@ Audio-research-assistant/
 │   ├── common/             # device (GPU/CPU), embeddings (Gemini/local)
 │   ├── ingestion/          # pdf_parser, ocr_fallback, document_chunker,
 │   │                       #   ingest_papers, embed_chunks, incremental_index
+│   ├── graph_rag/          # optional Memgraph graph expansion
 │   ├── retrieval/          # hybrid_retrieve, vector_retriever,
 │   │                       #   retrieval_fusion, hyde_generator
 │   ├── answering/          # research_modes, query_sanity
