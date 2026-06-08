@@ -97,18 +97,36 @@
   }
 
   function enhanceCodeBlocks(root) {
-    root.querySelectorAll("pre").forEach((pre) => {
-      if (pre.querySelector(".code-copy")) return;
-      const btn = document.createElement("button");
-      btn.className = "code-copy";
-      btn.textContent = "Copy";
-      btn.addEventListener("click", () => {
-        const code = pre.querySelector("code");
-        navigator.clipboard.writeText((code || pre).innerText).then(() => {
-          btn.textContent = "Copied"; setTimeout(() => (btn.textContent = "Copy"), 1200);
-        });
+    root.querySelectorAll("pre > code").forEach((code) => {
+      const pre = code.parentElement;
+      if (!pre || (pre.parentElement && pre.parentElement.classList.contains("code-card"))) return;
+
+      // Language label from the ```lang fence (marked adds language-xxx).
+      const m = (code.className || "").match(/language-([\w+#.-]+)/i);
+      const lang = (m ? m[1] : "code").toLowerCase();
+
+      // Syntax highlight (highlight.js). Auto-detects when the language is unknown.
+      if (window.hljs) { try { hljs.highlightElement(code); } catch (e) {} }
+
+      // Wrap in an IDE-style card: header (dots + language + copy) over the code.
+      const card = document.createElement("div");
+      card.className = "code-card";
+      const head = document.createElement("div");
+      head.className = "code-head";
+      head.innerHTML = '<span class="code-dots"><i></i><i></i><i></i></span>'
+                     + '<span class="code-lang">' + esc(lang) + '</span>';
+      const copy = document.createElement("button");
+      copy.className = "code-copy"; copy.type = "button"; copy.textContent = "Copy";
+      copy.addEventListener("click", () => {
+        navigator.clipboard.writeText(code.innerText).then(() => {
+          copy.textContent = "Copied ✓"; setTimeout(() => (copy.textContent = "Copy"), 1300);
+        }).catch(() => {});
       });
-      pre.appendChild(btn);
+      head.appendChild(copy);
+
+      pre.parentNode.insertBefore(card, pre);
+      card.appendChild(head);
+      card.appendChild(pre);
     });
   }
 

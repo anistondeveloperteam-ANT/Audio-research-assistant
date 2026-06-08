@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-08
 
+### IDE-style code blocks
+- Code in answers and Agent mode now renders as a polished panel: syntax
+  highlighting (highlight.js, atom-one-dark), a header with a language badge +
+  mac-style dots, and a proper Copy button. Replaces the flat, dull code style.
+- Fixed an earlier regression where a missing `</script>` (from the dark-mode
+  change) swallowed the stylesheet link and left the whole UI unstyled.
+
 ### Web "Agent mode" + dark mode by default
 - Added an **Agent** toggle in the chat top bar. When on, your message goes to the
   new streaming `/api/agent` endpoint and the THINK→RUN→REFLECT steps render live
