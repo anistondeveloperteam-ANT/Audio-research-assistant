@@ -47,6 +47,8 @@
     streaming: false,
     ingesting: false,
     currentSources: [],
+    srcSets: [],        // [{el, question, sources}] for per-query drawer navigation
+    srcIndex: 0,
     abort: null,
     autoStick: true,
     nextTurnIndex: 0,
@@ -175,7 +177,7 @@
         if (idx > last) frag.appendChild(document.createTextNode(s.slice(last, idx)));
         const b = document.createElement("button");
         b.className = "cite"; b.textContent = n; b.dataset.n = n;
-        b.addEventListener("click", () => focusSource(parseInt(n, 10)));
+        b.addEventListener("click", () => focusSource(parseInt(n, 10), b));
         b.addEventListener("mouseenter", () => showCitePop(b, n));
         b.addEventListener("mouseleave", hideCitePop);
         frag.appendChild(b);
@@ -222,10 +224,18 @@
     // Delegated so the handler survives the wrap being re-rendered (edit mode).
     m.addEventListener("click", (e) => {
       const b = e.target.closest(".ua-btn");
-      if (!b || !m.contains(b)) return;
-      if (b.dataset.act === "copy") copyUserMessage(m);
-      else if (b.dataset.act === "edit") startEditUserMessage(m);
-      else if (b.dataset.act === "delete") deleteUserMessage(m);
+      if (b && m.contains(b)) {
+        if (b.dataset.act === "copy") copyUserMessage(m);
+        else if (b.dataset.act === "edit") startEditUserMessage(m);
+        else if (b.dataset.act === "delete") deleteUserMessage(m);
+        return;
+      }
+      // Click the question itself -> show that query's sources (if its answer has any).
+      if (e.target.closest(".bubble") && !window.getSelection().toString()) {
+        let p = m.nextElementSibling;
+        while (p && !p.classList.contains("assistant")) p = p.nextElementSibling;
+        if (p && p._sources && p._sources.length) openSourcesForEl(p);
+      }
     });
     inner().appendChild(m);
     scrollToBottom(true);
@@ -361,12 +371,71 @@
     });
     h.tools.appendChild(copy);
     if (sources && sources.length) {
+      // Remember this answer's sources + its question so the drawer can show them
+      // on their own and let the user step between queries.
+      h.el._sources = sources;
+      h.el._question = questionForAnswer(h.el);
+      const uq = precedingUser(h.el);
+      if (uq) uq.classList.add("has-sources");
+
       const sc = document.createElement("button");
       sc.className = "src-count";
-      sc.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Sources`;
-      sc.addEventListener("click", () => { state.currentSources = sources; renderSources(sources); openDrawer(); });
+      sc.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Sources · ${sources.length}`;
+      sc.addEventListener("click", () => openSourcesForEl(h.el));
       h.tools.appendChild(sc);
     }
+  }
+
+  // ----- per-query source navigation -----
+  function precedingUser(el) {
+    let p = el && el.previousElementSibling;
+    while (p) { if (p.classList.contains("user")) return p; p = p.previousElementSibling; }
+    return null;
+  }
+  function questionForAnswer(el) {
+    const u = precedingUser(el);
+    const b = u && u.querySelector(".bubble");
+    return b ? b.textContent : "";
+  }
+  function collectSourceSets() {
+    const sets = [];
+    inner().querySelectorAll(".msg.assistant").forEach((el) => {
+      if (el._sources && el._sources.length) {
+        sets.push({ el, sources: el._sources, question: el._question || questionForAnswer(el) });
+      }
+    });
+    return sets;
+  }
+  function openSourcesForEl(el) {
+    state.srcSets = collectSourceSets();
+    let i = state.srcSets.findIndex((s) => s.el === el);
+    if (i < 0) {
+      state.srcSets.push({ el, sources: el._sources || [], question: el._question || questionForAnswer(el) });
+      i = state.srcSets.length - 1;
+    }
+    openSourcesAt(i);
+  }
+  function openSourcesAt(i) {
+    const sets = state.srcSets || [];
+    if (!sets.length) { state.currentSources = []; renderSources([]); updateSourceNav(); openDrawer(); return; }
+    state.srcIndex = Math.max(0, Math.min(sets.length - 1, i));
+    const set = sets[state.srcIndex];
+    state.currentSources = set.sources;
+    renderSources(set.sources);
+    updateSourceNav();
+    openDrawer();
+  }
+  function updateSourceNav() {
+    const sets = state.srcSets || [];
+    const nav = $("drawerNav");
+    if (!nav) return;
+    nav.style.display = sets.length ? "flex" : "none";
+    if (!sets.length) return;
+    const i = state.srcIndex || 0;
+    $("srcQuestion").textContent = sets[i].question || "This answer";
+    $("srcPos").textContent = (i + 1) + " / " + sets.length;
+    $("srcPrev").disabled = i <= 0;
+    $("srcNext").disabled = i >= sets.length - 1;
   }
 
   // ---------- Sources drawer ----------
@@ -421,9 +490,12 @@
   }
   function openDrawer() { $("drawer").classList.add("open"); $("scrim").classList.add("show"); }
   function closeDrawer() { $("drawer").classList.remove("open"); $("scrim").classList.remove("show"); }
-  function focusSource(n) {
-    renderSources(state.currentSources);
-    openDrawer();
+  function focusSource(n, chip) {
+    // Open the sources for the answer this citation belongs to (with nav), then
+    // jump to source [n]. Falls back to the current set if we can't find the message.
+    const msg = chip && chip.closest && chip.closest(".msg.assistant");
+    if (msg && msg._sources && msg._sources.length) openSourcesForEl(msg);
+    else { renderSources(state.currentSources); updateSourceNav(); openDrawer(); }
     const card = $("src-card-" + n);
     if (card) {
       card.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1091,9 +1163,11 @@
     });
     $("transcript").addEventListener("scroll", () => { state.autoStick = nearBottom(); updateToBottomBtn(); });
     $("toBottom").addEventListener("click", () => scrollToBottom(true));
-    $("sourcesBtn").addEventListener("click", () => { renderSources(state.currentSources); openDrawer(); });
+    $("sourcesBtn").addEventListener("click", () => { state.srcSets = collectSourceSets(); openSourcesAt(state.srcSets.length - 1); });
     $("drawerClose").addEventListener("click", closeDrawer);
     $("scrim").addEventListener("click", closeDrawer);
+    $("srcPrev").addEventListener("click", () => openSourcesAt((state.srcIndex || 0) - 1));
+    $("srcNext").addEventListener("click", () => openSourcesAt((state.srcIndex || 0) + 1));
     $("menuBtn").addEventListener("click", () => {
       if (window.innerWidth > 880) {
         const collapsed = $("app").classList.toggle("collapsed");
@@ -1119,6 +1193,11 @@
     document.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); newChat(); }
       if (e.key === "Escape") { closeDrawer(); closePapers(); }
+      // Step between queries' sources with ← / → while the drawer is open.
+      if ($("drawer").classList.contains("open") && (state.srcSets || []).length > 1) {
+        if (e.key === "ArrowLeft") { e.preventDefault(); openSourcesAt((state.srcIndex || 0) - 1); }
+        if (e.key === "ArrowRight") { e.preventDefault(); openSourcesAt((state.srcIndex || 0) + 1); }
+      }
     });
   }
 

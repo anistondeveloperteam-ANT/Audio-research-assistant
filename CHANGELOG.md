@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Per-query sources with prev/next navigation
+- Sources are now **per question**. Click a question (or its **Sources · N** chip, or a
+  `[n]` citation) and the drawer shows *only that query's* sources, with a header
+  naming the question and a **‹ prev / next ›** pager (plus ←/→ keys and a "2 / 5"
+  position) to step between every query's sources. Citation chips open the right
+  answer's set and jump to the cited source.
+
 ### Claude-style agent interface
 - When the agent works, it now renders a **step timeline** (like Claude's agent UI)
   instead of flat markdown: each event is a card with an icon, a live
