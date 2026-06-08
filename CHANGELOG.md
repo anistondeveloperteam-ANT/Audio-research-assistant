@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Agent: two-tier memory + PROJECT_BRIEF steering
+- Completed the adoption of the `auto-deep-researcher-24x7` ideas (Apache-2.0, original
+  code) into `backend/agent/`: added a **constant-size two-tier memory** (`memory.py` —
+  frozen brief + auto-compacting attempt log) so long loops never bloat context, and a
+  **PROJECT_BRIEF** interface (`--brief FILE`: goal + if-then decision tree) plus an
+  optional mid-run **`--directive FILE`** steer. Example brief in `docs/`.
+- `run_agent(task, brief=…, directive_path=…)`; the loop now carries only the brief +
+  compacted log + last program (bounded) into each THINK. 83 tests pass.
+
 ### Agentic verified web answers
 - Upgraded the browser chat path from one-shot retrieval -> answer to a bounded
   agentic loop: draft a cited answer, verify it against the numbered evidence,

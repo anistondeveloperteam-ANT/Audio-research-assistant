@@ -8,6 +8,12 @@ The research agent's THINK -> EXECUTE -> REFLECT loop.
 It keeps the best working attempt and stops when the reviewer is satisfied (or after
 `max_iters`). Optionally it first searches the web/papers/GitHub for relevant
 approaches to inform the first attempt.
+
+Two ideas adapted (original code) from `auto-deep-researcher-24x7` (Apache-2.0):
+  - the THINK -> EXECUTE -> REFLECT control loop, and
+  - a constant-size two-tier memory (`memory.py`) so many cycles never bloat context,
+    steered by a PROJECT_BRIEF (the goal + an if-then decision tree) plus an optional
+    mid-flight HUMAN_DIRECTIVE file.
 """
 from __future__ import annotations
 
@@ -15,9 +21,11 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from backend.agent.code_runner import RunResult, docker_available, run_python
+from backend.agent.memory import TwoTierMemory
 from backend.llm.streaming_provider import get_provider
 
 # Budgets are generous because reasoning models (GPT-5 / o-series) spend tokens
@@ -101,15 +109,19 @@ _REFLECT_SYSTEM = (
 )
 
 
-def _generate_code(provider, task: str, context: str, prev_code: str, feedback: str) -> str:
-    parts = [f"TASK:\n{task}"]
-    if context:
-        parts.append(f"\nRELEVANT APPROACHES (from research, may help):\n{context}")
-    if prev_code:
-        parts.append(f"\nYOUR PREVIOUS PROGRAM:\n```python\n{prev_code}\n```")
-    if feedback:
-        parts.append(f"\nREVIEWER FEEDBACK to address now:\n{feedback}")
-    parts.append("\nWrite the improved, complete program now.")
+def _generate_code(provider, memory_context: str, last_code: str, directive: str) -> str:
+    """THINK: design (or refine) the program from the constant-size memory context.
+
+    `memory_context` = brief (goal/decision-tree) + a compacted log of prior attempts.
+    Only the single most-recent full program is carried verbatim (for line-level
+    refinement) so the prompt stays bounded as iterations grow.
+    """
+    parts = [memory_context]
+    if last_code:
+        parts.append(f"\nYOUR PREVIOUS PROGRAM (improve it):\n```python\n{last_code}\n```")
+    if directive:
+        parts.append(f"\nNEW INSTRUCTION FROM THE USER (take priority):\n{directive}")
+    parts.append("\nWrite the complete, improved program now.")
     return _extract_code(_complete(provider, _GEN_SYSTEM, "\n".join(parts), GEN_MAX_TOKENS))
 
 
@@ -157,13 +169,37 @@ def _gather_context(task: str, on_event: OnEvent) -> str:
     return "\n".join(lines)
 
 
+def _build_brief(task: str, brief: str, context: str) -> str:
+    """Tier-1 brief: the user's PROJECT_BRIEF if given, else a goal built from the task,
+    plus any research context. TwoTierMemory clips this to its cap."""
+    head = brief.strip() if brief.strip() else f"# Goal\n{task}"
+    if context:
+        head += f"\n\n# Relevant approaches (from research)\n{context}"
+    return head
+
+
+def _read_directive(path: Optional[str]) -> str:
+    """Mid-flight steer: read a HUMAN_DIRECTIVE file fresh each cycle (if it exists)."""
+    if not path:
+        return ""
+    try:
+        p = Path(path)
+        return p.read_text(encoding="utf-8", errors="ignore").strip() if p.exists() else ""
+    except Exception:
+        return ""
+
+
 # ----------------------------------------------------------------------
 # The loop
 # ----------------------------------------------------------------------
-def run_agent(task: str, *, max_iters: int = MAX_ITERS, use_search: bool = True,
+def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
+              use_search: bool = True, directive_path: Optional[str] = None,
               on_event: Optional[OnEvent] = None) -> AgentResult:
     emit: OnEvent = on_event or (lambda e: None)
     task = (task or "").strip()
+    brief = (brief or "").strip()
+    if not task and brief:
+        task = "Achieve the goal described in the brief."
     if not task:
         return AgentResult(task, False, "", "", "No task given.", [])
 
@@ -182,13 +218,18 @@ def run_agent(task: str, *, max_iters: int = MAX_ITERS, use_search: bool = True,
         context = _gather_context(task, emit)
         emit({"type": "context", "chars": len(context)})
 
+    # Tier-1 brief (frozen) + Tier-2 log (auto-compacting) -> constant-size context.
+    memory = TwoTierMemory(brief=_build_brief(task, brief, context))
     attempts: List[Attempt] = []
     best: Optional[Attempt] = None
-    prev_code, feedback = "", ""
+    last_code = ""
 
     for i in range(1, max_iters + 1):
+        directive = _read_directive(directive_path)
+        if directive:
+            emit({"type": "directive", "iteration": i, "text": directive[:300]})
         emit({"type": "think", "iteration": i, "message": f"Designing a solution (attempt {i}/{max_iters})…"})
-        code = _generate_code(provider, task, context, prev_code, feedback)
+        code = _generate_code(provider, memory.context(), last_code, directive)
         emit({"type": "code", "iteration": i, "code": code})
 
         emit({"type": "run", "iteration": i, "message": "Running it in the Docker sandbox…"})
@@ -204,7 +245,10 @@ def run_agent(task: str, *, max_iters: int = MAX_ITERS, use_search: bool = True,
         if best is None or _score(att) > _score(best):
             best = att
 
-        prev_code, feedback = code, verdict.get("feedback", "")
+        # Record a compact, bounded note of this attempt for future cycles.
+        memory.append(f"Attempt {i}: {result.summary}. Review score={verdict.get('score')} "
+                      f"done={verdict.get('done')}. {(verdict.get('feedback') or '')[:240]}")
+        last_code = code
         if result.ok and verdict.get("done"):
             break
 

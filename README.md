@@ -141,11 +141,20 @@ output, and refines until it has the best *verified* solution.
 ```bash
 python -m backend.agent "Find the fastest correct primality test up to 10^7, and benchmark it"
 python -m backend.agent --no-search --iters 6 "Implement and compare quicksort vs mergesort on 100k ints"
+python -m backend.agent --brief docs/PROJECT_BRIEF.example.md   # steer it with a goal + decision tree
 ```
+
+**Steering & scale.** A **PROJECT_BRIEF** (`--brief`) gives the agent its goal plus an
+*if-this-then-that* decision tree — encoding your judgment so it acts on its own. A
+**two-tier, constant-size memory** (a frozen brief + an auto-compacting attempt log)
+keeps its context from bloating no matter how many cycles it runs, and a
+`--directive FILE` lets you steer it mid-run. *(THINK→EXECUTE→REFLECT loop, two-tier
+memory, and the brief pattern are adapted — as original code — from the open-source
+[auto-deep-researcher-24x7](https://github.com/Xiangyue-Zhang/auto-deep-researcher-24x7), Apache-2.0.)*
 
 Requirements: **Docker running** + `OPENAI_API_KEY`. It prints each attempt (code, run
 result, review) and ends with the best working program, its output, and a one-line answer.
-Tune via `.env` (`AGENT_MAX_ITERS`, `AGENT_DOCKER_IMAGE`, `AGENT_RUN_TIMEOUT`, …).
+Tune via `.env` (`AGENT_MAX_ITERS`, `AGENT_DOCKER_IMAGE`, `AGENT_RUN_TIMEOUT`, `AGENT_LOG_*`, …).
 
 > Safety: the agent executes **AI-generated code**. It only ever runs inside a
 > network-less, resource-capped, auto-removed container — never directly on your host.

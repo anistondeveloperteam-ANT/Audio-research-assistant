@@ -38,6 +38,8 @@ def _print_event(e: dict) -> None:
     elif t == "context":
         if e.get("chars"):
             print(f"   found {e['chars']} chars of relevant background")
+    elif t == "directive":
+        print(f"\n[STEER] new instruction picked up: {e['text']}")
     elif t == "think":
         print(f"\n{_rule('=')}\n[THINK] {e['message']}")
     elif t == "code":
@@ -65,7 +67,11 @@ def _print_event(e: dict) -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Autonomous code-writing research agent.")
-    p.add_argument("task", nargs="+", help="The problem to solve.")
+    p.add_argument("task", nargs="*", help="The problem to solve (optional if --brief is given).")
+    p.add_argument("--brief", metavar="FILE", default=None,
+                   help="PROJECT_BRIEF.md: goal + constraints + if-then decision tree to steer the agent.")
+    p.add_argument("--directive", metavar="FILE", default=None,
+                   help="HUMAN_DIRECTIVE file re-read each cycle to steer the agent mid-run.")
     p.add_argument("--iters", type=int, default=None, help="Max THINK/RUN/REFLECT cycles.")
     p.add_argument("--no-search", action="store_true", help="Skip the web/paper research step.")
     args = p.parse_args()
@@ -77,8 +83,21 @@ def main() -> int:
         except Exception:
             pass
 
+    brief = ""
+    if args.brief:
+        bp = Path(args.brief)
+        if not bp.exists():
+            print(f"[error] brief file not found: {bp}")
+            return 2
+        brief = bp.read_text(encoding="utf-8", errors="ignore")
+
     task = " ".join(args.task)
-    kwargs = {"use_search": not args.no_search, "on_event": _print_event}
+    if not task and not brief:
+        print("[error] give a task or a --brief file.")
+        return 2
+
+    kwargs = {"use_search": not args.no_search, "on_event": _print_event,
+              "brief": brief, "directive_path": args.directive}
     if args.iters:
         kwargs["max_iters"] = args.iters
 

@@ -3,6 +3,31 @@ import json
 
 from backend.agent import loop
 from backend.agent.code_runner import RunResult
+from backend.agent.memory import TwoTierMemory
+
+
+# ---- two-tier memory -------------------------------------------------
+def test_memory_brief_is_clipped():
+    mem = TwoTierMemory(brief="x" * 5000, brief_max=100)
+    assert len(mem.brief) <= 130 and mem.brief.endswith("…[clipped]")
+
+
+def test_memory_log_stays_bounded():
+    mem = TwoTierMemory(brief="goal", log_max=200, keep_last=5)
+    for i in range(50):
+        mem.append(f"attempt {i}: some moderately long progress note about what happened")
+    assert len(mem.log_entries) <= 5          # count cap
+    assert mem._log_chars() <= 200            # char cap
+    ctx = mem.context()
+    assert ctx.startswith("goal")
+    assert "attempt 49" in ctx                # newest kept
+    assert "attempt 0" not in ctx             # oldest dropped
+
+
+def test_build_brief_variants():
+    assert loop._build_brief("do X", "", "") == "# Goal\ndo X"
+    assert loop._build_brief("do X", "# Goal\ncustom", "") == "# Goal\ncustom"
+    assert "Relevant approaches" in loop._build_brief("do X", "", "ctx text")
 
 
 # ---- pure helpers ----------------------------------------------------
