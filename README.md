@@ -138,6 +138,9 @@ task and it loops **THINK → EXECUTE → REFLECT**: it designs a Python program
 in a **throwaway Docker sandbox** (no network, capped CPU/memory/time), checks the real
 output, and refines until it has the best *verified* solution.
 
+In the browser, flip the **Agent** toggle in the top bar, type a task, and watch each
+step stream live (code → sandbox run → review) ending in the best program. Or use the CLI:
+
 ```bash
 python -m backend.agent "Find the fastest correct primality test up to 10^7, and benchmark it"
 python -m backend.agent --no-search --iters 6 "Implement and compare quicksort vs mergesort on 100k ints"

@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Web "Agent mode" + dark mode by default
+- Added an **Agent** toggle in the chat top bar. When on, your message goes to the
+  new streaming `/api/agent` endpoint and the THINK→RUN→REFLECT steps render live
+  (generated code, sandbox run output, reviewer verdict), ending in the best verified
+  program + answer. Verified live end-to-end.
+- The UI now defaults to **dark mode** (still remembers your manual choice).
+
 ### Agent: two-tier memory + PROJECT_BRIEF steering
 - Completed the adoption of the `auto-deep-researcher-24x7` ideas (Apache-2.0, original
   code) into `backend/agent/`: added a **constant-size two-tier memory** (`memory.py` —

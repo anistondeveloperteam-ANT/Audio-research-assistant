@@ -284,3 +284,40 @@ def chat(request: Request, body: dict = Body(...)):
 
     # Sync generator -> Starlette iterates it in a threadpool (safe for blocking calls).
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+# ----------------------------------------------------------------------
+# Agent mode (write code -> run in Docker -> verify -> refine), streamed
+# ----------------------------------------------------------------------
+@app.post("/api/agent")
+def agent(body: dict = Body(...)):
+    task = (body.get("question") or body.get("task") or "").strip()
+    use_search = bool(body.get("use_search", False))   # off by default = faster
+    if not task:
+        return JSONResponse({"error": "task is required"}, status_code=400)
+
+    import queue
+    import threading
+    from backend.agent.loop import run_agent
+
+    q: "queue.Queue" = queue.Queue()
+    DONE = object()
+
+    def worker():
+        try:
+            run_agent(task, use_search=use_search, on_event=q.put)
+        except Exception as exc:
+            q.put({"type": "error", "message": str(exc)})
+        finally:
+            q.put(DONE)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    def gen():
+        while True:
+            event = q.get()
+            if event is DONE:
+                break
+            yield json.dumps(event) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")

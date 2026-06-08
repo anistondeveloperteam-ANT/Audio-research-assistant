@@ -52,6 +52,7 @@
     nextTurnIndex: 0,
     mode: "Default",    // single optimized retrieval mode (no Fast/Balanced/Deep)
     topk: 8,            // hint only; the server selects sources adaptively
+    agentMode: false,   // when on, tasks go to the code-writing agent (/api/agent)
   };
 
   // Icons for the per-question action buttons (copy / edit / delete).
@@ -514,6 +515,7 @@
   async function send() {
     const text = $("input").value.trim();
     if (!text || state.streaming || !state.currentId) return;
+    if (state.agentMode) { sendAgent(text); return; }
 
     // First message in a fresh session -> title it from the question.
     const sess = state.sessions.find((s) => s.id === state.currentId);
@@ -599,6 +601,115 @@
         renderSessions();
       }
     }
+  }
+
+  // ---------- Agent mode (write code -> run in Docker -> verify) ----------
+  async function sendAgent(text) {
+    if (inner().querySelector(".welcome")) inner().innerHTML = "";
+    $("input").value = ""; autosize();
+    addUserMessage(text, state.nextTurnIndex);   // view-only; agent runs aren't persisted
+    setStreaming(true);
+    const h = addAssistantMessage();
+    h.statusText.textContent = "Agent working…";
+
+    const genStart = performance.now();
+    const timer = setInterval(() => {
+      if (h.elapsed) h.elapsed.textContent = ((performance.now() - genStart) / 1000).toFixed(1) + "s";
+    }, 100);
+
+    let md = "", scheduled = false;
+    const render = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        if (h.md.style.display === "none") { h.md.style.display = ""; h.statusEl.style.display = "none"; }
+        renderMarkdown(h.md, md);
+        scrollToBottom();
+      });
+    };
+    const append = (s) => { if (s) { md += s; render(); } };
+
+    const controller = new AbortController();
+    state.abort = controller;
+    try {
+      const resp = await fetch("/api/agent", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: text }), signal: controller.signal,
+      });
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let e; try { e = JSON.parse(line); } catch { continue; }
+          append(renderAgentEvent(e));
+        }
+      }
+    } catch (err) {
+      append(err.name === "AbortError" ? "\n\n_⏹ Stopped._" : "\n\n_Connection error: " + (err.message || "") + "_");
+    } finally {
+      state.abort = null;
+      clearInterval(timer);
+      h.md.style.display = ""; h.statusEl.style.display = "none";
+      renderMarkdown(h.md, md || "_(no output)_");
+      finalizeTools(h, [], { seconds: (performance.now() - genStart) / 1000, model: "agent" });
+      setStreaming(false);
+      scrollToBottom();
+      $("input").focus();
+    }
+  }
+
+  function renderAgentEvent(e) {
+    switch (e.type) {
+      case "status":   return `_🔎 ${e.message}_\n\n`;
+      case "warning":  return `_⚠️ ${e.message}_\n\n`;
+      case "error":    return `\n\n**❌ ${e.message}**\n\n`;
+      case "context":  return e.chars ? `_gathered ${e.chars} chars of background_\n\n` : "";
+      case "directive":return `_🧭 steer: ${e.text}_\n\n`;
+      case "think":    return `\n\n### 🧠 Attempt ${e.iteration}\n`;
+      case "code":     return "```python\n" + (e.code || "") + "\n```\n";
+      case "run":      return "_▶ Running in the Docker sandbox…_\n";
+      case "run_result": {
+        let s = `\n**Run:** ${e.summary}\n`;
+        if (e.stdout) s += "```\n" + e.stdout.slice(0, 1500) + "\n```\n";
+        if (!e.ok && e.stderr) s += "```\n" + e.stderr.split("\n").slice(-6).join("\n") + "\n```\n";
+        if (e.error) s += `_${e.error}_\n`;
+        return s;
+      }
+      case "reflect": {
+        const v = e.verdict || {};
+        let s = `\n**🔬 Review:** score ${v.score} · ${v.done ? "done ✅" : "refining…"}\n`;
+        if (v.feedback) s += `_${v.feedback}_\n`;
+        return s;
+      }
+      case "final": {
+        let s = `\n\n---\n\n## ${e.success ? "✅ Best result (verified)" : "⚠️ Best attempt"}\n`;
+        if (e.answer) s += `\n**Answer:** ${e.answer}\n`;
+        if (e.output) s += `\n**Output:**\n\`\`\`\n${(e.output || "").slice(0, 2000)}\n\`\`\`\n`;
+        if (e.code)   s += `\n**Program:**\n\`\`\`python\n${e.code}\n\`\`\`\n`;
+        return s;
+      }
+      default: return "";
+    }
+  }
+
+  function toggleAgent() {
+    state.agentMode = !state.agentMode;
+    const btn = $("agentBtn");
+    btn.classList.toggle("active", state.agentMode);
+    btn.setAttribute("aria-pressed", state.agentMode ? "true" : "false");
+    const input = $("input");
+    if (input) input.placeholder = state.agentMode
+      ? "Give the agent a task — it writes code, runs it in a sandbox, and verifies…"
+      : (input.dataset.basePlaceholder || "Ask anything…");
+    if (state.agentMode) toast("Agent mode on — tasks run code in a Docker sandbox.", "");
   }
 
   function handleEvent(ev, h, getAns, setAns, scheduleRender) {
@@ -868,7 +979,7 @@
 
   // ---------- Init ----------
   async function init() {
-    applyTheme(document.documentElement.getAttribute("data-theme") || "light");
+    applyTheme(document.documentElement.getAttribute("data-theme") || "dark");
     try { if (localStorage.getItem("ara-sidebar") === "collapsed" && window.innerWidth > 880) $("app").classList.add("collapsed"); } catch {}
     try { state.cfg = await api.config(); } catch {}
     // Auth: when login is enabled, show the signed-in user + a sign-out button.
@@ -924,6 +1035,8 @@
     $("pdfInput").addEventListener("change", onPdfChosen);
     $("imDone").addEventListener("click", closeIngestModal);
     $("themeBtn").addEventListener("click", toggleTheme);
+    $("agentBtn").addEventListener("click", toggleAgent);
+    { const inp = $("input"); if (inp) inp.dataset.basePlaceholder = inp.placeholder; }
     $("modelSel").addEventListener("change", onModelChange);
     $("manageBtn").addEventListener("click", openPapers);
     $("pmClose").addEventListener("click", closePapers);
