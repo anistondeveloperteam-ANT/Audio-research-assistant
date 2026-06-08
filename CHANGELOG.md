@@ -13,6 +13,14 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Claude-style agent interface
+- When the agent works, it now renders a **step timeline** (like Claude's agent UI)
+  instead of flat markdown: each event is a card with an icon, a live
+  **spinner → checkmark** status, result badges (e.g. `OK · 0.5s`, `score 100`),
+  an expandable body, and a prominent **verified result** card at the end. Code shows
+  in the IDE-style panels; steps animate in. Pure client-side rendering (no full
+  re-render per token).
+
 ### Agent is automatic now (no toggle) + polished user chip
 - Removed the manual **Agent** button. Coding/solve tasks ("implement…", "benchmark…",
   "write a function…", "find the fastest algorithm…") **auto-route** to the autonomous

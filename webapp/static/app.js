@@ -646,19 +646,8 @@
       if (h.elapsed) h.elapsed.textContent = ((performance.now() - genStart) / 1000).toFixed(1) + "s";
     }, 100);
 
-    let md = "_🤖 This looks like a coding task — writing code, running it in a sandbox, and verifying…_\n\n";
-    let scheduled = false;
-    const render = () => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        if (h.md.style.display === "none") { h.md.style.display = ""; h.statusEl.style.display = "none"; }
-        renderMarkdown(h.md, md);
-        scrollToBottom();
-      });
-    };
-    const append = (s) => { if (s) { md += s; render(); } };
+    h.md.style.display = ""; h.statusEl.style.display = "none";
+    const handle = makeAgentUI(h.md);
 
     const controller = new AbortController();
     state.abort = controller;
@@ -679,16 +668,14 @@
           const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
           if (!line) continue;
           let e; try { e = JSON.parse(line); } catch { continue; }
-          append(renderAgentEvent(e));
+          handle(e);
         }
       }
     } catch (err) {
-      append(err.name === "AbortError" ? "\n\n_⏹ Stopped._" : "\n\n_Connection error: " + (err.message || "") + "_");
+      handle({ type: "error", message: err.name === "AbortError" ? "Stopped." : ("Connection error: " + (err.message || "")) });
     } finally {
       state.abort = null;
       clearInterval(timer);
-      h.md.style.display = ""; h.statusEl.style.display = "none";
-      renderMarkdown(h.md, md || "_(no output)_");
       finalizeTools(h, [], { seconds: (performance.now() - genStart) / 1000, model: "agent" });
       setStreaming(false);
       scrollToBottom();
@@ -696,39 +683,102 @@
     }
   }
 
-  function renderAgentEvent(e) {
-    switch (e.type) {
-      case "status":   return `_🔎 ${e.message}_\n\n`;
-      case "warning":  return `_⚠️ ${e.message}_\n\n`;
-      case "error":    return `\n\n**❌ ${e.message}**\n\n`;
-      case "context":  return e.chars ? `_gathered ${e.chars} chars of background_\n\n` : "";
-      case "directive":return `_🧭 steer: ${e.text}_\n\n`;
-      case "blocked":  return `\n**🛡️ Blocked by policy:** ${e.reason || ""}\n`;
-      case "think":    return `\n\n### 🧠 Attempt ${e.iteration}\n`;
-      case "code":     return "```python\n" + (e.code || "") + "\n```\n";
-      case "run":      return "_▶ Running in the Docker sandbox…_\n";
-      case "run_result": {
-        let s = `\n**Run:** ${e.summary}\n`;
-        if (e.stdout) s += "```\n" + e.stdout.slice(0, 1500) + "\n```\n";
-        if (!e.ok && e.stderr) s += "```\n" + e.stderr.split("\n").slice(-6).join("\n") + "\n```\n";
-        if (e.error) s += `_${e.error}_\n`;
-        return s;
+  // Claude-style agent timeline: each event becomes a step card with an icon, a
+  // live spinner -> checkmark status, badges, and an expandable body.
+  const A_ICON = {
+    code:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"/></svg>',
+    run:    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg>',
+    review: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>',
+    shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>',
+    error:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>',
+  };
+
+  function makeAgentUI(root) {
+    root.innerHTML = "";
+    root.classList.add("agent-run");
+    const lead = document.createElement("div");
+    lead.className = "agent-lead";
+    lead.innerHTML = '<span class="al-dot"></span> Coding task — writing code, running it in a sandbox, and verifying.';
+    root.appendChild(lead);
+    let runCard = null;
+
+    const note = (t) => { const d = document.createElement("div"); d.className = "agent-note"; d.textContent = t; root.appendChild(d); };
+    const setState = (card, s) => {
+      card.dataset.status = s;
+      card.querySelector(".astep-state").innerHTML =
+        s === "running" ? '<span class="astep-spin"></span>' : (s === "fail" ? "✕" : "✓");
+    };
+    const step = (icon, title, status) => {
+      const card = document.createElement("div");
+      card.className = "astep";
+      card.innerHTML =
+        '<div class="astep-head"><span class="astep-icon">' + icon + '</span>'
+        + '<span class="astep-title"></span><span class="astep-badge" style="display:none"></span>'
+        + '<span class="astep-state"></span></div><div class="astep-body" style="display:none"></div>';
+      card.querySelector(".astep-title").textContent = title;
+      setState(card, status || "done");
+      card.querySelector(".astep-head").addEventListener("click", () => {
+        const b = card.querySelector(".astep-body");
+        if (b.innerHTML.trim()) b.style.display = (b.style.display === "none" ? "" : "none");
+      });
+      root.appendChild(card);
+      return card;
+    };
+    const body = (card, html, open) => { const b = card.querySelector(".astep-body"); b.innerHTML = html; b.style.display = open ? "" : "none"; return b; };
+    const badge = (card, txt, kind) => { const b = card.querySelector(".astep-badge"); b.textContent = txt; b.style.display = ""; b.className = "astep-badge" + (kind ? " " + kind : ""); };
+    const codeInto = (parent, code, lang) => {
+      const w = document.createElement("div");
+      w.innerHTML = '<pre><code class="language-' + (lang || "python") + '">' + esc(code || "") + "</code></pre>";
+      parent.appendChild(w); enhanceCodeBlocks(w);
+    };
+    const outPre = (txt, err) => { const p = document.createElement("pre"); p.className = "astep-out" + (err ? " err" : ""); p.textContent = txt; return p; };
+
+    return function handle(e) {
+      switch (e.type) {
+        case "status": note(e.message); break;
+        case "context": if (e.chars) note("Gathered " + e.chars + " chars of background"); break;
+        case "warning": note("⚠ " + e.message); break;
+        case "directive": note("🧭 " + e.text); break;
+        case "think": {
+          const r = document.createElement("div"); r.className = "agent-round";
+          r.innerHTML = "<span>Attempt " + e.iteration + "</span>"; root.appendChild(r); break;
+        }
+        case "code": { const c = step(A_ICON.code, "Wrote a program", "done"); codeInto(body(c, "", true), e.code); break; }
+        case "run": { runCard = step(A_ICON.run, "Running in Docker sandbox", "running"); break; }
+        case "run_result": {
+          const c = runCard || step(A_ICON.run, "Ran in sandbox", "done");
+          setState(c, e.ok ? "done" : "fail");
+          c.querySelector(".astep-title").textContent = e.ok ? "Ran successfully" : "Run failed";
+          if (e.summary) badge(c, e.summary, e.ok ? "ok" : "bad");
+          const b = body(c, "", !e.ok);
+          if (e.stdout) b.appendChild(outPre(e.stdout));
+          if (!e.ok && e.stderr) b.appendChild(outPre(e.stderr.split("\n").slice(-8).join("\n"), true));
+          if (e.error) b.appendChild(outPre(e.error, true));
+          runCard = null; break;
+        }
+        case "reflect": {
+          const v = e.verdict || {};
+          const c = step(A_ICON.review, v.done ? "Reviewed — good to go" : "Reviewed — needs another pass", "done");
+          if (v.score != null) badge(c, "score " + v.score, v.done ? "ok" : "");
+          if (v.feedback) body(c, '<div class="astep-note">' + esc(v.feedback) + "</div>", false);
+          break;
+        }
+        case "blocked": { const c = step(A_ICON.shield, "Blocked by policy", "fail"); body(c, '<div class="astep-note err">' + esc(e.reason || "") + "</div>", true); break; }
+        case "error": { const c = step(A_ICON.error, "Error", "fail"); body(c, '<div class="astep-note err">' + esc(e.message || "") + "</div>", true); break; }
+        case "final": {
+          const card = document.createElement("div");
+          card.className = "agent-final " + (e.success ? "ok" : "warn");
+          const head = document.createElement("div"); head.className = "af-head";
+          head.textContent = e.success ? "✓ Best result — verified" : "⚠ Best attempt (not fully verified)";
+          card.appendChild(head);
+          if (e.answer) { const a = document.createElement("div"); a.className = "af-answer"; a.textContent = e.answer; card.appendChild(a); }
+          if (e.output) { const o = document.createElement("div"); o.className = "af-block"; o.innerHTML = '<div class="af-label">Output</div>'; o.appendChild(outPre(e.output)); card.appendChild(o); }
+          if (e.code) { const cc = document.createElement("div"); cc.className = "af-block"; cc.innerHTML = '<div class="af-label">Program</div>'; codeInto(cc, e.code); card.appendChild(cc); }
+          root.appendChild(card); break;
+        }
       }
-      case "reflect": {
-        const v = e.verdict || {};
-        let s = `\n**🔬 Review:** score ${v.score} · ${v.done ? "done ✅" : "refining…"}\n`;
-        if (v.feedback) s += `_${v.feedback}_\n`;
-        return s;
-      }
-      case "final": {
-        let s = `\n\n---\n\n## ${e.success ? "✅ Best result (verified)" : "⚠️ Best attempt"}\n`;
-        if (e.answer) s += `\n**Answer:** ${e.answer}\n`;
-        if (e.output) s += `\n**Output:**\n\`\`\`\n${(e.output || "").slice(0, 2000)}\n\`\`\`\n`;
-        if (e.code)   s += `\n**Program:**\n\`\`\`python\n${e.code}\n\`\`\`\n`;
-        return s;
-      }
-      default: return "";
-    }
+      scrollToBottom();
+    };
   }
 
 
