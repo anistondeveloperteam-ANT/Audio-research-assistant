@@ -42,10 +42,12 @@ def require_login(request: Request) -> None:
 
 
 app = FastAPI(title="Audio Research Assistant", dependencies=[Depends(require_login)])
-# Signs the session cookie. Set AUTH_SECRET_KEY in .env for stable, production sessions.
+# Signs the session cookie. By default the cookie is a *session* cookie (max_age=None):
+# it is cleared when the browser closes, so each new visit requires signing in again.
+# Set SESSION_MAX_AGE=<seconds> in .env to keep users logged in for that long instead.
 app.add_middleware(
     SessionMiddleware, secret_key=webauth.session_secret(),
-    same_site="lax", https_only=False, max_age=60 * 60 * 24 * 7,  # 1 week
+    same_site="lax", https_only=False, max_age=webauth.session_max_age(),
 )
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 

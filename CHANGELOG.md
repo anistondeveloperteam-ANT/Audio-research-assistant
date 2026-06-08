@@ -13,6 +13,14 @@ companion to the git history.
 
 ## 2026-06-08
 
+### Login required each visit + redesigned login page
+- The session cookie is now a **session cookie by default** (clears when the browser
+  closes), so users sign in every visit. `SESSION_MAX_AGE=<seconds>` keeps them
+  logged in for that long instead.
+- Rebuilt `/login` as a polished two-panel page: animated brand hero, segmented
+  Sign in / Sign up tabs with a sliding indicator, password show/hide, Caps-Lock
+  warning, loading spinner, and friendly errors.
+
 ### LLM is now OpenAI-only
 - Dropped the Ollama and OpenRouter providers. `streaming_provider.py` is a single
   **OpenAI** client (`OPENAI_API_KEY`, `OPENAI_MODEL`, optional `OPENAI_BASE_URL`);

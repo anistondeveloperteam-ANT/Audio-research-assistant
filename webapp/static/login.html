@@ -5,177 +5,227 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sign in · Audio Research Assistant</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <style>
-    :root {
-      --bg: #f6f7f9; --card: #ffffff; --text: #1b1f2a; --muted: #6b7280;
-      --border: #e5e7eb; --accent: #4f46e5; --accent-weak: #eef0fe;
-      --accent-ring: rgba(79,70,229,.28); --danger: #dc2626; --ok: #059669;
+    :root{
+      --bg:#0b0f1a; --panel:#0e1322; --card:rgba(20,26,42,.72); --card-solid:#141a2a;
+      --text:#eef1f7; --muted:#9aa3bd; --border:rgba(255,255,255,.10);
+      --accent:#6d7bff; --accent2:#9b6dff; --accent3:#34d7c8;
+      --ring:rgba(109,123,255,.45); --danger:#ff6b7d; --ok:#34d399; --field:rgba(255,255,255,.05);
     }
-    @media (prefers-color-scheme: dark) {
-      :root { --bg:#0e1220; --card:#171c2c; --text:#e7e9f2; --muted:#9aa1b5;
-              --border:#2a3146; --accent:#7c83ff; --accent-weak:rgba(124,131,255,.16);
-              --accent-ring:rgba(124,131,255,.34); }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family:Inter,system-ui,-apple-system,sans-serif; color:var(--text);
+      background:var(--bg); overflow:hidden;
     }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; min-height: 100vh; display: grid; place-items: center;
-      font-family: Inter, system-ui, -apple-system, sans-serif;
-      background:
-        radial-gradient(900px 500px at 50% -10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent),
-        var(--bg);
-      color: var(--text); padding: 24px;
-    }
-    .card {
-      width: 100%; max-width: 390px; background: var(--card);
-      border: 1px solid var(--border); border-radius: 18px; padding: 32px 30px;
-      box-shadow: 0 18px 50px rgba(15,23,42,.12);
-    }
-    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
-    .brand .logo { font-size: 26px; }
-    .brand h1 { font-size: 18px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
+    /* ---------- layout ---------- */
+    .wrap{display:grid; grid-template-columns:1.05fr .95fr; min-height:100vh}
+    @media (max-width:880px){ .wrap{grid-template-columns:1fr} .hero{display:none} }
 
-    /* Segmented Sign in / Sign up tabs */
-    .tabs { display: flex; background: var(--accent-weak); border-radius: 11px; padding: 4px; margin-bottom: 18px; }
-    .tab {
-      flex: 1; border: none; background: transparent; cursor: pointer; padding: 9px;
-      font: inherit; font-size: 13.5px; font-weight: 600; color: var(--muted);
-      border-radius: 8px; transition: all .15s;
+    /* ---------- left hero ---------- */
+    .hero{
+      position:relative; overflow:hidden; padding:56px 56px; display:flex;
+      flex-direction:column; justify-content:space-between;
+      background:linear-gradient(140deg,#141a33 0%,#0c1020 60%);
     }
-    .tab.active { background: var(--card); color: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .orb{position:absolute; border-radius:50%; filter:blur(60px); opacity:.55; animation:float 14s ease-in-out infinite}
+    .orb.a{width:420px;height:420px;background:radial-gradient(circle,#6d7bff,transparent 70%);top:-90px;left:-60px}
+    .orb.b{width:360px;height:360px;background:radial-gradient(circle,#9b6dff,transparent 70%);bottom:-80px;right:-40px;animation-delay:-4s}
+    .orb.c{width:300px;height:300px;background:radial-gradient(circle,#34d7c8,transparent 70%);top:40%;left:45%;animation-delay:-8s;opacity:.35}
+    @keyframes float{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(30px,-26px) scale(1.06)}66%{transform:translate(-22px,18px) scale(.96)}}
+    .hero-inner{position:relative; z-index:1}
+    .logo{display:flex; align-items:center; gap:12px; font-weight:800; font-size:19px; letter-spacing:-.01em}
+    .logo .mark{font-size:30px; filter:drop-shadow(0 4px 16px rgba(109,123,255,.6))}
+    .hero h2{font-size:40px; line-height:1.12; margin:26px 0 14px; font-weight:800; letter-spacing:-.02em;
+      background:linear-gradient(90deg,#fff,#c9cfff); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent}
+    .hero p.lead{color:#c4cae0; font-size:15.5px; line-height:1.6; max-width:430px; margin:0}
+    .feat{position:relative; z-index:1; display:grid; gap:14px; margin-top:auto}
+    .feat .row{display:flex; align-items:center; gap:13px; color:#d7dcf0; font-size:14px}
+    .feat .ic{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex:none;
+      background:rgba(255,255,255,.06); border:1px solid var(--border); font-size:17px}
+    .hero .foot{position:relative; z-index:1; color:#7c84a3; font-size:12px; margin-top:26px}
 
-    .sub { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
-    label { display: block; font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; }
-    input {
-      width: 100%; padding: 11px 13px; font-size: 14.5px; color: var(--text);
-      background: transparent; border: 1px solid var(--border); border-radius: 10px;
-      font-family: inherit; transition: border-color .15s, box-shadow .15s;
-    }
-    input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-ring); }
-    button.primary {
-      width: 100%; margin-top: 20px; padding: 12px; font-size: 14.5px; font-weight: 600;
-      color: #fff; background: var(--accent); border: none; border-radius: 10px;
-      cursor: pointer; font-family: inherit; transition: filter .15s, transform .05s;
-    }
-    button.primary:hover { filter: brightness(1.06); }
-    button.primary:active { transform: translateY(1px); }
-    button.primary:disabled { opacity: .6; cursor: progress; }
-    .msg { margin-top: 14px; font-size: 13px; min-height: 18px; text-align: center; }
-    .msg.error { color: var(--danger); } .msg.ok { color: var(--ok); }
-    .row-between { display: flex; justify-content: flex-end; margin-top: 8px; }
-    .linkbtn { background: none; border: none; color: var(--accent); font: inherit;
-               font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 0; }
-    .help {
-      margin-top: 16px; padding: 13px 14px; font-size: 12.8px; line-height: 1.55;
-      background: var(--accent-weak); border: 1px solid var(--border); border-radius: 11px;
-      color: var(--text);
-    }
-    .help code { background: rgba(127,127,127,.18); padding: 2px 6px; border-radius: 6px;
-                 font-size: 12px; word-break: break-all; }
-    .hidden { display: none; }
+    /* ---------- right auth ---------- */
+    .auth{display:grid; place-items:center; padding:32px; background:
+      radial-gradient(700px 420px at 70% -10%, rgba(109,123,255,.10), transparent), var(--panel)}
+    .card{
+      width:100%; max-width:392px; background:var(--card); backdrop-filter:blur(14px);
+      border:1px solid var(--border); border-radius:20px; padding:34px 32px;
+      box-shadow:0 30px 70px rgba(0,0,0,.45); animation:rise .55s cubic-bezier(.2,.7,.2,1) both}
+    @keyframes rise{from{opacity:0; transform:translateY(16px)} to{opacity:1; transform:none}}
+    .m-brand{display:none; align-items:center; gap:10px; font-weight:800; margin-bottom:18px}
+    @media (max-width:880px){ .m-brand{display:flex} .m-brand .mark{font-size:26px} }
+    .welcome{font-size:21px; font-weight:700; letter-spacing:-.01em; margin:0 0 4px}
+    .sub{color:var(--muted); font-size:13.5px; margin:0 0 20px}
+
+    .tabs{position:relative; display:flex; background:var(--field); border:1px solid var(--border);
+      border-radius:13px; padding:5px; margin-bottom:20px}
+    .tabs .pill{position:absolute; top:5px; bottom:5px; width:calc(50% - 5px); left:5px;
+      background:linear-gradient(135deg,var(--accent),var(--accent2)); border-radius:9px;
+      transition:left .28s cubic-bezier(.3,.8,.3,1); box-shadow:0 6px 18px rgba(109,123,255,.4)}
+    .tabs.signup .pill{left:calc(50%)}
+    .tab{flex:1; z-index:1; border:none; background:transparent; cursor:pointer; padding:9px;
+      font:inherit; font-size:13.5px; font-weight:600; color:var(--muted); transition:color .2s}
+    .tab.active{color:#fff}
+
+    .field{position:relative; margin-top:15px}
+    label{display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:7px; letter-spacing:.01em}
+    .inp{position:relative; display:flex; align-items:center}
+    input{width:100%; padding:12px 14px; font-size:14.5px; color:var(--text); background:var(--field);
+      border:1px solid var(--border); border-radius:11px; font-family:inherit; transition:border-color .15s, box-shadow .15s, background .15s}
+    input::placeholder{color:#6b7493}
+    input:focus{outline:none; border-color:var(--accent); background:rgba(109,123,255,.08); box-shadow:0 0 0 4px var(--ring)}
+    .eye{position:absolute; right:6px; border:none; background:transparent; cursor:pointer; color:var(--muted);
+      width:34px;height:34px; display:grid; place-items:center; border-radius:8px; font-size:15px}
+    .eye:hover{color:var(--text); background:rgba(255,255,255,.06)}
+    .caps{display:none; margin-top:7px; font-size:11.5px; color:#ffcf6b}
+    .caps.show{display:block}
+
+    .between{display:flex; justify-content:flex-end; margin-top:9px}
+    .linkbtn{background:none; border:none; color:var(--accent); font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; padding:0}
+    .linkbtn:hover{text-decoration:underline}
+
+    .submit{width:100%; margin-top:20px; padding:13px; font-size:14.5px; font-weight:700; color:#fff;
+      border:none; border-radius:12px; cursor:pointer; font-family:inherit; position:relative; overflow:hidden;
+      background:linear-gradient(135deg,var(--accent),var(--accent2)); box-shadow:0 10px 26px rgba(109,123,255,.4);
+      transition:transform .06s, filter .15s}
+    .submit:hover{filter:brightness(1.08)} .submit:active{transform:translateY(1px)}
+    .submit:disabled{opacity:.75; cursor:progress}
+    .spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;
+      display:inline-block; vertical-align:-3px; margin-right:8px; animation:sp .7s linear infinite}
+    @keyframes sp{to{transform:rotate(360deg)}}
+
+    .msg{margin-top:14px; font-size:13px; min-height:18px; text-align:center; transition:opacity .2s}
+    .msg.error{color:var(--danger)} .msg.ok{color:var(--ok)}
+    .help{margin-top:16px; padding:13px 15px; font-size:12.6px; line-height:1.6; color:#d7dcf0;
+      background:var(--field); border:1px solid var(--border); border-radius:12px}
+    .help code{background:rgba(0,0,0,.35); padding:2px 7px; border-radius:6px; font-size:11.6px; color:#bfe9ff; word-break:break-all}
+    .hidden{display:none !important}
   </style>
 </head>
 <body>
-  <form class="card" id="form" autocomplete="on">
-    <div class="brand"><span class="logo">🔊</span><h1>Audio Research Assistant</h1></div>
+  <div class="wrap">
+    <!-- LEFT: brand hero -->
+    <aside class="hero">
+      <span class="orb a"></span><span class="orb b"></span><span class="orb c"></span>
+      <div class="hero-inner">
+        <div class="logo"><span class="mark">🔊</span> Audio Research Assistant</div>
+        <h2>Research, answered —<br/>with sources you can trust.</h2>
+        <p class="lead">Ask anything about audio &amp; speech. It searches your papers and the
+          whole web — arXiv, patents, GitHub, Wikipedia — and replies with cited, runnable answers.</p>
+      </div>
+      <div class="feat">
+        <div class="row"><span class="ic">🌐</span> Searches everywhere — papers, web, code &amp; patents</div>
+        <div class="row"><span class="ic">🎯</span> Grounded, cited answers — never guesses</div>
+        <div class="row"><span class="ic">🔒</span> Your conversations stay private to you</div>
+      </div>
+      <div class="foot">© Audio Research Assistant</div>
+    </aside>
 
-    <div class="tabs" role="tablist">
-      <button type="button" class="tab active" id="tabLogin" role="tab">Sign in</button>
-      <button type="button" class="tab" id="tabSignup" role="tab">Sign up</button>
-    </div>
+    <!-- RIGHT: auth card -->
+    <main class="auth">
+      <form class="card" id="form" autocomplete="on">
+        <div class="m-brand"><span class="mark">🔊</span> Audio Research Assistant</div>
 
-    <p class="sub" id="subtitle">Sign in with your account.</p>
+        <div class="tabs" id="tabs">
+          <span class="pill"></span>
+          <button type="button" class="tab active" id="tabLogin">Sign in</button>
+          <button type="button" class="tab" id="tabSignup">Sign up</button>
+        </div>
 
-    <label for="user_id">User ID</label>
-    <input id="user_id" name="username" type="text" autocomplete="username"
-           autocapitalize="none" spellcheck="false" required autofocus />
+        <h1 class="welcome" id="welcome">Welcome back</h1>
+        <p class="sub" id="subtitle">Sign in to continue to your workspace.</p>
 
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required />
+        <div class="field">
+          <label for="user_id">User ID</label>
+          <div class="inp">
+            <input id="user_id" name="username" type="text" placeholder="e.g. anjan"
+                   autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus />
+          </div>
+        </div>
 
-    <div id="confirmWrap" class="hidden">
-      <label for="confirm">Confirm password</label>
-      <input id="confirm" type="password" autocomplete="new-password" />
-    </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <div class="inp">
+            <input id="password" name="password" type="password" placeholder="••••••••"
+                   autocomplete="current-password" required />
+            <button type="button" class="eye" id="eye" aria-label="Show password" title="Show / hide">👁️</button>
+          </div>
+          <div class="caps" id="caps">⚠️ Caps Lock is on</div>
+        </div>
 
-    <div class="row-between" id="forgotRow">
-      <button type="button" class="linkbtn" id="forgotLink">Forgot password?</button>
-    </div>
+        <div class="field hidden" id="confirmField">
+          <label for="confirm">Confirm password</label>
+          <div class="inp"><input id="confirm" type="password" placeholder="Repeat password" autocomplete="new-password" /></div>
+        </div>
 
-    <button type="submit" class="primary" id="submit">Sign in</button>
-    <div class="msg" id="msg"></div>
+        <div class="between" id="forgotRow">
+          <button type="button" class="linkbtn" id="forgotLink">Forgot password?</button>
+        </div>
 
-    <div class="help hidden" id="forgotHelp">
-      For security, passwords can't be reset from this screen. Ask your administrator
-      to set a new one with:<br /><br />
-      <code>python -m backend.auth.users passwd YOUR_USER_ID</code>
-    </div>
-  </form>
+        <button type="submit" class="submit" id="submit">Sign in</button>
+        <div class="msg" id="msg"></div>
+
+        <div class="help hidden" id="forgotHelp">
+          For security, passwords can't be reset from this screen. Ask your administrator to set a new one:<br/><br/>
+          <code>python -m backend.auth.users passwd YOUR_USER_ID</code>
+        </div>
+      </form>
+    </main>
+  </div>
 
   <script>
     const $ = (id) => document.getElementById(id);
-    const form = $('form'), msg = $('msg'), submit = $('submit'), subtitle = $('subtitle');
-    const confirmWrap = $('confirmWrap'), forgotRow = $('forgotRow'), forgotHelp = $('forgotHelp');
-    const tabLogin = $('tabLogin'), tabSignup = $('tabSignup');
-    let mode = 'login';        // 'login' | 'signup'
-    let signupAllowed = true;  // updated from /api/me
+    const form=$('form'), msg=$('msg'), submit=$('submit'), tabs=$('tabs');
+    const welcome=$('welcome'), subtitle=$('subtitle'), confirmField=$('confirmField'), forgotRow=$('forgotRow'), forgotHelp=$('forgotHelp');
+    const pwd=$('password');
+    let mode='login', signupAllowed=true;
 
-    fetch('/api/me').then(r => r.json()).then(d => {
-      signupAllowed = (d.signup !== false);
-    }).catch(() => {});
+    fetch('/api/me').then(r=>r.json()).then(d=>{ signupAllowed = (d.signup!==false); }).catch(()=>{});
 
-    function setMode(m) {
-      mode = m;
-      const login = m === 'login';
-      tabLogin.classList.toggle('active', login);
-      tabSignup.classList.toggle('active', !login);
-      subtitle.textContent = login ? 'Sign in with your account.' : 'Create a new account.';
+    function setMode(m){
+      mode=m; const login = m==='login';
+      tabs.classList.toggle('signup', !login);
+      $('tabLogin').classList.toggle('active', login);
+      $('tabSignup').classList.toggle('active', !login);
+      welcome.textContent = login ? 'Welcome back' : 'Create your account';
+      subtitle.textContent = login ? 'Sign in to continue to your workspace.' : 'Set a user ID and password to get started.';
       submit.textContent = login ? 'Sign in' : 'Create account';
-      confirmWrap.classList.toggle('hidden', login);
+      confirmField.classList.toggle('hidden', login);
       forgotRow.classList.toggle('hidden', !login);
       forgotHelp.classList.add('hidden');
-      $('password').autocomplete = login ? 'current-password' : 'new-password';
-      msg.textContent = ''; msg.className = 'msg';
+      pwd.autocomplete = login ? 'current-password' : 'new-password';
+      msg.textContent=''; msg.className='msg';
     }
-    tabLogin.addEventListener('click', () => setMode('login'));
-    tabSignup.addEventListener('click', () => setMode('signup'));
-    $('forgotLink').addEventListener('click', () => forgotHelp.classList.toggle('hidden'));
+    $('tabLogin').onclick=()=>setMode('login');
+    $('tabSignup').onclick=()=>setMode('signup');
+    $('forgotLink').onclick=()=>forgotHelp.classList.toggle('hidden');
 
-    form.addEventListener('submit', async (e) => {
+    // password show / hide
+    $('eye').onclick=()=>{ pwd.type = pwd.type==='password' ? 'text':'password'; $('eye').textContent = pwd.type==='password'?'👁️':'🙈'; };
+    // caps-lock warning
+    pwd.addEventListener('keyup', e => $('caps').classList.toggle('show', e.getModifierState && e.getModifierState('CapsLock')));
+
+    form.addEventListener('submit', async (e)=>{
       e.preventDefault();
-      const user_id = $('user_id').value.trim();
-      const password = $('password').value;
-      if (!user_id || !password) return;
-      if (mode === 'signup') {
-        if ($('confirm').value !== password) {
-          msg.className = 'msg error'; msg.textContent = 'Passwords do not match.'; return;
-        }
-        if (!signupAllowed) {
-          msg.className = 'msg error';
-          msg.textContent = 'Sign-ups are disabled. Ask an admin to create your account.';
-          return;
-        }
+      const user_id=$('user_id').value.trim(), password=pwd.value;
+      if(!user_id||!password) return;
+      if(mode==='signup'){
+        if($('confirm').value!==password){ msg.className='msg error'; msg.textContent='Passwords do not match.'; return; }
+        if(!signupAllowed){ msg.className='msg error'; msg.textContent='Sign-ups are disabled. Ask an admin to create your account.'; return; }
       }
-      submit.disabled = true;
-      msg.className = 'msg'; msg.textContent = mode === 'login' ? 'Signing in…' : 'Creating account…';
-      try {
-        const res = await fetch('/api/' + (mode === 'login' ? 'login' : 'signup'), {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id, password }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.ok) {
-          msg.className = 'msg ok'; msg.textContent = 'Welcome! Loading…';
-          window.location.href = '/';
-        } else {
-          msg.className = 'msg error';
-          msg.textContent = data.error || (mode === 'login' ? 'Sign in failed.' : 'Could not create account.');
-          submit.disabled = false;
-        }
-      } catch (err) {
-        msg.className = 'msg error'; msg.textContent = 'Network error. Try again.';
-        submit.disabled = false;
-      }
+      submit.disabled=true; const label=submit.textContent;
+      submit.innerHTML='<span class="spin"></span>'+(mode==='login'?'Signing in…':'Creating…');
+      msg.className='msg'; msg.textContent='';
+      try{
+        const res=await fetch('/api/'+(mode==='login'?'login':'signup'),{
+          method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user_id,password})});
+        const data=await res.json().catch(()=>({}));
+        if(res.ok && data.ok){ msg.className='msg ok'; msg.textContent='Welcome! Loading…'; window.location.href='/'; }
+        else{ msg.className='msg error'; msg.textContent=data.error||(mode==='login'?'Sign in failed.':'Could not create account.');
+              submit.disabled=false; submit.textContent=label; }
+      }catch(err){ msg.className='msg error'; msg.textContent='Network error. Try again.'; submit.disabled=false; submit.textContent=label; }
     });
   </script>
 </body>

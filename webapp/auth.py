@@ -48,6 +48,19 @@ def session_secret() -> str:
     return secret
 
 
+def session_max_age():
+    """Cookie lifetime in seconds, or None for a session cookie (cleared when the
+    browser closes — the default, so each visit requires signing in)."""
+    raw = (os.getenv("SESSION_MAX_AGE") or "").strip()
+    if not raw:
+        return None
+    try:
+        secs = int(raw)
+        return secs if secs > 0 else None
+    except ValueError:
+        return None
+
+
 def current_user(request: Request) -> str:
     """The signed-in user id, or the shared 'local' user when auth is disabled."""
     if not auth_enabled():
