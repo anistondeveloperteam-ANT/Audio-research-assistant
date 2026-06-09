@@ -111,8 +111,7 @@ def _evidence_header(n: int, item: Dict[str, Any]) -> str:
 
 # How much of each source's text the model actually reads. Bigger = more accurate,
 # deeper answers (and enough method detail to write code), at higher token cost.
-# Tuned for a good cost/quality balance; raise it if you want deeper reads.
-EVIDENCE_CHARS_PER_SOURCE = int(os.getenv("EVIDENCE_CHARS_PER_SOURCE", "2200"))
+EVIDENCE_CHARS_PER_SOURCE = int(os.getenv("EVIDENCE_CHARS_PER_SOURCE", "3500"))
 
 
 def format_evidence(sources: List[Dict[str, Any]], max_chars: int = EVIDENCE_CHARS_PER_SOURCE) -> str:
@@ -153,9 +152,9 @@ SOURCE_MAX = int(os.getenv("SOURCE_MAX", "12"))
 
 # How many external sources to keep (accuracy > brevity — keep more), and how many
 # tokens the answer may use (large enough for full code / simulations).
-EXTERNAL_TOP_K = int(os.getenv("EXTERNAL_TOP_K", "10"))
-ANSWER_MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "8000"))  # a cap only; costs nothing unless used
-AGENTIC_EXTRA_SEARCH_K = int(os.getenv("AGENTIC_EXTRA_SEARCH_K", "4"))
+EXTERNAL_TOP_K = int(os.getenv("EXTERNAL_TOP_K", "20"))
+ANSWER_MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "8000"))  # room for full code, no truncation
+AGENTIC_EXTRA_SEARCH_K = int(os.getenv("AGENTIC_EXTRA_SEARCH_K", "8"))
 
 
 def _score(r: Dict[str, Any]) -> float:
