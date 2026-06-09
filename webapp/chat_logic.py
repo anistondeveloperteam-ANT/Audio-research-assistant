@@ -49,6 +49,13 @@ def local_rag_enabled() -> bool:
     return (os.getenv("ENABLE_LOCAL_RAG", "false") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Back-compat constant (read once after .env is loaded).
 ENABLE_LOCAL_RAG = local_rag_enabled()
 
@@ -190,6 +197,116 @@ AGENTIC_EXTRA_SEARCH_K = int(os.getenv("AGENTIC_EXTRA_SEARCH_K", "8"))
 # just the literal query. Set DEEP_SEARCH_SUBQUERIES=0 to disable.
 DEEP_SEARCH_SUBQUERIES = int(os.getenv("DEEP_SEARCH_SUBQUERIES", "3"))
 DEEP_SUBQUERY_TOP_K = int(os.getenv("DEEP_SUBQUERY_TOP_K", "6"))
+
+# Saved-answer reuse: exact/similar questions can be answered from SQLite memory
+# without spending LLM or search tokens. Defaults are intentionally conservative.
+ANSWER_CACHE_FRESHNESS_TERMS = (
+    "latest", "current", "currently", "today", "tonight", "tomorrow",
+    "yesterday", "now", "recent", "newest", "this week", "this month",
+    "this year",
+)
+
+
+def answer_cache_enabled() -> bool:
+    return _env_flag("ENABLE_ANSWER_CACHE", True)
+
+
+def answer_cache_min_similarity() -> float:
+    # High floor: lexical similarity alone is unreliable (a swap like "A vs B" can
+    # score 0.95), so we require near-exact lexical OR a semantic match + the
+    # unsafe_to_reuse guard in the store.
+    try:
+        return max(0.92, min(1.0, float(os.getenv("ANSWER_CACHE_MIN_SIMILARITY", "0.97"))))
+    except ValueError:
+        return 0.97
+
+
+def answer_cache_semantic_enabled() -> bool:
+    return _env_flag("ENABLE_ANSWER_CACHE_SEMANTIC", True)
+
+
+def answer_cache_min_semantic() -> float:
+    try:
+        return max(0.80, min(1.0, float(os.getenv("ANSWER_CACHE_MIN_SEMANTIC", "0.88"))))
+    except ValueError:
+        return 0.88
+
+
+def _query_embedding(question: str):
+    """(vector, meta) for semantic cache matching, or (None, None) on any failure
+    (missing GEMINI_API_KEY, missing deps, network error) — falls back to lexical."""
+    if not answer_cache_semantic_enabled():
+        return None, None
+    try:
+        from backend.common.embeddings import embed_query, provider as _emb_provider
+        vec = embed_query(question)
+        if not vec:
+            return None, None
+        meta = f"{_emb_provider()}:{os.getenv('EMBEDDING_MODEL', '')}:{len(vec)}"
+        return vec, meta
+    except Exception:
+        return None, None
+
+
+def answer_cache_max_age_seconds() -> float | None:
+    try:
+        days = float(os.getenv("ANSWER_CACHE_MAX_AGE_DAYS", "30"))
+    except ValueError:
+        days = 30.0
+    if days <= 0:
+        return None
+    return days * 24 * 60 * 60
+
+
+def answer_cache_limit() -> int:
+    try:
+        return max(20, min(1000, int(os.getenv("ANSWER_CACHE_CANDIDATE_LIMIT", "200"))))
+    except ValueError:
+        return 200
+
+
+_FRESHNESS_RE = re.compile(
+    r"\b(20\d{2}|latest|current|currently|today|tonight|tomorrow|yesterday|now|"
+    r"recent|recently|newest|new(est)?|as of|up[- ]to[- ]date|state[- ]of[- ]the[- ]art|"
+    r"this (week|month|year|quarter)|release[ds]?|version)\b"
+)
+
+
+def _freshness_sensitive(question: str) -> bool:
+    """Time-sensitive questions bypass the cache so they always re-search.
+    Errs toward bypassing (a missed cache is cheaper than a stale 'latest' answer)."""
+    if _env_flag("ANSWER_CACHE_ALLOW_FRESHNESS_QUERIES", False):
+        return False
+    return bool(_FRESHNESS_RE.search((question or "").lower()))
+
+
+def _strip_answer_footers(text: str) -> str:
+    """Cache the answer BODY only — drop the appended auto-review / verification
+    footers (they describe a live run and shouldn't be replayed as part of the answer)."""
+    cut = len(text or "")
+    for marker in ("\n\n**Auto-review:**", "\n\nVerification:"):
+        i = (text or "").find(marker)
+        if i != -1:
+            cut = min(cut, i)
+    return (text or "")[:cut].strip()
+
+
+def _cacheable_answer(question: str, answer: str, sources: List[Dict[str, Any]]) -> bool:
+    if not answer_cache_enabled() or _freshness_sensitive(question):
+        return False
+    text = (answer or "").strip()
+    if len(text) < 80:
+        return False
+    low = text.lower()
+    failure_markers = (
+        "answer generation failed",
+        "i couldn't find relevant information",
+        "no knowledge source is enabled",
+        "the language model isn't available",
+    )
+    if any(marker in low for marker in failure_markers):
+        return False
+    return bool(sources)
 
 
 def _score(r: Dict[str, Any]) -> float:
@@ -366,7 +483,38 @@ def stream_chat_events(
         return
 
     mem = memory()
+    user_id = mem.session_owner(session_id) or "local"
     mem.append_turn(session_id, "user", q)
+
+    # Embed the question ONCE (if semantic reuse is on); reused for lookup AND save.
+    query_emb, query_meta = (None, None)
+    cache_on = answer_cache_enabled() and not _freshness_sensitive(q)
+    if cache_on:
+        query_emb, query_meta = _query_embedding(q)
+        cached = mem.find_cached_answer(
+            user_id=user_id,
+            question=q,
+            min_similarity=answer_cache_min_similarity(),
+            query_embedding=query_emb,
+            query_meta=query_meta,
+            min_semantic=answer_cache_min_semantic(),
+            max_age_seconds=answer_cache_max_age_seconds(),
+            limit=answer_cache_limit(),
+        )
+        if cached:
+            sources = cached.get("sources") or []
+            answer = cached.get("answer") or ""
+            pct = int(float(cached.get("similarity", 0.0)) * 100)
+            kind = cached.get("match_kind", "lexical")
+            mem.record_answer_cache_hit(int(cached["id"]))
+            mem.append_turn(session_id, "assistant", answer, sources=sources)
+            yield {"type": "status", "message":
+                   f"Reusing a saved answer from memory ({pct}% {kind} match)."}
+            yield {"type": "sources", "sources": sources}
+            yield {"type": "token", "text": answer}
+            yield {"type": "done", "answer": answer, "cached": True,
+                   "similarity": pct, "match_kind": kind}
+            return
 
     items: List[Dict[str, Any]] = []
     local_on = local_rag_enabled()
@@ -424,6 +572,12 @@ def stream_chat_events(
     history = recent[:-1] if recent and recent[-1]["role"] == "user" else recent
 
     answer_parts: List[str] = []
+    verdict: Dict[str, Any] = {}
+    gen_failed = False
+    provider_ok = False
+    loop_run_failed = False     # generated Python failed in the sandbox
+    answer_rewritten = False    # auto-review replaced the answer post-verification
+    clean_body = ""             # the answer body to cache (no review/verify footers)
     try:
         provider = get_provider()
         if not provider.is_available:
@@ -434,8 +588,8 @@ def stream_chat_events(
             answer_parts.append(note)
             yield {"type": "token", "text": note}
         elif agentic_loop_enabled():
+            provider_ok = True
             answer = ""
-            verdict: Dict[str, Any] = {}
             run_info: Dict[str, Any] | None = None
             rounds_done = 0
             for round_no in range(1, max_verify_rounds() + 1):
@@ -513,6 +667,7 @@ def stream_chat_events(
                 run_failed = bool(run_info and run_info.get("attempted") and not run_info.get("ok"))
                 if run_failed and not verdict.get("feedback"):
                     verdict["feedback"] = "Generated Python did not run successfully; fix the code and rerun it."
+                loop_run_failed = run_failed
 
                 if (verification_passed(verdict) and not run_failed) or round_no >= max_verify_rounds():
                     break
@@ -568,10 +723,12 @@ def stream_chat_events(
                                 system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS, temperature=0.3)
                             if improved.strip():
                                 answer = improved
+                                answer_rewritten = True
                         except Exception:
                             pass
                     review_note = _review_footer(rev)
 
+            clean_body = answer or ""
             final_answer = (answer or "(no answer)") + review_note + verification_footer(
                 verdict=verdict,
                 rounds=rounds_done,
@@ -580,6 +737,7 @@ def stream_chat_events(
             answer_parts.append(final_answer)
             yield {"type": "token", "text": final_answer}
         else:
+            provider_ok = True
             yield {"type": "status", "message": "Writing the answer..."}
             evidence = format_evidence(items)
             user_msg = build_user_message(q, evidence)
@@ -589,7 +747,9 @@ def stream_chat_events(
             ):
                 answer_parts.append(chunk)
                 yield {"type": "token", "text": chunk}
+            clean_body = "".join(answer_parts)
     except Exception as exc:
+        gen_failed = True
         msg = f"\n\n_Answer generation failed: {exc}_"
         answer_parts.append(msg)
         yield {"type": "token", "text": msg}
@@ -597,4 +757,21 @@ def stream_chat_events(
     answer = "".join(answer_parts).strip() or "(no answer)"
     sources = _public_sources(items)
     mem.append_turn(session_id, "assistant", answer, sources=sources)
+
+    # Save for reuse ONLY when the generation truly succeeded: provider worked, no
+    # exception, the agentic answer passed verification AND its code didn't fail, and
+    # the answer wasn't rewritten post-verification. Cache the clean body (no footers).
+    verified = (not agentic_loop_enabled()) or (verification_passed(verdict) and not loop_run_failed)
+    body = (clean_body or "").strip() or _strip_answer_footers(answer)
+    if (cache_on and provider_ok and not gen_failed and verified
+            and not answer_rewritten and _cacheable_answer(q, body, sources)):
+        mem.cache_answer(
+            user_id=user_id,
+            session_id=session_id,
+            question=q,
+            answer=body,
+            sources=sources,
+            embedding=query_emb,
+            embedding_meta=query_meta,
+        )
     yield {"type": "done", "answer": answer}

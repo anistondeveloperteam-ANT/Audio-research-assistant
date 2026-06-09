@@ -357,6 +357,14 @@
       badge.title = "Answer time" + (meta.model ? " · " + esc(meta.model) : "");
       h.tools.appendChild(badge);
     }
+    // "From memory" badge when the answer was reused from the saved-answer cache.
+    if (h._cached) {
+      const mem = document.createElement("span");
+      mem.className = "speed-badge mem-badge";
+      mem.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg> From memory${h._cachedPct ? " · " + h._cachedPct + "%" : ""}`;
+      mem.title = "Reused a saved answer" + (h._cachedKind ? " (" + h._cachedKind + " match)" : "");
+      h.tools.appendChild(mem);
+    }
     const copy = document.createElement("button");
     copy.className = "tool-btn";
     copy.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg> Copy`;
@@ -910,6 +918,7 @@
         scheduleRender();
         break;
       case "done":
+        if (ev.cached) { h._cached = true; h._cachedPct = ev.similarity || 0; h._cachedKind = ev.match_kind || ""; }
         break;
     }
   }

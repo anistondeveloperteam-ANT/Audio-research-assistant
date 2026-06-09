@@ -30,15 +30,18 @@ Plus a sessions table tying them together.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 import uuid
+from collections import Counter
 from contextlib import contextmanager
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 
 # ----------------------------------------------------------------------
@@ -80,6 +83,30 @@ CREATE TABLE IF NOT EXISTS facts (
 
 CREATE INDEX IF NOT EXISTS idx_facts_scope_session
     ON facts(scope, session_id);
+
+CREATE TABLE IF NOT EXISTS answer_cache (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id               TEXT NOT NULL DEFAULT 'local',
+    session_id            TEXT NOT NULL DEFAULT '',
+    question              TEXT NOT NULL,
+    normalized_question   TEXT NOT NULL,
+    question_tokens_json  TEXT NOT NULL,
+    answer                TEXT NOT NULL,
+    sources_json          TEXT,
+    created_at            REAL NOT NULL,
+    updated_at            REAL NOT NULL,
+    last_used_at          REAL,
+    hit_count             INTEGER NOT NULL DEFAULT 0,
+    question_embedding    TEXT,
+    embedding_meta        TEXT,
+    UNIQUE (user_id, normalized_question)
+);
+
+CREATE INDEX IF NOT EXISTS idx_answer_cache_user_updated
+    ON answer_cache(user_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_answer_cache_user_norm
+    ON answer_cache(user_id, normalized_question);
 """
 
 
@@ -112,10 +139,172 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in cur.execute("PRAGMA table_info(sessions)").fetchall()}
     if "user_id" not in cols:
         cur.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'")
+    # Add semantic-cache columns to a pre-existing answer_cache table.
+    ac_cols = {r[1] for r in cur.execute("PRAGMA table_info(answer_cache)").fetchall()}
+    if ac_cols and "question_embedding" not in ac_cols:
+        cur.execute("ALTER TABLE answer_cache ADD COLUMN question_embedding TEXT")
+    if ac_cols and "embedding_meta" not in ac_cols:
+        cur.execute("ALTER TABLE answer_cache ADD COLUMN embedding_meta TEXT")
+    # Give upgraded DBs the same per-user dedup backstop as fresh ones: collapse any
+    # pre-existing duplicate (user_id, normalized_question) rows, then add the index.
+    if ac_cols:
+        try:
+            cur.execute("DELETE FROM answer_cache WHERE id NOT IN "
+                        "(SELECT MAX(id) FROM answer_cache GROUP BY user_id, normalized_question)")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_answer_cache_unique_user_norm "
+                        "ON answer_cache(user_id, normalized_question)")
+        except Exception:
+            pass
     current = cur.execute("PRAGMA user_version;").fetchone()[0]
     if current < SCHEMA_VERSION:
         cur.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
     conn.commit()
+
+
+_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "can", "could", "do",
+    "describe", "does", "explain", "for", "from", "give", "how", "i", "in",
+    "is", "it", "me", "my", "of", "on", "or", "please", "show", "tell",
+    "that", "the", "this", "to", "use", "using", "what", "when", "where",
+    "which", "why", "with", "you",
+}
+
+
+def normalize_question(text: str) -> str:
+    text = (text or "").lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def question_tokens(text: str) -> List[str]:
+    norm = normalize_question(text)
+    out = []
+    for tok in norm.split():
+        if len(tok) <= 1 or tok in _STOPWORDS:
+            continue
+        if len(tok) > 4 and tok.endswith("ing"):
+            tok = tok[:-3]
+        elif len(tok) > 4 and tok.endswith("ed"):
+            tok = tok[:-2]
+        elif len(tok) > 3 and tok.endswith("s"):
+            tok = tok[:-1]
+        out.append(tok)
+    return out
+
+
+def question_similarity(a: str, b: str) -> float:
+    """Cheap local similarity for cache reuse. No model/API call."""
+    na = normalize_question(a)
+    nb = normalize_question(b)
+    if not na or not nb:
+        return 0.0
+    if na == nb:
+        return 1.0
+
+    seq = SequenceMatcher(None, na, nb).ratio()
+    ta = question_tokens(na)
+    tb = question_tokens(nb)
+    if not ta or not tb:
+        return seq
+
+    ca = Counter(ta)
+    cb = Counter(tb)
+    shared = set(ca) & set(cb)
+    dot = sum(ca[t] * cb[t] for t in shared)
+    na_len = sum(v * v for v in ca.values()) ** 0.5
+    nb_len = sum(v * v for v in cb.values()) ** 0.5
+    cosine = dot / max(na_len * nb_len, 1e-9)
+    jaccard = len(set(ta) & set(tb)) / max(len(set(ta) | set(tb)), 1)
+
+    # Require both word overlap and phrasing similarity to avoid overly broad
+    # cache hits, but let exact-ish rephrases through.
+    return max(seq * 0.45 + cosine * 0.45 + jaccard * 0.10, min(seq, cosine))
+
+
+def unsafe_to_reuse(a: str, b: str) -> bool:
+    """Block reuse of a *different* question even when the similarity score is high.
+
+    A high lexical/semantic score does NOT mean the same question — e.g.
+    "A vs B" / "B vs A" (a swap) or "A100" / "H100" (an identifier change) score
+    near 1.0 yet have opposite/different answers. We err toward a cache MISS
+    (regenerate) over serving the wrong answer. Returns True if reuse is unsafe.
+    """
+    sa, sb = set(question_tokens(a)), set(question_tokens(b))
+    # Raw normalized tokens keep single-char entities (X, Y, A) and word order that
+    # the stemmer drops — essential for catching swaps and 1-letter entity changes.
+    ra, rb = normalize_question(a).split(), normalize_question(b).split()
+    # Tokens containing a digit are identifiers (a100, gpt-4, ipv6) — must match.
+    ids = lambda toks: {t for t in toks if any(c.isdigit() for c in t)}
+    if ids(ra) != ids(rb) or ids(sa) != ids(sb):
+        return True
+    # Same tokens, different order = an argument swap ("a vs b" / "b vs a").
+    if sorted(ra) == sorted(rb) and ra != rb:
+        return True
+    # A short, non-stopword distinguishing token differs (entity letters /
+    # abbreviations like A/B, TCP/UDP, GPT/BERT) — likely a different subject.
+    raw_diff = set(ra) ^ set(rb)
+    if any(len(t) <= 3 and t not in _STOPWORDS for t in raw_diff):
+        return True
+    if any(len(t) <= 3 for t in (sa ^ sb)):
+        return True
+    # Polarity flip: one side negates/contrasts and the other doesn't — opposite
+    # meaning despite a high similarity score ("with X" vs "without X",
+    # "advantages" vs "disadvantages", "stable" vs "unstable").
+    if (set(ra) & _NEG_WORDS) != (set(rb) & _NEG_WORDS):
+        return True
+    raw_all = set(ra) | set(rb)
+    for t in raw_diff:
+        for p in _NEG_PREFIXES:
+            if t.startswith(p) and len(t) > len(p) + 3 and t[len(p):] in raw_all:
+                return True
+    # Exactly one content word swapped between otherwise-identical questions almost
+    # always changes the answer (encoder/decoder, input/output, increase/decrease,
+    # list/dict, gaming/mining, km/miles). Err toward a miss over a wrong answer.
+    if len(sa - sb) == 1 and len(sb - sa) == 1:
+        return True
+    # Known antonym / contrast / unit groups referenced with DIFFERENT members.
+    for grp in _CONTRAST_GROUPS:
+        ga, gb = set(ra) & grp, set(rb) & grp
+        if ga and gb and ga != gb:
+            return True
+    return False
+
+
+_NEG_WORDS = {
+    "not", "no", "without", "never", "except", "none", "nor", "cannot", "cant",
+    "dont", "doesnt", "isnt", "arent", "wont", "vs", "versus",
+}
+_NEG_PREFIXES = ("dis", "un", "non", "anti", "ir", "im", "in")
+_CONTRAST_GROUPS = [frozenset(_g.split()) for _g in (
+    "increase decrease reduce raise lower amplify attenuate boost cut higher",
+    "minimum maximum min max smallest largest highest lowest",
+    "input output",
+    "encode decode encoder decoder encrypt decrypt encryption decryption encoding decoding",
+    "forward backward forwards backwards",
+    "analog digital analogue",
+    "lossless lossy",
+    "before after",
+    "append prepend",
+    "symmetric asymmetric",
+    "enable disable enabled disabled",
+    "upsampling downsampling upsample downsample upsampled downsampled",
+    "benefits drawbacks advantages disadvantages pros cons benefit drawback advantage disadvantage",
+    "synchronous asynchronous sync async",
+    "internal external",
+    "compression decompression compress decompress",
+    "km kilometer kilometers mile miles meter meters centimeter centimeters mm cm inch inches",
+)]
+
+
+def cosine_similarity(a: List[float], b: List[float]) -> float:
+    """Cosine similarity. embed_query() returns L2-normalized vectors, so this is a
+    dot product; we still divide by norms for safety against unnormalized inputs."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(x * x for x in b) ** 0.5
+    return dot / max(na * nb, 1e-9)
 
 
 # ----------------------------------------------------------------------
@@ -204,6 +393,10 @@ class MemoryStore:
         with self._conn() as conn:
             conn.execute(
                 "DELETE FROM facts WHERE scope = 'session' AND session_id = ?",
+                (session_id,),
+            )
+            conn.execute(
+                "DELETE FROM answer_cache WHERE session_id = ?",
                 (session_id,),
             )
             conn.execute(
@@ -325,6 +518,11 @@ class MemoryStore:
         harmless: get_turns orders by turn_index and append_turn uses MAX+1.
         """
         with self._conn() as conn:
+            user_turn = conn.execute(
+                "SELECT content FROM turns WHERE session_id = ? "
+                "AND turn_index = ? AND role = 'user'",
+                (session_id, turn_index),
+            ).fetchone()
             nxt = conn.execute(
                 "SELECT turn_index, role FROM turns "
                 "WHERE session_id = ? AND turn_index > ? "
@@ -334,6 +532,12 @@ class MemoryStore:
             indices = [turn_index]
             if nxt and nxt["role"] == "assistant":
                 indices.append(nxt["turn_index"])
+            if user_turn:
+                conn.execute(
+                    "DELETE FROM answer_cache WHERE normalized_question = ? "
+                    "AND user_id = (SELECT user_id FROM sessions WHERE id = ?)",
+                    (normalize_question(user_turn["content"]), session_id),
+                )
             placeholders = ",".join("?" * len(indices))
             cur = conn.execute(
                 f"DELETE FROM turns WHERE session_id = ? AND turn_index IN ({placeholders})",
@@ -353,6 +557,17 @@ class MemoryStore:
         Returns the number of rows deleted.
         """
         with self._conn() as conn:
+            user_rows = conn.execute(
+                "SELECT content FROM turns WHERE session_id = ? "
+                "AND turn_index >= ? AND role = 'user'",
+                (session_id, turn_index),
+            ).fetchall()
+            for row in user_rows:
+                conn.execute(
+                    "DELETE FROM answer_cache WHERE normalized_question = ? "
+                    "AND user_id = (SELECT user_id FROM sessions WHERE id = ?)",
+                    (normalize_question(row["content"]), session_id),
+                )
             cur = conn.execute(
                 "DELETE FROM turns WHERE session_id = ? AND turn_index >= ?",
                 (session_id, turn_index),
@@ -361,6 +576,154 @@ class MemoryStore:
                 "UPDATE sessions SET updated_at = ? WHERE id = ?",
                 (time.time(), session_id),
             )
+            return cur.rowcount
+
+    # ------- Answer cache --------------------------------------------
+    def cache_answer(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        question: str,
+        answer: str,
+        sources: Optional[List[Dict[str, Any]]] = None,
+        embedding: Optional[List[float]] = None,
+        embedding_meta: Optional[str] = None,
+    ) -> Optional[int]:
+        norm = normalize_question(question)
+        if not norm or not (answer or "").strip():
+            return None
+        now = time.time()
+        tokens = question_tokens(question)
+        user = user_id or "local"
+        # Only persist a vector together with its provider/model meta (a vector with
+        # no meta can't be safely compared later).
+        emb = json.dumps(embedding) if (embedding and embedding_meta) else None
+        with self._conn() as conn:
+            # One row per (user, normalized question): replace any prior copy
+            # (from this or any other session) so lookup and invalidation are
+            # consistently per-user.
+            conn.execute(
+                "DELETE FROM answer_cache WHERE user_id = ? AND normalized_question = ?",
+                (user, norm),
+            )
+            conn.execute(
+                "INSERT INTO answer_cache (user_id, session_id, question, "
+                "normalized_question, question_tokens_json, answer, sources_json, "
+                "created_at, updated_at, last_used_at, hit_count, "
+                "question_embedding, embedding_meta) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?)",
+                (
+                    user,
+                    session_id or "",
+                    question,
+                    norm,
+                    json.dumps(tokens),
+                    answer,
+                    json.dumps(sources) if sources else None,
+                    now,
+                    now,
+                    emb,
+                    embedding_meta if emb else None,
+                ),
+            )
+            row = conn.execute(
+                "SELECT id FROM answer_cache WHERE user_id = ? AND normalized_question = ?",
+                (user, norm),
+            ).fetchone()
+            return int(row["id"]) if row else None
+
+    def find_cached_answer(
+        self,
+        *,
+        user_id: str,
+        question: str,
+        min_similarity: float = 0.97,
+        query_embedding: Optional[List[float]] = None,
+        query_meta: Optional[str] = None,
+        min_semantic: float = 0.88,
+        max_age_seconds: Optional[float] = None,
+        limit: int = 200,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the best safely-reusable cached answer for this user, or None.
+
+        A candidate is reused only if it clears the lexical bar (`min_similarity`)
+        OR the semantic bar (`min_semantic`, when an embedding is available AND was
+        produced by the same provider/model as the cached vector) AND passes the
+        `unsafe_to_reuse` guard that blocks swaps/identifier changes.
+        """
+        now = time.time()
+        user = user_id or "local"
+        cutoff = None if max_age_seconds is None else now - max_age_seconds
+        params: List[Any] = [user]
+        sql = (
+            "SELECT id, session_id, question, answer, sources_json, updated_at, "
+            "last_used_at, hit_count, question_embedding, embedding_meta "
+            "FROM answer_cache WHERE user_id = ?"
+        )
+        if cutoff is not None:
+            sql += " AND updated_at >= ?"
+            params.append(cutoff)
+        sql += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(max(1, int(limit)))
+
+        best: Optional[Dict[str, Any]] = None
+        with self._conn() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+
+        for row in rows:
+            if unsafe_to_reuse(question, row["question"]):
+                continue
+            lex = question_similarity(question, row["question"])
+            sem = None
+            if (query_embedding and row["question_embedding"]
+                    and query_meta is not None and row["embedding_meta"] == query_meta):
+                try:
+                    sem = cosine_similarity(query_embedding, json.loads(row["question_embedding"]))
+                except Exception:
+                    sem = None
+            if not (lex >= min_similarity or (sem is not None and sem >= min_semantic)):
+                continue
+            score = max(lex, sem or 0.0)
+            if best is None or score > best["similarity"]:
+                d = dict(row)
+                d.pop("question_embedding", None)
+                d.pop("embedding_meta", None)
+                sj = d.pop("sources_json", None)
+                d["sources"] = json.loads(sj) if sj else []
+                d["similarity"] = float(score)
+                d["match_kind"] = ("semantic" if (sem is not None and sem >= min_semantic
+                                                  and sem >= lex) else "lexical")
+                best = d
+        return best
+
+    def record_answer_cache_hit(self, cache_id: int) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE answer_cache SET hit_count = hit_count + 1, "
+                "last_used_at = ? WHERE id = ?",
+                (time.time(), int(cache_id)),
+            )
+
+    def clear_answer_cache(
+        self,
+        *,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> int:
+        clauses = []
+        params: List[Any] = []
+        if user_id is not None:
+            clauses.append("user_id = ?")
+            params.append(user_id or "local")
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            params.append(session_id or "")
+        sql = "DELETE FROM answer_cache"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        with self._conn() as conn:
+            cur = conn.execute(sql, tuple(params))
             return cur.rowcount
 
     # ------- Facts ---------------------------------------------------
@@ -468,6 +831,7 @@ class MemoryStore:
         with self._conn() as conn:
             c = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
             t = conn.execute("SELECT COUNT(*) FROM turns").fetchone()[0]
+            a = conn.execute("SELECT COUNT(*) FROM answer_cache").fetchone()[0]
             g = conn.execute(
                 "SELECT COUNT(*) FROM facts WHERE scope = 'global'"
             ).fetchone()[0]
@@ -477,6 +841,7 @@ class MemoryStore:
         return {
             "sessions": c,
             "turns": t,
+            "answer_cache": a,
             "global_facts": g,
             "session_facts": s,
         }

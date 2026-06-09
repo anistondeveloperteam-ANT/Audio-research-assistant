@@ -512,6 +512,8 @@ body {
   border-radius: 8px; padding: 4px 9px; animation: rise .3s ease both;
 }
 .speed-badge svg { color: var(--accent-600); }
+.mem-badge { color: var(--text-soft); background: var(--surface-2); border-color: var(--border); }
+.mem-badge svg { color: var(--text-soft); }
 
 /* source cards lift a touch on hover */
 .source-card { transition: border-color .14s ease, box-shadow .14s ease, transform .14s ease; }

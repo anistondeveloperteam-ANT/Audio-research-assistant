@@ -224,6 +224,13 @@ def _clear_retrieval_caches(remove_turbovec_files: bool = False) -> None:
             ti.delete_index_files()
     except Exception:
         pass
+    # The local corpus changed, so previously saved answers may now be stale —
+    # invalidate the reuse cache so the next question re-searches.
+    try:
+        from webapp.chat_logic import memory
+        memory().clear_answer_cache()
+    except Exception:
+        pass
 
 
 # ----------------------------------------------------------------------

@@ -11,6 +11,25 @@ companion to the git history.
 
 ---
 
+## 2026-06-10
+
+### Saved-answer reuse (semantic cache) — finished + hardened
+- Reuse a prior answer for the same/very-similar question (per user) instead of
+  re-searching + re-calling the LLM. Matching is near-exact **lexical** (>=0.97) OR
+  **semantic** (embeddings via the existing Gemini embedder, cosine >=0.88, with a
+  provider/model tag so only comparable vectors match; graceful lexical fallback).
+- **Correctness guard** (`unsafe_to_reuse`): never serve a different question's
+  answer even at high similarity — blocks swaps ("A vs B"/"B vs A"), identifier/number
+  changes (A100/H100, GPT-4/GPT-5), short-entity subs (TCP/UDP), polarity/antonyms
+  (with/without, advantages/disadvantages, encoder/decoder, increase/decrease,
+  km/miles), and any single content-word substitution. Adversarially reviewed.
+- Caching is gated on real quality (verify verdict passed, code run didn't fail, not a
+  post-review rewrite) and stores the answer body only (footers stripped). Per-user
+  dedup; edits/deletes invalidate across the user's sessions; the cache is cleared when
+  local PDFs are ingested/deleted; time-sensitive questions ("latest", "2026", "state
+  of the art") always re-search. A **"From memory"** badge marks reused answers.
+- Schema migrated in place (v3) on existing DBs. 14 cache tests (8 new) + full suite pass.
+
 ## 2026-06-09
 
 ### Automatic peer review after every answer/code (AUTO_REVIEW)
