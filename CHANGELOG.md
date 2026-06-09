@@ -13,6 +13,11 @@ companion to the git history.
 
 ## 2026-06-09
 
+### Review action in the web UI
+- Every answer now has a **Review** button (next to Copy). It sends the answer to
+  `/api/review` and shows a structured peer review (summary, strengths, weaknesses,
+  questions, suggestions, scores, recommendation) as a new message. Verified live.
+
 ### Automated peer reviewer (idea from Awesome-AI-Scientist)
 - That repo is a reading list (no code); its useful concept is a **review system**.
   Added `backend/answering/reviewer.py` (original code): `review(text)` returns a

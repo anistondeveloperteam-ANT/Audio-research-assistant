@@ -19,6 +19,7 @@
   const api = {
     me: () => fetch("/api/me").then((r) => r.json()),
     logout: () => fetch("/api/logout", { method: "POST" }),
+    review: (text) => fetch("/api/review", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }).then((r) => r.json()),
     config: () => fetch("/api/config").then((r) => r.json()),
     sessions: () => fetch("/api/sessions").then((r) => r.json()),
     createSession: () => fetch("/api/sessions", { method: "POST" }).then((r) => r.json()),
@@ -363,6 +364,53 @@
       navigator.clipboard.writeText(h.md.innerText).then(() => toast("Answer copied"));
     });
     h.tools.appendChild(copy);
+
+    // "Review" — a structured peer review of this answer (or paste any text).
+    if (!meta || meta.model !== "review") {
+      const rev = document.createElement("button");
+      rev.className = "tool-btn";
+      rev.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> Review`;
+      rev.addEventListener("click", () => runReview(h, rev));
+      h.tools.appendChild(rev);
+    }
+  }
+
+  async function runReview(h, btn) {
+    if (state.streaming) { toast("Please wait for the answer to finish."); return; }
+    const text = (h.md.innerText || "").trim();
+    if (!text) { toast("Nothing to review yet."); return; }
+    const orig = btn.innerHTML;
+    btn.disabled = true; btn.textContent = "Reviewing…";
+    const rh = addAssistantMessage();
+    rh.statusText.textContent = "Reviewing the answer…";
+    try {
+      const r = await api.review(text);
+      rh.statusEl.style.display = "none"; rh.md.style.display = "";
+      renderMarkdown(rh.md, r && !r.error ? reviewToMarkdown(r)
+                    : "_Review failed: " + ((r && r.error) || "unknown error") + "_");
+    } catch (e) {
+      rh.statusEl.style.display = "none"; rh.md.style.display = "";
+      renderMarkdown(rh.md, "_Review failed: " + (e.message || "") + "_");
+    } finally {
+      btn.disabled = false; btn.innerHTML = orig;
+      scrollToBottom();
+    }
+  }
+
+  function reviewToMarkdown(r) {
+    const list = (a) => (a && a.length) ? a.map((x) => "- " + x).join("\n") : "_none_";
+    const sc = r.scores || {};
+    const scoreStr = Object.keys(sc).map((k) => `${k} ${sc[k]}`).join(" · ");
+    let md = "### Review\n";
+    if (r.summary) md += `**Summary.** ${r.summary}\n\n`;
+    if (r.recommendation) md += `**Recommendation:** ${r.recommendation}` +
+      (r.confidence ? ` (confidence ${r.confidence}/5)` : "") + "\n\n";
+    if (scoreStr) md += `**Scores:** ${scoreStr}\n\n`;
+    md += `**Strengths**\n${list(r.strengths)}\n\n`;
+    md += `**Weaknesses**\n${list(r.weaknesses)}\n\n`;
+    if (r.questions && r.questions.length) md += `**Questions**\n${list(r.questions)}\n\n`;
+    md += `**Suggestions**\n${list(r.suggestions)}\n`;
+    return md;
   }
 
   // ----- per-query source navigation -----

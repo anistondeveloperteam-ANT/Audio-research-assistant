@@ -321,3 +321,18 @@ def agent(body: dict = Body(...)):
             yield json.dumps(event) + "\n"
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+# ----------------------------------------------------------------------
+# Review: structured peer review of an answer or pasted text
+# ----------------------------------------------------------------------
+@app.post("/api/review")
+def api_review(body: dict = Body(...)):
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "text is required"}, status_code=400)
+    try:
+        from backend.answering.reviewer import review
+        return review(text)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
