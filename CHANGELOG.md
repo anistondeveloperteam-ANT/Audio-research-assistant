@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-09
 
+### Token economy — big cost reduction
+- Trimmed the token-heavy defaults: `AGENTIC_MAX_VERIFY_ROUNDS` 3→1 (each round
+  re-sends all evidence), `EXTERNAL_TOP_K` 20→10, `EVIDENCE_CHARS_PER_SOURCE`
+  3500→2200, `AGENTIC_EXTRA_SEARCH_K` 8→4. Roughly cuts input tokens per question
+  by ~60–75% and LLM calls per question by ~50%.
+- Documented the cheapest setup in `.env.example` (use deepseek-v4-flash or
+  gpt-4o-mini instead of a reasoning model; set `ENABLE_AGENTIC_ANSWER_LOOP=false`
+  for one-call answers; prompt/context caching already makes the system prompt cheap).
+
 ### Review action in the web UI
 - Every answer now has a **Review** button (next to Copy). It sends the answer to
   `/api/review` and shows a structured peer review (summary, strengths, weaknesses,

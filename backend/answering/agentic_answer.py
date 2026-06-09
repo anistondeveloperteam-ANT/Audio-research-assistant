@@ -26,7 +26,7 @@ def agentic_loop_enabled() -> bool:
 
 def max_verify_rounds() -> int:
     try:
-        return max(1, min(5, int(os.getenv("AGENTIC_MAX_VERIFY_ROUNDS", "3"))))
+        return max(1, min(5, int(os.getenv("AGENTIC_MAX_VERIFY_ROUNDS", "1"))))
     except ValueError:
         return 3
 
