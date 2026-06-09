@@ -13,6 +13,14 @@ companion to the git history.
 
 ## 2026-06-09
 
+### Added 3 project-fit dev-tooling files from ECC (no bulk install)
+- `.claude/agents/fastapi-reviewer.md` — reviews FastAPI routes, async/streaming
+  (SSE/NDJSON), validation, auth/session, and SSRF/secret safety.
+- `.claude/skills/rag-retrieval-review/SKILL.md` — checklist for retrieval/RAG changes
+  (grounding, citations, evidence budget, freshness).
+- `.claude/skills/research-first-development/SKILL.md` — research-before-implement loop.
+  These are dev-workflow aids (not app runtime); the rest of ECC stays out per CLAUDE.md.
+
 ### Autonomous deep-research agent ("just give me results")
 - New `backend/agent/research_agent.py`: give it one question and it runs the whole
   job on its own — PLAN (decompose) → EXECUTE (search everywhere each round) →
