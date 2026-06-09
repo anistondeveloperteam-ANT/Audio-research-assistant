@@ -13,6 +13,14 @@ companion to the git history.
 
 ## 2026-06-09
 
+### General "answer from everywhere" + stronger answer quality
+- Rewrote the system prompt: no longer audio-specific and no longer biased toward the
+  local PDF corpus. It now treats **all source types as equal evidence**, synthesizes
+  across web/papers/patents/code/encyclopedic sources, and produces a comprehensive,
+  well-structured answer (direct lead + sectioned depth, diverse citations, recency-aware).
+- Fresh start: cleared the pre-indexed documents (Oracle papers/chunks, the PDF files,
+  the parse cache, and stale external-search cache).
+
 ### Save credits via the provider, not by cutting accuracy
 - Kept the accuracy-favoring defaults (`AGENTIC_MAX_VERIFY_ROUNDS=3`,
   `EXTERNAL_TOP_K=20`, `EVIDENCE_CHARS_PER_SOURCE=3500`, `AGENTIC_EXTRA_SEARCH_K=8`).
