@@ -22,9 +22,18 @@ Public API:
 from __future__ import annotations
 
 import os
+import re
 from typing import Dict, Iterator, List, Optional
 
 DEFAULT_OPENAI_MODEL = "gpt-4o"
+
+_AFFORD_RE = re.compile(r"can only afford (\d+)")
+
+
+def _affordable_tokens(message: str) -> Optional[int]:
+    """Parse OpenRouter's 402 'can only afford N tokens' hint, if present."""
+    m = _AFFORD_RE.search(message or "")
+    return int(m.group(1)) if m else None
 
 
 class LLMProvider:
@@ -120,21 +129,22 @@ class OpenAIProvider(LLMProvider):
             msgs.append({"role": "system", "content": system})
         msgs.extend(messages)
 
+        # Open the stream, shrinking the token budget if the provider (e.g. a
+        # low-balance OpenRouter account) replies 402 "can only afford N tokens".
+        budget = max_tokens
         stream = None
-        last_err = None
-        for params in self._request_variants(max_tokens, temperature):
+        for _ in range(3):
             try:
-                stream = client.chat.completions.create(
-                    model=self._model, messages=msgs, stream=True, **params)
+                stream = self._open_stream(client, openai, msgs, budget, temperature)
                 break
-            except openai.BadRequestError as e:
-                last_err = e
-                low = str(e).lower()
-                if not any(k in low for k in
-                           ("max_tokens", "max_completion_tokens", "temperature", "unsupported")):
-                    raise
+            except Exception as e:  # noqa: BLE001 - inspect the message for an affordable cap
+                afford = _affordable_tokens(str(e))
+                if afford and afford < budget:
+                    budget = max(256, afford - 64)
+                    continue
+                raise
         if stream is None:
-            raise last_err
+            return
 
         for chunk in stream:
             try:
@@ -143,6 +153,21 @@ class OpenAIProvider(LLMProvider):
                 delta = None
             if delta:
                 yield delta
+
+    def _open_stream(self, client, openai, msgs, max_tokens: int, temperature: float):
+        """Create the streaming completion, adapting the token/temperature params."""
+        last_err = None
+        for params in self._request_variants(max_tokens, temperature):
+            try:
+                return client.chat.completions.create(
+                    model=self._model, messages=msgs, stream=True, **params)
+            except openai.BadRequestError as e:
+                last_err = e
+                low = str(e).lower()
+                if not any(k in low for k in
+                           ("max_tokens", "max_completion_tokens", "temperature", "unsupported")):
+                    raise
+        raise last_err
 
 
 def get_provider() -> LLMProvider:

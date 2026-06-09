@@ -13,6 +13,21 @@ companion to the git history.
 
 ## 2026-06-09
 
+### Autonomous deep-research agent ("just give me results")
+- New `backend/agent/research_agent.py`: give it one question and it runs the whole
+  job on its own — PLAN (decompose) → EXECUTE (search everywhere each round) →
+  REFLECT (find gaps, search more) → WRITE a comprehensive cited report → REVIEW
+  (self-critique + one revision). Bounded two-tier memory; self-contained Sources list.
+  CLI: `python -m backend.agent.research_agent "question"`. Streamed web endpoint
+  `/api/research` + a **Deep Research** toggle in the composer. Synthesizes the three
+  repos: THINK→EXECUTE→REFLECT + two-tier memory (auto-deep-researcher-24x7),
+  the review stage (Awesome-AI-Scientist), lifecycle structure (kimi-code).
+- Provider resilience: `stream_chat` now auto-retries on OpenRouter `402`
+  "can only afford N tokens" by shrinking the budget — low-balance accounts keep working.
+- Verified live end-to-end (real searches + DeepSeek); tests in `tests/test_research_agent.py`.
+
+
+
 ### OpenAI-only chat LLM (removed OpenRouter + Gemini-chat providers)
 - Simplified the LLM layer to a single, clean OpenAI provider: rewrote
   `backend/llm/streaming_provider.py` (one `OpenAIProvider`, no multi-provider

@@ -324,6 +324,45 @@ def agent(body: dict = Body(...)):
 
 
 # ----------------------------------------------------------------------
+# Deep research agent (plan -> search everywhere -> reflect -> report), streamed
+# ----------------------------------------------------------------------
+@app.post("/api/research")
+def research(body: dict = Body(...)):
+    question = (body.get("question") or "").strip()
+    if not question:
+        return JSONResponse({"error": "question is required"}, status_code=400)
+
+    import queue
+    import threading
+    from backend.agent.research_agent import research as run_research
+
+    q: "queue.Queue" = queue.Queue()
+    DONE = object()
+
+    def worker():
+        try:
+            res = run_research(question, on_event=q.put)
+            q.put({"type": "result", "report": res.report, "sources": res.sources,
+                   "sub_questions": res.sub_questions, "rounds": res.rounds,
+                   "review": res.review, "error": res.error})
+        except Exception as exc:
+            q.put({"type": "error", "message": str(exc)})
+        finally:
+            q.put(DONE)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    def gen():
+        while True:
+            event = q.get()
+            if event is DONE:
+                break
+            yield json.dumps(event) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+# ----------------------------------------------------------------------
 # Review: structured peer review of an answer or pasted text
 # ----------------------------------------------------------------------
 @app.post("/api/review")

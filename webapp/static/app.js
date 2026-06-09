@@ -55,6 +55,7 @@
     nextTurnIndex: 0,
     mode: "Default",    // single optimized retrieval mode (no Fast/Balanced/Deep)
     topk: 8,            // hint only; the server selects sources adaptively
+    research: false,    // Deep Research mode: route the next question to the research agent
   };
 
   // Auto-routing: a clear "build / run / solve code" task goes to the autonomous
@@ -645,6 +646,7 @@
   async function send() {
     const text = $("input").value.trim();
     if (!text || state.streaming || !state.currentId) return;
+    if (state.research) { sendResearch(text); return; }
     if (looksLikeCodingTask(text)) { sendAgent(text); return; }
 
     // First message in a fresh session -> title it from the question.
@@ -782,6 +784,85 @@
       scrollToBottom();
       $("input").focus();
     }
+  }
+
+  // Deep research agent: plan -> search everywhere over rounds -> reflect -> a
+  // finished, cited report. Streams progress notes, then renders the report.
+  async function sendResearch(text) {
+    if (inner().querySelector(".welcome")) inner().innerHTML = "";
+    $("input").value = ""; autosize();
+    addUserMessage(text, state.nextTurnIndex);   // view-only; research runs aren't persisted
+    setStreaming(true);
+    const h = addAssistantMessage();
+    const genStart = performance.now();
+    const timer = setInterval(() => {
+      if (h.elapsed) h.elapsed.textContent = ((performance.now() - genStart) / 1000).toFixed(1) + "s";
+    }, 100);
+
+    h.md.style.display = ""; h.statusEl.style.display = "none";
+    const root = h.md; root.innerHTML = ""; root.classList.add("agent-run");
+    const lead = document.createElement("div");
+    lead.className = "agent-lead";
+    lead.innerHTML = '<span class="al-dot"></span> Deep research — planning, searching everywhere, reflecting, then writing a cited report.';
+    root.appendChild(lead);
+    const steps = document.createElement("div"); root.appendChild(steps);
+    const report = document.createElement("div"); report.className = "research-report"; root.appendChild(report);
+    const note = (t, cls) => {
+      const d = document.createElement("div"); d.className = "agent-note" + (cls ? " " + cls : "");
+      d.textContent = t; steps.appendChild(d); scrollToBottom();
+    };
+
+    const controller = new AbortController();
+    state.abort = controller;
+    try {
+      const resp = await fetch("/api/research", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: text }), signal: controller.signal,
+      });
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let e; try { e = JSON.parse(line); } catch { continue; }
+          handleResearchEvent(e, note, report);
+        }
+      }
+    } catch (err) {
+      note("⚠ " + (err.name === "AbortError" ? "Stopped." : ("Connection error: " + (err.message || ""))));
+    } finally {
+      state.abort = null;
+      clearInterval(timer);
+      finalizeTools(h, [], { seconds: (performance.now() - genStart) / 1000, model: "research" });
+      setStreaming(false);
+      scrollToBottom();
+      $("input").focus();
+    }
+  }
+
+  function handleResearchEvent(e, note, report) {
+    switch (e.type) {
+      case "status": note(e.message); break;
+      case "plan": note("Plan:  " + (e.subquestions || []).join("   •   ")); break;
+      case "round": note("— Round " + e.round + "/" + e.of + " —", "rnd"); break;
+      case "search": note("🔎 " + e.query); break;
+      case "sources": note("evidence: +" + e.found + "  (total " + e.total + ")"); break;
+      case "reflect":
+        note(e.done ? "✓ enough evidence — writing the report"
+                    : "↻ " + ((e.next || []).length) + " follow-up searches"); break;
+      case "warning": note("⚠ " + e.message); break;
+      case "result":
+        renderMarkdown(report, (e.error ? ("_Research failed: " + e.error + "_") : (e.report || "_No report produced._")));
+        break;
+      case "error": note("⚠ " + (e.message || "error")); break;
+    }
+    scrollToBottom();
   }
 
   // Claude-style agent timeline: each event becomes a step card with an icon, a
@@ -1203,6 +1284,15 @@
     $("imDone").addEventListener("click", closeIngestModal);
     $("themeBtn").addEventListener("click", toggleTheme);
     $("modelSel").addEventListener("change", onModelChange);
+    $("researchToggle").addEventListener("click", () => {
+      state.research = !state.research;
+      const b = $("researchToggle");
+      b.classList.toggle("on", state.research);
+      b.setAttribute("aria-pressed", state.research ? "true" : "false");
+      $("input").placeholder = state.research
+        ? "Ask a research question — I'll search everywhere and write a cited report…"
+        : "Ask anything — or give it a coding task…";
+    });
     $("manageBtn").addEventListener("click", openPapers);
     $("pmClose").addEventListener("click", closePapers);
     $("papersScrim").addEventListener("click", closePapers);
