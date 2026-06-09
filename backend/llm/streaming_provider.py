@@ -170,8 +170,12 @@ class OpenAIProvider(LLMProvider):
         raise last_err
 
 
-def get_provider() -> LLMProvider:
-    """Construct the OpenAI provider from .env.
+def get_provider(model: Optional[str] = None) -> LLMProvider:
+    """Construct the OpenAI-compatible provider from .env.
+
+    `model` overrides OPENAI_MODEL for this provider (e.g. the code agent can use a
+    coder model while chat uses a general one) — the API key and base URL are shared,
+    so it works the same against OpenAI, OpenRouter, or a local Ollama endpoint.
 
     Always returns a provider object; callers must check `.is_available` to catch
     a missing API key or a missing dependency.
@@ -183,7 +187,7 @@ def get_provider() -> LLMProvider:
         pass
 
     return OpenAIProvider(
-        model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+        model=model or os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
         api_key=os.getenv("OPENAI_API_KEY", ""),
         base_url=os.getenv("OPENAI_BASE_URL") or None,
     )

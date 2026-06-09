@@ -13,6 +13,14 @@ companion to the git history.
 
 ## 2026-06-09
 
+### Local Ollama support + per-task model (no new provider code)
+- Ollama is OpenAI-compatible, so it works through the existing client by setting
+  `OPENAI_BASE_URL=http://localhost:11434/v1`, `OPENAI_API_KEY=ollama`, and an
+  `OPENAI_MODEL` (e.g. `qwen3:8b`). Verified live.
+- `get_provider(model=...)` now takes an optional model override, and the autonomous
+  code agent uses `AGENT_MODEL` when set (e.g. `qwen2.5-coder:7b`) so chat/research
+  and coding can run on different local models. Documented in `.env.example`.
+
 ### Added 3 project-fit dev-tooling files from ECC (no bulk install)
 - `.claude/agents/fastapi-reviewer.md` — reviews FastAPI routes, async/streaming
   (SSE/NDJSON), validation, auth/session, and SSRF/secret safety.

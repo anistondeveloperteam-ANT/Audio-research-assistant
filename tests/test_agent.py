@@ -111,7 +111,7 @@ def test_agent_succeeds_first_try(monkeypatch):
         "```python\nprint('answer=42')\n```",                    # generated code
         _verdict(True, True, 95, answer="The answer is 42."),    # review: done
     ])
-    monkeypatch.setattr(loop, "get_provider", lambda: provider)
+    monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
     monkeypatch.setattr(loop, "run_python",
                         lambda code, **k: RunResult(True, 0, "answer=42\n", "", 0.2))
@@ -134,7 +134,7 @@ def test_agent_refines_after_a_failure(monkeypatch):
         RunResult(False, 1, "", "ModuleNotFoundError: No module named 'nope'", 0.1),
         RunResult(True, 0, "ok\n", "", 0.1),
     ])
-    monkeypatch.setattr(loop, "get_provider", lambda: provider)
+    monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
     monkeypatch.setattr(loop, "run_python", lambda code, **k: next(results))
 
@@ -149,7 +149,7 @@ def test_loop_blocks_without_running(monkeypatch):
         "```python\nprint(1)\n```",
         _verdict(False, False, 0, feedback="was blocked"),
     ])
-    monkeypatch.setattr(loop, "get_provider", lambda: provider)
+    monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
     ran = []
     monkeypatch.setattr(loop, "run_python", lambda code, **k: ran.append(1) or RunResult(True, 0, "", "", 0.1))
@@ -162,7 +162,7 @@ def test_loop_blocks_without_running(monkeypatch):
 
 
 def test_agent_stops_clean_when_docker_missing(monkeypatch):
-    monkeypatch.setattr(loop, "get_provider", lambda: _FakeProvider([]))
+    monkeypatch.setattr(loop, "get_provider", lambda *a, **k: _FakeProvider([]))
     monkeypatch.setattr(loop, "docker_available", lambda: False)
     events = []
     res = loop.run_agent("anything", use_search=False, on_event=events.append)

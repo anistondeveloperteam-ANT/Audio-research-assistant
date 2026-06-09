@@ -204,7 +204,9 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     if not task:
         return AgentResult(task, False, "", "", "No task given.", [])
 
-    provider = get_provider()
+    # Use a dedicated coding model when set (e.g. a local Ollama coder), else the
+    # chat model. API key + base URL are shared, so this works for OpenAI/OpenRouter/Ollama.
+    provider = get_provider(os.getenv("AGENT_MODEL") or None)
     if not provider.is_available:
         message = getattr(
             provider,
