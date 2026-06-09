@@ -36,7 +36,7 @@ backend/
 |-- external_search/   # web, papers, patents, GitHub, online PDF search
 |-- graph_rag/         # optional Memgraph graph expansion
 |-- ingestion/         # PDF parsing, chunking, embedding, indexing
-|-- llm/               # chat provider interface: OpenAI/OpenRouter
+|-- llm/               # chat provider interface: OpenAI
 |-- memory/            # SQLite conversation memory and backups
 |-- retrieval/         # local hybrid retrieval, fusion, HyDE, vector search
 ```

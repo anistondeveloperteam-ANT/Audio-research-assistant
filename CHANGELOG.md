@@ -13,6 +13,14 @@ companion to the git history.
 
 ## 2026-06-09
 
+### OpenAI-only chat LLM (removed OpenRouter + Gemini-chat providers)
+- Simplified the LLM layer to a single, clean OpenAI provider: rewrote
+  `backend/llm/streaming_provider.py` (one `OpenAIProvider`, no multi-provider
+  abstraction) and `webapp/settings.py` (OpenAI model picker only). Removed the
+  OpenRouter and Gemini-chat code, env vars, dropdown entries, and tests.
+- Gemini stays only for **embeddings** (`GEMINI_API_KEY`) — it is not a chat model.
+- Updated `.env.example`, README, and docs to OpenAI-only; verified live + 99 tests pass.
+
 ### General "answer from everywhere" + stronger answer quality
 - Rewrote the system prompt: no longer audio-specific and no longer biased toward the
   local PDF corpus. It now treats **all source types as equal evidence**, synthesizes

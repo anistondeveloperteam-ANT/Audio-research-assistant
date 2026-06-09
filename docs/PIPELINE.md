@@ -232,22 +232,18 @@ Docker sandbox and that run result is included in verification.
 ## 6. LLM providers (chat models)
 
 All answer generation goes through one interface,
-`backend/llm/streaming_provider.py`, backed by **OpenAI** or **OpenRouter**. Set
-`LLM_PROVIDER=openai` or `LLM_PROVIDER=openrouter` in `.env`; switch the model live
+`backend/llm/streaming_provider.py`, backed by **OpenAI**. Set `LLM_PROVIDER=openai` in `.env`; switch the model live
 in the UI.
 
 | Setting | Value | Notes |
 |---------|-------|-------|
-| `LLM_PROVIDER` | `openai` or `openrouter` | Active chat provider. |
+| `LLM_PROVIDER` | `openai` | Active chat provider. |
 | `OPENAI_API_KEY` | `sk-...` | Required when `LLM_PROVIDER=openai`. |
 | `OPENAI_MODEL` | `gpt-4o` (default) | e.g. `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`. |
 | `OPENAI_BASE_URL` | *(optional)* | Only for Azure OpenAI or an OpenAI-compatible proxy. |
-| `OPENROUTER_API_KEY` | `sk-or-v1-...` | Required when `LLM_PROVIDER=openrouter`. |
-| `OPENROUTER_MODEL` | `deepseek/deepseek-chat` (default) | Any vendor/model slug. |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Optional override. |
 
 To measure which model answers best, use
-`python -m backend.evaluation.evaluate_llm --models "openai:gpt-4o,openrouter:deepseek/deepseek-chat"`.
+`python -m backend.evaluation.evaluate_llm --models "openai:gpt-4o,openai:gpt-4o-mini"`.
 
 ---
 
@@ -283,7 +279,7 @@ To measure which model answers best, use
 | **BAAI/bge-base-en-v1.5** | Local embedding alternative (`EMBEDDING_PROVIDER=local`) |
 | **BAAI/bge-reranker-v2-m3** | Cross-encoder reranker |
 | **PyTorch / sentence-transformers / transformers** | Run the reranker (and local embeddings) on GPU/CPU |
-| **OpenAI SDK** | Client for OpenAI and OpenRouter (OpenAI-compatible) chat APIs (streaming answers) |
+| **OpenAI SDK** | Client for OpenAI chat APIs (streaming answers) |
 
 ### Document processing
 | Technology | Role |
@@ -350,11 +346,9 @@ settings:
 | Variable | Example | Meaning |
 |----------|---------|---------|
 | `ORACLE_DSN` | `localhost:1521/FREEPDB1` | Oracle connection |
-| `LLM_PROVIDER` | `openai` or `openrouter` | Active chat provider |
+| `LLM_PROVIDER` | `openai` | Active chat provider |
 | `OPENAI_API_KEY` | `sk-…` | OpenAI key (chat model; see §6) |
 | `OPENAI_MODEL` | `gpt-4o` | OpenAI model |
-| `OPENROUTER_API_KEY` | `sk-or-v1-...` | OpenRouter key (chat model; see §6) |
-| `OPENROUTER_MODEL` | `deepseek/deepseek-chat` | OpenRouter model slug |
 | `EMBEDDING_PROVIDER` | `google` \| `local` | Embedding backend |
 | `EMBEDDING_MODEL` | `gemini-embedding-2` | Embedding model |
 | `GEMINI_API_KEY` | `…` | Free key for Google embeddings (aistudio.google.com) |

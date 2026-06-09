@@ -19,7 +19,7 @@ database, and answers questions with cited, grounded answers through a fast web 
 | **PDF parsing** | Docling (primary) + PyMuPDF (fallback) + OCR (optional) |
 | **Embeddings** | Google Gemini `gemini-embedding-2` (768‑dim) |
 | **Re‑ranker** | BAAI `bge-reranker-v2-m3` (cross‑encoder) |
-| **Chat models** | OpenAI or OpenRouter - selectable in the UI |
+| **Chat models** | OpenAI - selectable in the UI |
 | **Conversation memory** | SQLite |
 | **Compute** | GPU (CUDA) and/or CPU, configurable |
 
@@ -69,14 +69,13 @@ Question ──► HyDE + Vector + BM25 ──► RRF fusion ──► Cross‑e
 | Provider | How | Models |
 |----------|-----|--------|
 | **OpenAI** | `OPENAI_API_KEY` (cloud) | `gpt-4o` (default), `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini` — pick in the UI |
-| **OpenRouter** | `OPENROUTER_API_KEY` (cloud) | one key → `deepseek/deepseek-chat`, GPT, Claude, 300+ — pick in the UI |
 
 ### ML runtime
 | Tool | Version | Role |
 |------|---------|------|
 | **PyTorch** | 2.7.1 (CUDA 12.6 build) | Tensor / GPU backend for the local models |
 | **transformers** | 4.57.6 | Model runtime under sentence‑transformers |
-| **OpenAI SDK** | 1.109.1 | Client for OpenAI and OpenRouter (OpenAI-compatible) chat APIs (streaming) |
+| **OpenAI SDK** | 1.109.1 | Client for OpenAI chat APIs (streaming) |
 
 ---
 
@@ -169,7 +168,6 @@ on a small (6 GB) laptop GPU.
 |---------|----------|------|
 | **Google AI Studio (Gemini API)** | Text embeddings | Free tier |
 | **OpenAI** | Cloud chat models (`gpt-4o` family) | Pay‑as‑you‑go |
-| **OpenRouter** | One key → DeepSeek, GPT, Claude, 300+ models | Pay-as-you-go |
 
 ---
 
@@ -178,7 +176,7 @@ on a small (6 GB) laptop GPU.
 - **Docling + Gemini embeddings** are independently rated **best‑in‑class for 2026**
   for self‑hosted scientific‑paper RAG on modest hardware (the only stronger embedding
   model needs 16 GB+ of GPU memory).
-- **OpenAI / OpenRouter** provide cloud chat models through simple API keys, and the
+- **OpenAI** provides cloud chat models through a simple API key, and the
   active provider/model is switchable from the UI.
 - **No‑build front end** (plain HTML/CSS/JS) keeps the UI fast, dependency‑free, and
   easy for anyone to read and modify.
@@ -188,4 +186,4 @@ on a small (6 GB) laptop GPU.
 
 ---
 
-*Research Assistant — Python 3.11 · FastAPI · Oracle 23ai · Docling · Gemini · OpenAI/OpenRouter.*
+*Research Assistant — Python 3.11 · FastAPI · Oracle 23ai · Docling · Gemini · OpenAI.*

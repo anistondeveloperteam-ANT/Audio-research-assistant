@@ -1,9 +1,9 @@
 """
 LLM model selection for the web UI.
 
-Lists the supported chat models the user can pick and switches the active one by
-updating both the running process env and the on-disk .env, so the choice
-persists. Providers: OpenAI, and OpenRouter (one key -> DeepSeek, GPT, Claude, 300+).
+Lists the supported OpenAI chat models the user can pick and switches the active
+one by updating both the running process env and the on-disk .env, so the choice
+persists. OpenAI is the only chat provider.
 """
 from __future__ import annotations
 
@@ -31,42 +31,14 @@ OPENAI_MODELS = [
     "gpt-4o",
     "gpt-4o-mini",
 ]
-# OpenRouter slugs are "vendor/model". One key reaches all of these (DeepSeek is
-# the cheap option). Pick or type any slug from https://openrouter.ai/models.
-OPENROUTER_MODELS = [
-    "deepseek/deepseek-chat",
-    "deepseek/deepseek-r1",
-    "openai/gpt-4o-mini",
-    "openai/gpt-4o",
-    "anthropic/claude-3.5-sonnet",
-    "qwen/qwen-2.5-72b-instruct",
-    "meta-llama/llama-3.3-70b-instruct",
-]
-# Gemini = FREE tier (reuses your GEMINI_API_KEY). Great for testing with no cost.
-GEMINI_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
-    "gemini-2.0-flash",
-]
 
 DEFAULT_OPENAI_MODEL = "gpt-4o"
-DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
-VALID_PROVIDERS = ("openai", "openrouter", "gemini")
-PROVIDER_LABEL = {"openai": "OpenAI", "openrouter": "OpenRouter", "gemini": "Gemini (free)"}
-MODEL_ENV = {"openai": "OPENAI_MODEL", "openrouter": "OPENROUTER_MODEL", "gemini": "GEMINI_MODEL"}
-DEFAULT_MODEL = {
-    "openai": DEFAULT_OPENAI_MODEL,
-    "openrouter": DEFAULT_OPENROUTER_MODEL,
-    "gemini": DEFAULT_GEMINI_MODEL,
-}
-PROVIDER_MODELS = {
-    "openai": OPENAI_MODELS,
-    "openrouter": OPENROUTER_MODELS,
-    "gemini": GEMINI_MODELS,
-}
+VALID_PROVIDERS = ("openai",)
+PROVIDER_LABEL = {"openai": "OpenAI"}
+MODEL_ENV = {"openai": "OPENAI_MODEL"}
+DEFAULT_MODEL = {"openai": DEFAULT_OPENAI_MODEL}
+PROVIDER_MODELS = {"openai": OPENAI_MODELS}
 
 
 def _normalize_provider(provider: str | None) -> str:
@@ -86,15 +58,13 @@ def current() -> Dict[str, str]:
 
 def list_models() -> Dict[str, Any]:
     cur = current()
-    options: List[Dict[str, str]] = []
-    for provider in VALID_PROVIDERS:
-        options.extend(
-            {"provider": provider, "model": model, "label": _label(provider, model)}
-            for model in PROVIDER_MODELS[provider]
-        )
+    options: List[Dict[str, str]] = [
+        {"provider": "openai", "model": model, "label": _label("openai", model)}
+        for model in OPENAI_MODELS
+    ]
 
     # Always include the current selection, even if it's a custom model not listed.
-    if not any(o["provider"] == cur["provider"] and o["model"] == cur["model"] for o in options):
+    if not any(o["model"] == cur["model"] for o in options):
         options.insert(0, {
             "provider": cur["provider"],
             "model": cur["model"],
@@ -122,11 +92,8 @@ def _persist_env(updates: Dict[str, str]) -> None:
 
 
 def set_model(provider: str, model: str) -> Dict[str, str]:
-    provider = (provider or "openai").strip().lower()
+    provider = _normalize_provider(provider)
     model = (model or "").strip()
-    if provider not in VALID_PROVIDERS:
-        allowed = ", ".join(VALID_PROVIDERS)
-        raise ValueError(f"Unknown provider {provider!r} (supported: {allowed})")
     if not model:
         raise ValueError("Model is required")
 

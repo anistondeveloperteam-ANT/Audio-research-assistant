@@ -9,7 +9,7 @@ Run from the project root (Oracle DB must be up and papers indexed):
     python -m backend.evaluation.evaluate_llm
 
     # Compare several models head-to-head (provider:model, comma-separated)
-    python -m backend.evaluation.evaluate_llm --models "openai:gpt-4o,openrouter:deepseek/deepseek-chat"
+    python -m backend.evaluation.evaluate_llm --models "openai:gpt-4o,openai:gpt-4o-mini"
 
     # Add an LLM-as-judge correctness score (costs extra API calls)
     python -m backend.evaluation.evaluate_llm --judge --judge-model openai:gpt-4o

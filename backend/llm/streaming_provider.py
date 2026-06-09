@@ -1,25 +1,11 @@
 """
-Streaming LLM backend: OpenAI, OpenRouter, and Gemini.
+Streaming LLM backend: OpenAI.
 
 The chat UI calls this; nothing else cares about the details. Configure via .env:
 
-    LLM_PROVIDER=openai                    (openai | openrouter | gemini)
-
-    OPENAI_API_KEY=sk-...                  (required when LLM_PROVIDER=openai)
-    OPENAI_MODEL=gpt-4o                    (default; e.g. gpt-4o-mini, gpt-4.1)
-    OPENAI_BASE_URL=https://api.openai.com/v1   (optional; Azure/proxies)
-
-    OPENROUTER_API_KEY=sk-or-v1-...        (required when LLM_PROVIDER=openrouter)
-    OPENROUTER_MODEL=deepseek/deepseek-chat  (one key -> DeepSeek, GPT, Claude, 300+)
-    OPENROUTER_BASE_URL=https://openrouter.ai/api/v1  (optional override)
-
-    GEMINI_API_KEY=...                     (required when LLM_PROVIDER=gemini)
-    GEMINI_MODEL=gemini-2.5-flash
-    GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
-
-OpenRouter is OpenAI-compatible, so it reuses the OpenAI SDK with a custom base URL.
-One OpenRouter key reaches DeepSeek, GPT, Qwen, Claude and 300+ models by slug
-("vendor/model", e.g. deepseek/deepseek-chat) — a cheap way to use DeepSeek.
+    OPENAI_API_KEY=sk-...                 (required)
+    OPENAI_MODEL=gpt-4o                   (default; e.g. gpt-4o-mini, gpt-4.1, gpt-5.5)
+    OPENAI_BASE_URL=https://api.openai.com/v1   (optional; Azure / OpenAI-compatible proxy)
 
 Public API:
 
@@ -39,16 +25,10 @@ import os
 from typing import Dict, Iterator, List, Optional
 
 DEFAULT_OPENAI_MODEL = "gpt-4o"
-DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat"
-DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-# Gemini is FREE-tier (same key used for embeddings) and OpenAI-compatible.
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
-DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-SUPPORTED_PROVIDERS = ("openai", "openrouter", "gemini")
 
 
 class LLMProvider:
-    """Abstract base. Subclasses override name, model, is_available, stream_chat."""
+    """Abstract base for a streaming chat provider."""
 
     @property
     def name(self) -> str:
@@ -64,7 +44,7 @@ class LLMProvider:
         return False
 
     def unavailable_message(self) -> str:
-        return "LLM not available - configure a supported provider in .env."
+        return "LLM not available - configure OpenAI in .env."
 
     def stream_chat(
         self,
@@ -76,32 +56,18 @@ class LLMProvider:
         raise NotImplementedError
 
 
-class OpenAICompatibleProvider(LLMProvider):
-    """OpenAI Chat Completions compatible client with token streaming.
+class OpenAIProvider(LLMProvider):
+    """OpenAI Chat Completions with token streaming."""
 
-    Both OpenAI and OpenRouter use the OpenAI Python SDK here; OpenRouter is just
-    a different base URL + key, with "vendor/model" slugs.
-    """
-
-    def __init__(
-        self,
-        *,
-        name: str,
-        model: str,
-        api_key: str,
-        api_key_env: str,
-        default_model: str,
-        base_url: Optional[str] = None,
-    ):
-        self._name = name
-        self._model = model or default_model
+    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None):
+        self._model = model or DEFAULT_OPENAI_MODEL
         self.api_key = api_key
-        self.api_key_env = api_key_env
+        self.api_key_env = "OPENAI_API_KEY"
         self.base_url = base_url
 
     @property
     def name(self) -> str:
-        return self._name
+        return "openai"
 
     @property
     def model(self) -> str:
@@ -124,15 +90,14 @@ class OpenAICompatibleProvider(LLMProvider):
             __import__("openai")
         except ImportError:
             return "LLM not available - install dependencies with `pip install -r requirements.txt`."
-        return "LLM not available - check the provider configuration in .env."
+        return "LLM not available - check the OpenAI configuration in .env."
 
     def _request_variants(self, max_tokens: int, temperature: float) -> List[Dict[str, object]]:
         # Newer OpenAI models (GPT-5 family, o-series) require `max_completion_tokens`
-        # and only allow the default temperature; everything else (gpt-4o/4.1 and all
-        # OpenRouter slugs) uses `max_tokens` + a custom temperature. Try the right
-        # shape first, then fall back so any current/future model just works.
-        bare = self._model.split("/")[-1]   # OpenRouter slugs look like vendor/model
-        newer = bare.startswith(("gpt-5", "o1", "o3", "o4"))
+        # and only allow the default temperature; older models (gpt-4o/4.1/3.5) use
+        # `max_tokens` + a custom temperature. Try the right shape first, then fall
+        # back so any current or future model just works.
+        newer = self._model.startswith(("gpt-5", "o1", "o3", "o4"))
         if newer:
             return [
                 {"max_completion_tokens": max_tokens},
@@ -150,7 +115,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
         client = (openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
                   if self.base_url else openai.OpenAI(api_key=self.api_key))
-        msgs = []
+        msgs: List[Dict[str, str]] = []
         if system:
             msgs.append({"role": "system", "content": system})
         msgs.extend(messages)
@@ -180,60 +145,17 @@ class OpenAICompatibleProvider(LLMProvider):
                 yield delta
 
 
-class OpenAIProvider(OpenAICompatibleProvider):
-    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None):
-        super().__init__(
-            name="openai", model=model, api_key=api_key,
-            api_key_env="OPENAI_API_KEY", default_model=DEFAULT_OPENAI_MODEL,
-            base_url=base_url,
-        )
-
-
-class OpenRouterProvider(OpenAICompatibleProvider):
-    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None):
-        super().__init__(
-            name="openrouter", model=model, api_key=api_key,
-            api_key_env="OPENROUTER_API_KEY", default_model=DEFAULT_OPENROUTER_MODEL,
-            base_url=base_url or DEFAULT_OPENROUTER_BASE_URL,
-        )
-
-
-class GeminiProvider(OpenAICompatibleProvider):
-    """Google Gemini via its OpenAI-compatible endpoint — free tier, reuses GEMINI_API_KEY."""
-
-    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None):
-        super().__init__(
-            name="gemini", model=model, api_key=api_key,
-            api_key_env="GEMINI_API_KEY", default_model=DEFAULT_GEMINI_MODEL,
-            base_url=base_url or DEFAULT_GEMINI_BASE_URL,
-        )
-
-
 def get_provider() -> LLMProvider:
-    """Construct the active provider from .env.
+    """Construct the OpenAI provider from .env.
 
     Always returns a provider object; callers must check `.is_available` to catch
-    a missing API key or missing dependency.
+    a missing API key or a missing dependency.
     """
     try:
         from dotenv import load_dotenv
         load_dotenv(override=False)
     except ImportError:
         pass
-
-    provider = (os.getenv("LLM_PROVIDER", "openai") or "openai").strip().lower()
-    if provider == "openrouter":
-        return OpenRouterProvider(
-            model=os.getenv("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL),
-            api_key=os.getenv("OPENROUTER_API_KEY", ""),
-            base_url=os.getenv("OPENROUTER_BASE_URL") or DEFAULT_OPENROUTER_BASE_URL,
-        )
-    if provider == "gemini":
-        return GeminiProvider(
-            model=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
-            api_key=os.getenv("GEMINI_API_KEY", ""),
-            base_url=os.getenv("GEMINI_BASE_URL") or DEFAULT_GEMINI_BASE_URL,
-        )
 
     return OpenAIProvider(
         model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
