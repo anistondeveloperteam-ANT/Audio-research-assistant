@@ -1,9 +1,9 @@
 """
-Streaming LLM backend: OpenAI and OpenRouter.
+Streaming LLM backend: OpenAI, OpenRouter, and Gemini.
 
 The chat UI calls this; nothing else cares about the details. Configure via .env:
 
-    LLM_PROVIDER=openai                    (openai | openrouter)
+    LLM_PROVIDER=openai                    (openai | openrouter | gemini)
 
     OPENAI_API_KEY=sk-...                  (required when LLM_PROVIDER=openai)
     OPENAI_MODEL=gpt-4o                    (default; e.g. gpt-4o-mini, gpt-4.1)
@@ -12,6 +12,10 @@ The chat UI calls this; nothing else cares about the details. Configure via .env
     OPENROUTER_API_KEY=sk-or-v1-...        (required when LLM_PROVIDER=openrouter)
     OPENROUTER_MODEL=deepseek/deepseek-chat  (one key -> DeepSeek, GPT, Claude, 300+)
     OPENROUTER_BASE_URL=https://openrouter.ai/api/v1  (optional override)
+
+    GEMINI_API_KEY=...                     (required when LLM_PROVIDER=gemini)
+    GEMINI_MODEL=gemini-2.5-flash
+    GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
 
 OpenRouter is OpenAI-compatible, so it reuses the OpenAI SDK with a custom base URL.
 One OpenRouter key reaches DeepSeek, GPT, Qwen, Claude and 300+ models by slug
@@ -37,7 +41,10 @@ from typing import Dict, Iterator, List, Optional
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-SUPPORTED_PROVIDERS = ("openai", "openrouter")
+# Gemini is FREE-tier (same key used for embeddings) and OpenAI-compatible.
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+SUPPORTED_PROVIDERS = ("openai", "openrouter", "gemini")
 
 
 class LLMProvider:
@@ -191,6 +198,17 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         )
 
 
+class GeminiProvider(OpenAICompatibleProvider):
+    """Google Gemini via its OpenAI-compatible endpoint — free tier, reuses GEMINI_API_KEY."""
+
+    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None):
+        super().__init__(
+            name="gemini", model=model, api_key=api_key,
+            api_key_env="GEMINI_API_KEY", default_model=DEFAULT_GEMINI_MODEL,
+            base_url=base_url or DEFAULT_GEMINI_BASE_URL,
+        )
+
+
 def get_provider() -> LLMProvider:
     """Construct the active provider from .env.
 
@@ -209,6 +227,12 @@ def get_provider() -> LLMProvider:
             model=os.getenv("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL),
             api_key=os.getenv("OPENROUTER_API_KEY", ""),
             base_url=os.getenv("OPENROUTER_BASE_URL") or DEFAULT_OPENROUTER_BASE_URL,
+        )
+    if provider == "gemini":
+        return GeminiProvider(
+            model=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
+            api_key=os.getenv("GEMINI_API_KEY", ""),
+            base_url=os.getenv("GEMINI_BASE_URL") or DEFAULT_GEMINI_BASE_URL,
         )
 
     return OpenAIProvider(

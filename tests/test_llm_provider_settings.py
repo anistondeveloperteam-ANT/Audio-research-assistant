@@ -1,12 +1,30 @@
 """Tests for LLM provider selection (OpenAI + OpenRouter). No network/key needed."""
 from backend.llm.streaming_provider import (
+    DEFAULT_GEMINI_MODEL,
     DEFAULT_OPENROUTER_BASE_URL,
     DEFAULT_OPENROUTER_MODEL,
+    GeminiProvider,
     OpenAIProvider,
     OpenRouterProvider,
     get_provider,
 )
 from webapp import settings
+
+
+def test_get_provider_selects_gemini(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    p = get_provider()
+    assert p.name == "gemini"
+    assert p.model == DEFAULT_GEMINI_MODEL
+    assert "generativelanguage.googleapis.com" in (p.base_url or "")
+
+
+def test_gemini_unavailable_message_names_key():
+    p = GeminiProvider(model="gemini-2.5-flash", api_key="")
+    assert p.is_available is False
+    assert "GEMINI_API_KEY" in p.unavailable_message()
 
 
 def test_get_provider_selects_openrouter(monkeypatch):

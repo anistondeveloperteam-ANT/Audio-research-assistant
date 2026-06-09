@@ -42,15 +42,31 @@ OPENROUTER_MODELS = [
     "qwen/qwen-2.5-72b-instruct",
     "meta-llama/llama-3.3-70b-instruct",
 ]
+# Gemini = FREE tier (reuses your GEMINI_API_KEY). Great for testing with no cost.
+GEMINI_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash",
+]
 
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
-VALID_PROVIDERS = ("openai", "openrouter")
-PROVIDER_LABEL = {"openai": "OpenAI", "openrouter": "OpenRouter"}
-MODEL_ENV = {"openai": "OPENAI_MODEL", "openrouter": "OPENROUTER_MODEL"}
-DEFAULT_MODEL = {"openai": DEFAULT_OPENAI_MODEL, "openrouter": DEFAULT_OPENROUTER_MODEL}
-PROVIDER_MODELS = {"openai": OPENAI_MODELS, "openrouter": OPENROUTER_MODELS}
+VALID_PROVIDERS = ("openai", "openrouter", "gemini")
+PROVIDER_LABEL = {"openai": "OpenAI", "openrouter": "OpenRouter", "gemini": "Gemini (free)"}
+MODEL_ENV = {"openai": "OPENAI_MODEL", "openrouter": "OPENROUTER_MODEL", "gemini": "GEMINI_MODEL"}
+DEFAULT_MODEL = {
+    "openai": DEFAULT_OPENAI_MODEL,
+    "openrouter": DEFAULT_OPENROUTER_MODEL,
+    "gemini": DEFAULT_GEMINI_MODEL,
+}
+PROVIDER_MODELS = {
+    "openai": OPENAI_MODELS,
+    "openrouter": OPENROUTER_MODELS,
+    "gemini": GEMINI_MODELS,
+}
 
 
 def _normalize_provider(provider: str | None) -> str:
