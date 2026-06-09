@@ -18,10 +18,14 @@ companion to the git history.
   job on its own — PLAN (decompose) → EXECUTE (search everywhere each round) →
   REFLECT (find gaps, search more) → WRITE a comprehensive cited report → REVIEW
   (self-critique + one revision). Bounded two-tier memory; self-contained Sources list.
-  CLI: `python -m backend.agent.research_agent "question"`. Streamed web endpoint
-  `/api/research` + a **Deep Research** toggle in the composer. Synthesizes the three
+  CLI: `python -m backend.agent.research_agent "question"`. Synthesizes the three
   repos: THINK→EXECUTE→REFLECT + two-tier memory (auto-deep-researcher-24x7),
   the review stage (Awesome-AI-Scientist), lifecycle structure (kimi-code).
+- Deep research is now **merged into every chat answer** (no toggle): each question
+  is auto-decomposed into a few "angles", all of them are searched across every
+  source, and the answer is written from the combined evidence. Evidence is bounded
+  and **auto-shrinks** to fit the model's token budget so low-balance accounts still
+  get a full answer. (Standalone `/api/research` endpoint kept for direct use.)
 - Provider resilience: `stream_chat` now auto-retries on OpenRouter `402`
   "can only afford N tokens" by shrinking the budget — low-balance accounts keep working.
 - Verified live end-to-end (real searches + DeepSeek); tests in `tests/test_research_agent.py`.

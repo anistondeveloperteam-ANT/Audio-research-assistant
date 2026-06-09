@@ -8,6 +8,7 @@ this module only wires the proven pieces together for the new UI.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterator, List
@@ -121,20 +122,38 @@ def _evidence_header(n: int, item: Dict[str, Any]) -> str:
 # How much of each source's text the model actually reads. Bigger = more accurate,
 # deeper answers (and enough method detail to write code), at higher token cost.
 EVIDENCE_CHARS_PER_SOURCE = int(os.getenv("EVIDENCE_CHARS_PER_SOURCE", "3500"))
+# Bound how much evidence is put in the prompt so deep search (many sources) stays
+# affordable and fits the model's context: at most this many sources / total chars.
+EVIDENCE_MAX_ITEMS = int(os.getenv("EVIDENCE_MAX_ITEMS", "16"))
+EVIDENCE_BUDGET_CHARS = int(os.getenv("EVIDENCE_BUDGET_CHARS", "28000"))
+
+_PROMPT_LIMIT_RE = re.compile(r"[Pp]rompt tokens limit exceeded:\s*(\d+)\s*>\s*(\d+)")
 
 
-def format_evidence(sources: List[Dict[str, Any]], max_chars: int = EVIDENCE_CHARS_PER_SOURCE) -> str:
-    """Format local and/or external evidence items into a numbered, cited block.
-    Works on raw local retrieval dicts (treated as papers) and on external dicts
-    that carry a `source_type`."""
+def _prompt_limit(message: str):
+    """Parse a provider 'Prompt tokens limit exceeded: HAVE > ALLOWED' error."""
+    m = _PROMPT_LIMIT_RE.search(message or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def format_evidence(sources: List[Dict[str, Any]], max_chars: int = EVIDENCE_CHARS_PER_SOURCE,
+                    max_items: int = EVIDENCE_MAX_ITEMS, budget_chars: int = EVIDENCE_BUDGET_CHARS) -> str:
+    """Format local and/or external evidence items into a numbered, cited block,
+    bounded to `max_items` sources and `budget_chars` total so the prompt stays
+    affordable. Works on raw local retrieval dicts and external dicts."""
     if not sources:
         return "(no retrieved sources)"
-    parts = []
-    for i, r in enumerate(sources, 1):
+    parts: List[str] = []
+    used = 0
+    for i, r in enumerate(sources[:max_items], 1):
         text = (r.get("text") or r.get("chunk_text") or "").strip()
         if len(text) > max_chars:
             text = text[:max_chars].rsplit(" ", 1)[0] + "..."
-        parts.append(_evidence_header(i, r) + "\n" + text)
+        block = _evidence_header(i, r) + "\n" + text
+        if parts and used + len(block) > budget_chars:
+            break
+        parts.append(block)
+        used += len(block) + 2
     return "\n\n".join(parts)
 
 
@@ -164,6 +183,12 @@ SOURCE_MAX = int(os.getenv("SOURCE_MAX", "12"))
 EXTERNAL_TOP_K = int(os.getenv("EXTERNAL_TOP_K", "20"))
 ANSWER_MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "8000"))  # room for full code, no truncation
 AGENTIC_EXTRA_SEARCH_K = int(os.getenv("AGENTIC_EXTRA_SEARCH_K", "8"))
+
+# Deep research, always on: auto-decompose every question into a few "angles" and
+# search each across all sources, so the answer is built from broad evidence — not
+# just the literal query. Set DEEP_SEARCH_SUBQUERIES=0 to disable.
+DEEP_SEARCH_SUBQUERIES = int(os.getenv("DEEP_SEARCH_SUBQUERIES", "3"))
+DEEP_SUBQUERY_TOP_K = int(os.getenv("DEEP_SUBQUERY_TOP_K", "6"))
 
 
 def _score(r: Dict[str, Any]) -> float:
@@ -290,6 +315,24 @@ def _public_sources(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return sources
 
 
+def _deep_queries(question: str) -> List[str]:
+    """The main question plus a few auto-planned sub-questions ('angles'), so every
+    search is a mini deep-research sweep. Falls back to just the question."""
+    if DEEP_SEARCH_SUBQUERIES <= 0:
+        return [question]
+    try:
+        from backend.agent.research_agent import _plan
+        provider = get_provider()
+        if not provider.is_available:
+            return [question]
+        subs = _plan(provider, question)
+    except Exception:
+        return [question]
+    ql = question.strip().lower()
+    extras = [s for s in subs if s.strip() and s.strip().lower() != ql]
+    return [question] + extras[:DEEP_SEARCH_SUBQUERIES]
+
+
 # ----------------------------------------------------------------------
 # The streaming orchestration
 # ----------------------------------------------------------------------
@@ -319,25 +362,36 @@ def stream_chat_events(
     items: List[Dict[str, Any]] = []
     local_on = local_rag_enabled()
 
-    # --- 1) Local PDF papers (when enabled; needs Oracle + indexed papers) ---
-    if local_on:
-        yield {"type": "status", "message": "Searching your papers..."}
-        local_items, local_warnings = _gather_local_items(q, mode)
-        _extend_unique(items, local_items)
-        for w in local_warnings:
-            yield {"type": "warning", "message": w}
+    # --- Deep research, automatically: plan a few angles, then search the main
+    #     question AND every angle across all sources, merging the evidence so the
+    #     answer is built from everything found (local papers + web + papers +
+    #     patents + GitHub). ---
+    queries = _deep_queries(q)
+    if len(queries) > 1:
+        yield {"type": "status", "message":
+               f"Planning the research — exploring {len(queries)} angles..."}
 
-    # --- 2) ALWAYS search everywhere too: web, research papers (arXiv + Semantic
-    #        Scholar), Wikipedia, patents & GitHub — combined with the papers. ---
-    if is_web_search_enabled():
-        yield {"type": "status", "message": (
-            "Searching your papers + the web, research papers, patents & GitHub..."
-            if local_on else
-            "Searching the web, research papers, patents & GitHub...")}
-        ext_items, ext_warnings = _gather_external_items(q, EXTERNAL_TOP_K)
-        _extend_unique(items, ext_items)
-        for w in ext_warnings:
-            yield {"type": "warning", "message": w}
+    seen_warnings: set = set()
+    for idx, query in enumerate(queries):
+        tag = "your question" if idx == 0 else f"angle {idx}: {query[:64]}"
+        if local_on:
+            yield {"type": "status", "message": f"Searching your papers — {tag}..."}
+            local_items, local_warnings = _gather_local_items(query, mode)
+            _extend_unique(items, local_items)
+            for w in local_warnings:
+                if w not in seen_warnings:
+                    seen_warnings.add(w)
+                    yield {"type": "warning", "message": w}
+        if is_web_search_enabled():
+            yield {"type": "status", "message":
+                   f"Searching the web, research papers, patents & GitHub — {tag}..."}
+            k = EXTERNAL_TOP_K if idx == 0 else DEEP_SUBQUERY_TOP_K
+            ext_items, ext_warnings = _gather_external_items(query, k)
+            _extend_unique(items, ext_items)
+            for w in ext_warnings:
+                if w not in seen_warnings:
+                    seen_warnings.add(w)
+                    yield {"type": "warning", "message": w}
 
     # --- Nothing available at all -> explain instead of guessing ---
     if not items:
@@ -377,29 +431,48 @@ def stream_chat_events(
             rounds_done = 0
             for round_no in range(1, max_verify_rounds() + 1):
                 rounds_done = round_no
-                evidence = format_evidence(items)
-                if answer and verdict:
-                    user_msg = build_revision_message(
-                        question=q,
-                        evidence=evidence,
-                        previous_answer=answer,
-                        verdict=verdict,
-                        run_info=run_info,
-                    )
-                else:
-                    user_msg = build_user_message(q, evidence)
-                messages = history + [{"role": "user", "content": user_msg}]
+
+                def _messages_for(ev: str) -> List[Dict[str, str]]:
+                    if answer and verdict:
+                        um = build_revision_message(
+                            question=q, evidence=ev, previous_answer=answer,
+                            verdict=verdict, run_info=run_info)
+                    else:
+                        um = build_user_message(q, ev)
+                    return history + [{"role": "user", "content": um}]
 
                 yield {"type": "status", "message": (
                     f"Agent loop {round_no}/{max_verify_rounds()}: drafting a grounded answer..."
                 )}
-                answer = complete_text(
-                    provider,
-                    messages,
-                    system=SYSTEM_PROMPT,
-                    max_tokens=ANSWER_MAX_TOKENS,
-                    temperature=0.3,
-                )
+
+                # Draft, shrinking the evidence to fit if the model rejects the prompt
+                # as too large (e.g. a low-balance account) so the answer still gets written.
+                budget = EVIDENCE_BUDGET_CHARS
+                evidence = format_evidence(items, budget_chars=budget)
+                answer = ""
+                for _shrink in range(5):
+                    err = None
+                    try:
+                        answer = complete_text(
+                            provider, _messages_for(evidence),
+                            system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS, temperature=0.3)
+                    except Exception as exc:
+                        err = exc
+                    # Shrink the evidence and retry if the prompt was rejected as too
+                    # large, or the reply came back empty (a tiny budget starved it).
+                    too_big = err is not None and bool(
+                        _prompt_limit(str(err)) or "402" in str(err) or "afford" in str(err).lower())
+                    starved = err is None and len(answer.strip()) < 40
+                    if (too_big or starved) and budget > 5000:
+                        lim = _prompt_limit(str(err)) if err else None
+                        budget = max(4000, int(budget * (lim[1] / lim[0] if lim else 0.55)))
+                        yield {"type": "status",
+                               "message": "Trimming evidence to fit the model's token budget..."}
+                        evidence = format_evidence(items, budget_chars=budget)
+                        continue
+                    if err is not None:
+                        raise err
+                    break
 
                 yield {"type": "status", "message": "Checking for runnable Python simulation..."}
                 run_info = run_best_python_block(answer)
