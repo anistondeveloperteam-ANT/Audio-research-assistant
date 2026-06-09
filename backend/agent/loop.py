@@ -266,6 +266,26 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         if result.ok and verdict.get("done"):
             break
 
+    # Automatic peer review of the best result (the "Review" step, run for you):
+    # critique the final code + answer and surface the verdict in the timeline.
+    try:
+        from backend.answering.agentic_answer import auto_review_enabled
+        from backend.answering.reviewer import review as _peer_review
+        if best and auto_review_enabled():
+            emit({"type": "status", "message": "Reviewing the best result…"})
+            payload = ((best.verdict.get("answer") or "") + "\n\n```python\n"
+                       + (best.code or "") + "\n```")
+            rev = _peer_review(payload)
+            if rev and not rev.get("error"):
+                rec = rev.get("recommendation", "")
+                emit({"type": "reflect", "iteration": len(attempts), "verdict": {
+                    "done": rec in ("accept", "minor revision"),
+                    "score": (rev.get("scores") or {}).get("soundness"),
+                    "feedback": f"Peer review: {rec}. " + "; ".join((rev.get("suggestions") or [])[:2]),
+                }})
+    except Exception:
+        pass
+
     res = AgentResult(
         task=task,
         success=bool(best and best.result.ok and best.verdict.get("success")),

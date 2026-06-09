@@ -29,6 +29,7 @@ from backend.memory.store import MemoryStore, default_db_path  # noqa: E402
 from backend.answering.query_sanity import check_query_sanity  # noqa: E402
 from backend.answering.agentic_answer import (  # noqa: E402
     agentic_loop_enabled,
+    auto_review_enabled,
     build_revision_message,
     complete_text,
     followup_query,
@@ -315,6 +316,14 @@ def _public_sources(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return sources
 
 
+def _review_footer(rev: Dict[str, Any]) -> str:
+    """A compact one-line verdict from the automatic peer review."""
+    rec = rev.get("recommendation") or "reviewed"
+    scores = rev.get("scores") or {}
+    score_txt = " · ".join(f"{k} {v}" for k, v in scores.items()) if scores else ""
+    return f"\n\n**Auto-review:** {rec}" + (f" ({score_txt})" if score_txt else "") + "."
+
+
 def _deep_queries(question: str) -> List[str]:
     """The main question plus a few auto-planned sub-questions ('angles'), so every
     search is a mini deep-research sweep. Falls back to just the question."""
@@ -535,7 +544,35 @@ def stream_chat_events(
                 else:
                     yield {"type": "status", "message": "Verification requested a rewrite; refining answer..."}
 
-            final_answer = (answer or "(no answer)") + verification_footer(
+            # Automatic peer review (the "Review" step, run for you): critique the
+            # final answer, improve it once if it's weak, then show the verdict.
+            review_note = ""
+            if auto_review_enabled() and answer and answer.strip() and answer != "(no answer)":
+                yield {"type": "status", "message": "Reviewing the answer…"}
+                try:
+                    from backend.answering.reviewer import review as _peer_review
+                    rev = _peer_review(answer)
+                except Exception:
+                    rev = None
+                if rev and not rev.get("error"):
+                    if (rev.get("recommendation") or "").lower() in ("major revision", "reject"):
+                        yield {"type": "status", "message": "Improving the answer after review…"}
+                        fixes = "; ".join((rev.get("weaknesses") or []) + (rev.get("suggestions") or []))[:800]
+                        rmsg = build_revision_message(
+                            question=q, evidence=evidence, previous_answer=answer,
+                            verdict={"feedback": fixes, "missing_evidence": [], "citation_issues": []},
+                            run_info=run_info)
+                        try:
+                            improved = complete_text(
+                                provider, history + [{"role": "user", "content": rmsg}],
+                                system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS, temperature=0.3)
+                            if improved.strip():
+                                answer = improved
+                        except Exception:
+                            pass
+                    review_note = _review_footer(rev)
+
+            final_answer = (answer or "(no answer)") + review_note + verification_footer(
                 verdict=verdict,
                 rounds=rounds_done,
                 run_info=run_info,

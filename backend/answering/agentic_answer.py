@@ -42,6 +42,11 @@ def simulate_code_enabled() -> bool:
     return env_flag("AGENTIC_SIMULATE_CODE", default=True)
 
 
+def auto_review_enabled() -> bool:
+    """Automatically peer-review the final answer/code (the 'Review' step, run for you)."""
+    return env_flag("AUTO_REVIEW", default=True)
+
+
 def complete_text(
     provider: Any,
     messages: List[Dict[str, str]],

@@ -13,6 +13,14 @@ companion to the git history.
 
 ## 2026-06-09
 
+### Automatic peer review after every answer/code (AUTO_REVIEW)
+- The manual "Review" step now runs **automatically** after generation. For chat
+  answers: the final answer is peer-reviewed, improved once if the verdict is
+  major-revision/reject, and a one-line `Auto-review:` verdict is appended. For the
+  code agent: the best result is peer-reviewed and the verdict shows in the timeline.
+  One extra LLM call; toggle with `AUTO_REVIEW` (default true) — set false on slow
+  local models.
+
 ### Local Ollama support + per-task model (no new provider code)
 - Ollama is OpenAI-compatible, so it works through the existing client by setting
   `OPENAI_BASE_URL=http://localhost:11434/v1`, `OPENAI_API_KEY=ollama`, and an
