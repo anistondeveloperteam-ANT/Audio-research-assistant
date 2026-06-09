@@ -209,7 +209,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         message = getattr(
             provider,
             "unavailable_message",
-            lambda: "LLM not available - set OPENAI_API_KEY or DEEPSEEK_API_KEY in .env.",
+            lambda: "LLM not available - set the selected provider API key in .env.",
         )()
         emit({"type": "error", "message": message})
         return AgentResult(task, False, "", "", "LLM unavailable.", [])

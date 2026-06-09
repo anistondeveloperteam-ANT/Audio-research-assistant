@@ -65,7 +65,7 @@ def review(text: str) -> Dict[str, Any]:
         message = getattr(
             provider,
             "unavailable_message",
-            lambda: "LLM not available - set OPENAI_API_KEY or DEEPSEEK_API_KEY in .env.",
+            lambda: "LLM not available - set the selected provider API key in .env.",
         )()
         return {"error": message}
     user = f"Review the following work:\n\n{text[:MAX_CHARS]}"
