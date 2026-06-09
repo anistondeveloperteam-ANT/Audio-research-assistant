@@ -4,7 +4,6 @@ from webapp import settings
 
 
 def test_get_provider_is_openai(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
     p = get_provider()
@@ -29,7 +28,6 @@ def test_request_variants_adapt_to_model():
 
 
 def test_model_list_is_openai_only(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
     data = settings.list_models()
     assert data["current"]["provider"] == "openai"

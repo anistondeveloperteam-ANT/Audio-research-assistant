@@ -20,6 +20,10 @@ companion to the git history.
   OpenRouter and Gemini-chat code, env vars, dropdown entries, and tests.
 - Gemini stays only for **embeddings** (`GEMINI_API_KEY`) — it is not a chat model.
 - Updated `.env.example`, README, and docs to OpenAI-only; verified live + 99 tests pass.
+- Follow-up cleanup: dropped the now-redundant `LLM_PROVIDER` env var and the
+  multi-provider scaffolding (`MODEL_ENV`, `VALID_PROVIDERS`, `PROVIDER_MODELS`).
+  `webapp/settings.py` is now a small OpenAI-only model manager; the model switcher
+  API/UI shape is unchanged.
 
 ### General "answer from everywhere" + stronger answer quality
 - Rewrote the system prompt: no longer audio-specific and no longer biased toward the

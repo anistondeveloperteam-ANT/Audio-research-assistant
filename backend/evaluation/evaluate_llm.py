@@ -49,7 +49,6 @@ load_dotenv(ROOT / ".env", override=False)
 from webapp.chat_logic import (  # noqa: E402
     SYSTEM_PROMPT, format_evidence, build_user_message, public_source,
 )
-from webapp.settings import MODEL_ENV  # noqa: E402
 from backend.retrieval.hybrid_retrieve import hybrid_retrieve  # noqa: E402
 from backend.answering.research_modes import apply_research_mode  # noqa: E402
 from backend.llm.streaming_provider import get_provider  # noqa: E402
@@ -86,16 +85,14 @@ def score_answer(answer: str, key_points: List[str]) -> Tuple[float, bool, List[
 # Provider construction + generation
 # ----------------------------------------------------------------------
 def build_provider(spec: Optional[str]):
-    """spec is 'provider:model' (model optional). None -> current .env model.
-    Sets the relevant env vars and uses the real get_provider() factory."""
+    """spec is 'openai:model' or just 'model' (None -> current .env model).
+    Sets OPENAI_MODEL and uses the real get_provider() factory."""
     if not spec:
         return get_provider()
-    provider, _, model = spec.partition(":")
-    provider = provider.strip().lower()
-    os.environ["LLM_PROVIDER"] = provider
-    env_key = MODEL_ENV.get(provider)
-    if model and env_key:
-        os.environ[env_key] = model.strip()
+    _, _, tail = spec.partition(":")
+    model = (tail or spec).strip()
+    if model:
+        os.environ["OPENAI_MODEL"] = model
     return get_provider()
 
 
