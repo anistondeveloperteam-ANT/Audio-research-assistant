@@ -7,6 +7,7 @@ The pipeline turns the PDFs in data/papers/ into a searchable index, in order:
     1. Ingest papers  -- parse every PDF and split it into tagged chunks
     2. Embed chunks    -- turn each chunk into a 768-d embedding vector
     3. Vector migrate  -- load the vectors into the Oracle vector index
+    4. Optional turbovec cache -- compressed dense-vector accelerator
 
 Usage:
     python pipeline.py                # full rebuild (all stages, every paper)
@@ -32,13 +33,14 @@ if str(ROOT) not in sys.path:
 
 from backend.config import PAPERS_DIR, ORACLE_USER, ORACLE_PASSWORD, ORACLE_DSN
 
-# (label, module) run in order for a full rebuild.
+# (label, module, extra_args) run in order for a full rebuild.
 FULL_STAGES = [
-    ("Ingest papers (parse + chunk)",    "backend.ingestion.ingest_papers"),
-    ("Embed chunks",                     "backend.ingestion.embed_chunks"),
-    ("Migrate into Oracle vector index", "backend.database.vector_migration"),
+    ("Ingest papers (parse + chunk)",    "backend.ingestion.ingest_papers", []),
+    ("Embed chunks",                     "backend.ingestion.embed_chunks", []),
+    ("Migrate into Oracle vector index", "backend.database.vector_migration", []),
 ]
 INCREMENTAL_MODULE = "backend.ingestion.incremental_index"
+TURBOVEC_STAGE = ("Build turbovec vector cache", "backend.retrieval.turbovec_index", ["build"])
 
 
 # ----------------------------------------------------------------------
@@ -94,6 +96,15 @@ def show_status() -> int:
     print(f"Indexed papers       : {papers}")
     print(f"Indexed chunks       : {chunks}")
     print(f"Chunks with vector   : {vectors}")
+    try:
+        from backend.retrieval.turbovec_index import status as turbovec_status
+
+        tv = turbovec_status()
+        state = "valid" if tv.get("valid") else "missing/stale"
+        enabled = "enabled" if tv.get("enabled") else "disabled"
+        print(f"turbovec cache       : {enabled}, {state}")
+    except Exception:
+        print("turbovec cache       : unavailable")
     print("\nRun `python pipeline.py` to (re)build, or `python run.py` to use the app.")
     return 0
 
@@ -123,13 +134,24 @@ def preflight(incremental: bool) -> bool:
 # ----------------------------------------------------------------------
 # Stage runner
 # ----------------------------------------------------------------------
-def run_stage(label: str, module: str) -> int:
+def turbovec_stage_enabled() -> bool:
+    try:
+        from backend.retrieval.turbovec_index import build_in_pipeline_enabled
+
+        return build_in_pipeline_enabled()
+    except Exception:
+        return False
+
+
+def run_stage(label: str, module: str, extra_args=None) -> int:
     """Run one stage as a module, streaming its output. Returns its exit code."""
+    extra_args = list(extra_args or [])
+    cmd = [sys.executable, "-m", module] + extra_args
     print("\n" + "=" * 70)
     print(f">> {label}")
-    print(f"   (python -m {module})")
+    print("   (" + " ".join(["python", "-m", module] + extra_args) + ")")
     print("=" * 70, flush=True)
-    return subprocess.call([sys.executable, "-m", module], cwd=str(ROOT))
+    return subprocess.call(cmd, cwd=str(ROOT))
 
 
 def main() -> int:
@@ -147,13 +169,15 @@ def main() -> int:
         return 1
 
     stages = (
-        [("Incremental index (changed PDFs only)", INCREMENTAL_MODULE)]
-        if args.incremental else FULL_STAGES
+        [("Incremental index (changed PDFs only)", INCREMENTAL_MODULE, [])]
+        if args.incremental else list(FULL_STAGES)
     )
+    if turbovec_stage_enabled():
+        stages.append(TURBOVEC_STAGE)
 
     started = time.time()
-    for label, module in stages:
-        code = run_stage(label, module)
+    for label, module, extra_args in stages:
+        code = run_stage(label, module, extra_args)
         if code != 0:
             print(f"\nFAILED at stage: {label} (exit code {code}).", file=sys.stderr)
             return code

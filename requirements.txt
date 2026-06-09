@@ -32,6 +32,9 @@ torchaudio==2.7.1
 # --- Oracle vector database ---
 oracledb==4.0.0
 
+# --- Optional compressed local vector accelerator (VECTOR_BACKEND=turbovec) ---
+turbovec==0.7.0
+
 # --- Optional Memgraph GraphRAG layer (Bolt client; only used when ENABLE_GRAPH_RAG=true) ---
 neo4j==6.2.0
 

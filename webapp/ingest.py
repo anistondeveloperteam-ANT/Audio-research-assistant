@@ -21,11 +21,24 @@ if str(ROOT) not in sys.path:
 
 from backend.config import PAPERS_DIR, ORACLE_USER, ORACLE_PASSWORD, ORACLE_DSN
 
-STAGES = [
+BASE_STAGES = [
     ("Reading & chunking the PDF", "backend.ingestion.ingest_papers"),
     ("Building embeddings",         "backend.ingestion.embed_chunks"),
     ("Updating the vector index",   "backend.database.vector_migration"),
 ]
+TURBOVEC_STAGE = ("Building turbovec cache", "backend.retrieval.turbovec_index", ["build"])
+
+
+def _ingestion_stages():
+    stages = [(label, module, []) for label, module in BASE_STAGES]
+    try:
+        from backend.retrieval.turbovec_index import build_in_pipeline_enabled
+
+        if build_in_pipeline_enabled():
+            stages.append(TURBOVEC_STAGE)
+    except Exception:
+        pass
+    return stages
 
 
 # ----------------------------------------------------------------------
@@ -178,7 +191,7 @@ def delete_paper(paper_id: int) -> Dict[str, Any]:
             pass
         _purge_parse_cache(file_name)
 
-    _clear_retrieval_caches()
+    _clear_retrieval_caches(remove_turbovec_files=True)
     return {"ok": True, "deleted": file_name, "library": library_stats()}
 
 
@@ -196,12 +209,19 @@ def _purge_parse_cache(file_name: str) -> None:
         pass
 
 
-def _clear_retrieval_caches() -> None:
+def _clear_retrieval_caches(remove_turbovec_files: bool = False) -> None:
     """Drop the BM25/chunk caches so a newly-ingested paper is searchable now."""
     try:
         import backend.retrieval.hybrid_retrieve as hr
         hr._chunks_cache = None
         hr._bm25_cache = None
+    except Exception:
+        pass
+    try:
+        import backend.retrieval.turbovec_index as ti
+        ti.clear_cache()
+        if remove_turbovec_files:
+            ti.delete_index_files()
     except Exception:
         pass
 
@@ -212,11 +232,11 @@ def _clear_retrieval_caches() -> None:
 def stream_ingest() -> Iterator[Dict[str, Any]]:
     """Run the 3 ingestion stages, yielding progress events:
     {type: stage|log|error|done}."""
-    for label, module in STAGES:
+    for label, module, extra_args in _ingestion_stages():
         yield {"type": "stage", "label": label}
         try:
             proc = subprocess.Popen(
-                [sys.executable, "-m", module],
+                [sys.executable, "-m", module] + list(extra_args),
                 cwd=str(ROOT),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

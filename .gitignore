@@ -23,6 +23,7 @@ env/
 data/papers/
 data/extracted/
 data/external_cache/
+data/vector_cache/
 data/logs/
 data/audio_samples/
 data/code_repos/

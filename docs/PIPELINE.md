@@ -158,7 +158,8 @@ Step by step:
    Embedding a passage-shaped text retrieves better than embedding a bare
    question. *(HyDE = Hypothetical Document Embeddings, Gao et al. 2022.)*
 2. **Three parallel rankings:**
-   - **A — Vector search** on the original question (Oracle `VECTOR_DISTANCE … COSINE`).
+   - **A — Vector search** on the original question (Oracle `VECTOR_DISTANCE … COSINE`
+     by default, or optional turbovec compressed search when enabled).
    - **B — Vector search** on the HyDE passage.
    - **C — Field-weighted BM25** (`retrieval_fusion.py`) — keyword search where
      title / concepts / section count more than body text (BM25F-style).
@@ -179,6 +180,13 @@ retrieval, fused local chunks become seed nodes; Memgraph expands to related
 Oracle chunks through shared concepts, sections, papers, and concept
 co-occurrence. It never returns graph-only evidence: every graph hit maps back to
 an Oracle chunk/page before reranking and citation.
+
+**Optional turbovec accelerator** (`backend/retrieval/turbovec_index.py`) can be
+enabled with `VECTOR_BACKEND=turbovec`. It builds a compressed `IdMapIndex` from
+Oracle chunk embeddings and uses Oracle `chunks.id` as stable ids. Query results
+are hydrated back from Oracle, so citations and metadata still come from the
+database of record. If the turbovec cache is missing or stale, Oracle vector
+search is used as fallback unless `TURBOVEC_STRICT=true`.
 
 **Single optimized retrieval mode** (`research_modes.py` → `DEFAULT_RETRIEVAL_SETTINGS`)
 — there are no Fast / Balanced / Deep options. The app always runs **one config
@@ -270,6 +278,7 @@ To measure which model answers best, use
 | **HTML / CSS / vanilla JS** | Front end — **no build step** (`webapp/static/`) |
 | **Oracle Database Free (23ai)** | Relational store **+ native vector search** (Docker) |
 | **python-oracledb** | Oracle driver |
+| **turbovec** *(optional)* | Compressed local dense-vector accelerator; Oracle remains source of truth |
 | **Memgraph** *(optional)* | GraphRAG relationship expansion over local paper chunks |
 
 ### AI / ML
@@ -358,6 +367,8 @@ settings:
 | `MAX_QUERY_ROUTES`, `RETRIEVAL_TOP_K`, `TOTAL_SOURCE_LIMIT` | `4 / 8 / 14` | Retrieval tuning |
 | `ENABLE_OCR` | `true` | OCR fallback for scanned PDFs |
 | `CREATE_VECTOR_INDEX` | `false` | Opt in to an approximate HNSW/IVF vector index |
+| `VECTOR_BACKEND` | `oracle` \| `turbovec` | Dense vector backend for local PDFs |
+| `TURBOVEC_ENABLED` | `false` | Enable optional compressed vector cache |
 | `ENABLE_GRAPH_RAG` | `false` | Opt in to optional Memgraph expansion over local PDFs |
 | `MEMGRAPH_URI` | `bolt://localhost:7687` | Memgraph Bolt endpoint |
 

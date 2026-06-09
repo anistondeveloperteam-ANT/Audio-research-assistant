@@ -369,7 +369,7 @@ def _hybrid_retrieve_core(query: str, top_k: int = 10):
     debug_print("Vector search (original question)...")
     vector_orig = vector_search(query, top_k=vec_k)
     for r in vector_orig:
-        r["source"] = "oracle_vector_orig"
+        r["source"] = f"{r.get('source') or 'vector'}_orig"
 
     rankings = [vector_orig]
 
@@ -381,7 +381,7 @@ def _hybrid_retrieve_core(query: str, top_k: int = 10):
                 debug_print("Vector search (HyDE expansion)...")
                 vector_hyde = vector_search(hyde_text, top_k=vec_k)
                 for r in vector_hyde:
-                    r["source"] = "oracle_vector_hyde"
+                    r["source"] = f"{r.get('source') or 'vector'}_hyde"
                 rankings.append(vector_hyde)
         except Exception as exc:
             debug_print(f"HyDE expansion failed (non-fatal): {exc}")

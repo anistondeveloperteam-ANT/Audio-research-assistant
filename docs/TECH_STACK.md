@@ -16,6 +16,7 @@ database, and answers questions with cited, grounded answers through a fast web 
 | **Web server / API** | FastAPI + Uvicorn (streaming via Server‑Sent Events) |
 | **Front end** | HTML + CSS + vanilla JavaScript (no build step) |
 | **Database** | Oracle Database Free 23ai — native vector search (in Docker) |
+| **Optional vector accelerator** | turbovec compressed local dense-vector cache |
 | **PDF parsing** | Docling (primary) + PyMuPDF (fallback) + OCR (optional) |
 | **Embeddings** | Google Gemini `gemini-embedding-2` (768‑dim) |
 | **Re‑ranker** | BAAI `bge-reranker-v2-m3` (cross‑encoder) |
@@ -101,6 +102,7 @@ A **hybrid, multi‑signal retriever** combines several techniques:
 | Technique | What it does |
 |-----------|--------------|
 | **Vector / semantic search** | Oracle `VECTOR_DISTANCE … COSINE` — meaning‑based matching |
+| **turbovec** *(optional)* | Compressed dense-vector candidate search, hydrated back from Oracle |
 | **HyDE** (Hypothetical Document Embeddings) | Rewrites the question into a hypothetical answer passage for better recall |
 | **BM25F** (field‑weighted keyword search) | Exact‑term matching; title/concepts/section weighted higher |
 | **RRF** (Reciprocal Rank Fusion) | Merges the vector + keyword rankings robustly |
@@ -116,6 +118,7 @@ Supporting numeric libraries: **NumPy 2.3.5**, **SciPy 1.17.1**, **pandas 3.0.3*
 | Tool | Version | Role |
 |------|---------|------|
 | **Oracle Database Free 23ai** | latest (Docker) | Relational store **+ native vector search** (`embedding_vec VECTOR(768, FLOAT32)`, exact COSINE; optional HNSW/IVF index) |
+| **turbovec** | 0.7.0 | Optional compressed local vector-search cache; Oracle remains source of truth |
 | **python‑oracledb** | 4.0.0 | Oracle driver |
 | **SQLite** | built‑in | Conversation memory — sessions, turns (with saved sources), facts (`data/memory.db`) |
 

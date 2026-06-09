@@ -205,6 +205,7 @@ The local pipeline combines:
 - Optional OCR for scanned PDFs.
 - Gemini embeddings for vectors.
 - Oracle 23ai native vector search.
+- Optional turbovec compressed vector cache for faster local dense search.
 - BM25 keyword search.
 - RRF fusion, cross-encoder reranking, and MMR diversification.
 
@@ -266,6 +267,8 @@ Common settings:
 | `GEMINI_API_KEY` | Gemini embeddings key |
 | `ENABLE_WEB_SEARCH` | Enable public source search |
 | `ENABLE_LOCAL_RAG` | Enable local Oracle/PDF retrieval |
+| `VECTOR_BACKEND` | `oracle` or optional `turbovec` dense retrieval |
+| `TURBOVEC_ENABLED` | Enable optional compressed local vector cache |
 | `ENABLE_GRAPH_RAG` | Enable optional Memgraph expansion |
 | `ENABLE_AUTH` | Require login |
 | `EXTERNAL_ALLOW_UNSAFE_URLS` | Disable SSRF guard; keep `false` for shared deployments |
@@ -321,6 +324,33 @@ adds relationship expansion.
 
 ---
 
+## Optional Turbovec
+
+turbovec is an optional compressed vector-search cache for local PDFs. Oracle
+still stores papers, chunks, metadata, and citations; turbovec only speeds up
+the dense-vector candidate search.
+
+```env
+ENABLE_LOCAL_RAG=true
+VECTOR_BACKEND=turbovec
+TURBOVEC_ENABLED=true
+TURBOVEC_BIT_WIDTH=4
+TURBOVEC_OVERFETCH=3
+```
+
+Build or inspect the cache:
+
+```bash
+python -m backend.retrieval.turbovec_index build
+python -m backend.retrieval.turbovec_index status
+```
+
+If the cache is missing or stale, the app can rebuild it automatically. If
+turbovec is unavailable, retrieval falls back to Oracle unless
+`TURBOVEC_STRICT=true`.
+
+---
+
 ## Team Login
 
 Enable auth:
@@ -361,6 +391,7 @@ When auth is enabled, each user gets private conversations.
 | Frontend | HTML, CSS, vanilla JavaScript |
 | Streaming | Server-Sent Events |
 | Local vector DB | Oracle Database Free 23ai |
+| Optional vector accelerator | turbovec |
 | Local graph | Memgraph, optional |
 | Embeddings | Gemini `gemini-embedding-2` or local sentence-transformers |
 | Reranking | BAAI `bge-reranker-v2-m3` |
@@ -425,6 +456,7 @@ python -m backend.evaluation.evaluate_llm
 | [docs/TECH_STACK.md](docs/TECH_STACK.md) | Tool and technology reference |
 | [docs/TECHNOLOGY_AND_IMPROVEMENTS.md](docs/TECHNOLOGY_AND_IMPROVEMENTS.md) | Design choices and improvements |
 | [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) | Folder and naming rules |
+| [docs/TURBOVEC_ACCELERATOR.md](docs/TURBOVEC_ACCELERATOR.md) | Optional compressed vector-search cache |
 | [docs/CLAUDE_INTERACTIVE_PDF_BRIEF.md](docs/CLAUDE_INTERACTIVE_PDF_BRIEF.md) | Prompt brief for generating an interactive PDF |
 
 ---

@@ -22,6 +22,7 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 
 load_dotenv()
+DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
 
 def read_lob(value):
@@ -55,7 +56,7 @@ def embed_query(query: str):
     return _embed(query)
 
 
-def vector_search(query: str, top_k: int = 10):
+def _oracle_vector_search(query_vector, top_k: int = 10):
     """
     Oracle native VECTOR semantic search.
 
@@ -64,8 +65,7 @@ def vector_search(query: str, top_k: int = 10):
     - VECTOR_DISTANCE(..., COSINE)
     """
 
-    qvec = embed_query(query)
-    qvec_json = json.dumps(qvec)
+    qvec_json = json.dumps(query_vector)
 
     conn = connect()
     cur = conn.cursor()
@@ -134,6 +134,40 @@ def vector_search(query: str, top_k: int = 10):
     conn.close()
 
     return results
+
+
+def vector_search(query: str, top_k: int = 10):
+    """Semantic vector search with an optional turbovec accelerator.
+
+    The public result schema stays unchanged. When `VECTOR_BACKEND=turbovec`
+    or `TURBOVEC_ENABLED=true`, turbovec is tried first. Oracle remains the
+    fallback and source of truth unless `TURBOVEC_STRICT=true`.
+    """
+    qvec = embed_query(query)
+
+    try:
+        from backend.retrieval.turbovec_index import (
+            search_by_vector as turbovec_search_by_vector,
+            strict_enabled as turbovec_strict_enabled,
+            turbovec_enabled,
+        )
+        if turbovec_enabled():
+            try:
+                results = turbovec_search_by_vector(qvec, top_k=top_k)
+                if results:
+                    return results
+                if turbovec_strict_enabled():
+                    return results
+            except Exception as exc:
+                if turbovec_strict_enabled():
+                    raise
+                if DEBUG_MODE:
+                    print(f"turbovec unavailable; falling back to Oracle VECTOR: {exc}")
+    except Exception as exc:
+        if DEBUG_MODE:
+            print(f"turbovec backend not loaded; using Oracle VECTOR: {exc}")
+
+    return _oracle_vector_search(qvec, top_k=top_k)
 
 
 if __name__ == "__main__":
