@@ -1,8 +1,9 @@
 """
-LLM model selection for the web UI (OpenAI).
+LLM model selection for the web UI.
 
-Lists the OpenAI models the user can pick and switches the active one by updating
-both the running process env and the on-disk .env, so the choice persists.
+Lists the supported chat models the user can pick and switches the active one by
+updating both the running process env and the on-disk .env, so the choice
+persists. Providers: OpenAI, and OpenRouter (one key -> DeepSeek, GPT, Claude, 300+).
 """
 from __future__ import annotations
 
@@ -18,41 +19,71 @@ if str(ROOT) not in sys.path:
 
 ENV_PATH = ROOT / ".env"
 
-# The single provider: OpenAI. Models shown in the dropdown. The provider adapts
-# its API parameters per model, so both the GPT-5 family and the gpt-4o/4.1 models
-# work. Your account may not have every one of these — pick one it has access to.
+# The provider adapts API parameters per model, so GPT-5 / o-series and the older
+# gpt-4o/4.1 models all work. Your account may not have every model listed.
 OPENAI_MODELS = [
-    "gpt-5.5",         # newest flagship -> default
+    "gpt-5.5",
     "gpt-5.5-pro",
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.1",
     "gpt-4.1",
     "gpt-4o",
-    "gpt-4o-mini",     # fast + cheap
+    "gpt-4o-mini",
 ]
-DEFAULT_OPENAI_MODEL = "gpt-5.5"
+# OpenRouter slugs are "vendor/model". One key reaches all of these (DeepSeek is
+# the cheap option). Pick or type any slug from https://openrouter.ai/models.
+OPENROUTER_MODELS = [
+    "deepseek/deepseek-chat",
+    "deepseek/deepseek-r1",
+    "openai/gpt-4o-mini",
+    "openai/gpt-4o",
+    "anthropic/claude-3.5-sonnet",
+    "qwen/qwen-2.5-72b-instruct",
+    "meta-llama/llama-3.3-70b-instruct",
+]
 
-VALID_PROVIDERS = ("openai",)
-MODEL_ENV = {"openai": "OPENAI_MODEL"}
-DEFAULT_MODEL = {"openai": DEFAULT_OPENAI_MODEL}
+DEFAULT_OPENAI_MODEL = "gpt-4o"
+DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat"
+
+VALID_PROVIDERS = ("openai", "openrouter")
+PROVIDER_LABEL = {"openai": "OpenAI", "openrouter": "OpenRouter"}
+MODEL_ENV = {"openai": "OPENAI_MODEL", "openrouter": "OPENROUTER_MODEL"}
+DEFAULT_MODEL = {"openai": DEFAULT_OPENAI_MODEL, "openrouter": DEFAULT_OPENROUTER_MODEL}
+PROVIDER_MODELS = {"openai": OPENAI_MODELS, "openrouter": OPENROUTER_MODELS}
+
+
+def _normalize_provider(provider: str | None) -> str:
+    provider = (provider or "openai").strip().lower()
+    return provider if provider in VALID_PROVIDERS else "openai"
+
+
+def _label(provider: str, model: str) -> str:
+    return f"{PROVIDER_LABEL.get(provider, provider.title())} · {model}"
 
 
 def current() -> Dict[str, str]:
-    model = os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-    return {"provider": "openai", "model": model}
+    provider = _normalize_provider(os.getenv("LLM_PROVIDER", "openai"))
+    model = os.getenv(MODEL_ENV[provider], DEFAULT_MODEL[provider])
+    return {"provider": provider, "model": model}
 
 
 def list_models() -> Dict[str, Any]:
     cur = current()
-    options: List[Dict[str, str]] = [
-        {"provider": "openai", "model": m, "label": f"OpenAI · {m}"}
-        for m in OPENAI_MODELS
-    ]
+    options: List[Dict[str, str]] = []
+    for provider in VALID_PROVIDERS:
+        options.extend(
+            {"provider": provider, "model": model, "label": _label(provider, model)}
+            for model in PROVIDER_MODELS[provider]
+        )
+
     # Always include the current selection, even if it's a custom model not listed.
-    if not any(o["model"] == cur["model"] for o in options):
-        options.insert(0, {"provider": "openai", "model": cur["model"],
-                           "label": f"OpenAI · {cur['model']}"})
+    if not any(o["provider"] == cur["provider"] and o["model"] == cur["model"] for o in options):
+        options.insert(0, {
+            "provider": cur["provider"],
+            "model": cur["model"],
+            "label": _label(cur["provider"], cur["model"]),
+        })
     return {"current": cur, "options": options}
 
 
@@ -78,13 +109,14 @@ def set_model(provider: str, model: str) -> Dict[str, str]:
     provider = (provider or "openai").strip().lower()
     model = (model or "").strip()
     if provider not in VALID_PROVIDERS:
-        raise ValueError(f"Unknown provider {provider!r} (only 'openai' is supported)")
+        allowed = ", ".join(VALID_PROVIDERS)
+        raise ValueError(f"Unknown provider {provider!r} (supported: {allowed})")
     if not model:
         raise ValueError("Model is required")
 
     # Update the running process immediately (get_provider reads os.environ with
     # override=False, so these win) and persist to disk for next time.
-    os.environ["LLM_PROVIDER"] = "openai"
-    os.environ["OPENAI_MODEL"] = model
-    _persist_env({"LLM_PROVIDER": "openai", "OPENAI_MODEL": model})
-    return {"provider": "openai", "model": model, "label": f"OpenAI · {model}"}
+    os.environ["LLM_PROVIDER"] = provider
+    os.environ[MODEL_ENV[provider]] = model
+    _persist_env({"LLM_PROVIDER": provider, MODEL_ENV[provider]: model})
+    return {"provider": provider, "model": model, "label": _label(provider, model)}

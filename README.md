@@ -74,6 +74,12 @@ ENABLE_LOCAL_RAG=false
 ENABLE_WEB_SEARCH=true
 OPENAI_API_KEY=sk-...                 # your OpenAI API key
 ```
+Or use OpenRouter — one key for DeepSeek, GPT, Claude & 300+ (DeepSeek is the cheap pick):
+```
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_MODEL=deepseek/deepseek-chat   # or deepseek/deepseek-r1, openai/gpt-4o
+```
 Web search runs on free sources (DuckDuckGo, arXiv, Semantic Scholar, Wikipedia,
 GitHub) out of the box. Optionally add `TAVILY_API_KEY` for higher-quality web.
 </details>
@@ -175,8 +181,9 @@ keeps its context from bloating no matter how many cycles it runs, and a
 memory, and the brief pattern are adapted — as original code — from the open-source
 [auto-deep-researcher-24x7](https://github.com/Xiangyue-Zhang/auto-deep-researcher-24x7), Apache-2.0.)*
 
-Requirements: **Docker running** + `OPENAI_API_KEY`. It prints each attempt (code, run
-result, review) and ends with the best working program, its output, and a one-line answer.
+Requirements: **Docker running** + the selected LLM API key (`OPENAI_API_KEY` or
+`OPENROUTER_API_KEY`). It prints each attempt (code, run result, review) and ends
+with the best working program, its output, and a one-line answer.
 Tune via `.env` (`AGENT_MAX_ITERS`, `AGENT_DOCKER_IMAGE`, `AGENT_RUN_TIMEOUT`, `AGENT_LOG_*`, …).
 
 > Safety: the agent executes **AI-generated code**. It only ever runs inside a
@@ -201,8 +208,11 @@ Tune via `.env` (`AGENT_MAX_ITERS`, `AGENT_DOCKER_IMAGE`, `AGENT_RUN_TIMEOUT`, `
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
+| `LLM_PROVIDER` | `openai` | Chat provider: `openai` or `openrouter` |
 | `OPENAI_API_KEY` | – | Your OpenAI API key (chat model) |
 | `OPENAI_MODEL` | `gpt-5.5` | OpenAI model (e.g. `gpt-5.5-pro`, `gpt-4.1`, `gpt-4o`) |
+| `OPENROUTER_API_KEY` | – | One key → DeepSeek/GPT/Claude/300+ (chat model) |
+| `OPENROUTER_MODEL` | `deepseek/deepseek-chat` | OpenRouter slug (`vendor/model`) |
 | `ENABLE_WEB_SEARCH` | `true` | Automatic external search (web/papers/patents/GitHub) |
 | `WEB_SEARCH_PROVIDER` | `duckduckgo` | `duckduckgo` (free) · `tavily` · `brave` · `serpapi` |
 | `ENABLE_LOCAL_RAG` | `false` | Search your uploaded PDFs first (needs Oracle) |
@@ -250,7 +260,7 @@ stored salted + hashed (PBKDF2-HMAC-SHA256); the session is a signed cookie. Set
 
 **FastAPI** + Uvicorn (SSE streaming) · vanilla **HTML/CSS/JS** (no build) ·
 **Oracle 23ai** native vector search · **Gemini** embeddings · **BAAI bge** cross-encoder
-reranker · **Docling** + PyMuPDF parsing · **OpenAI** LLM (GPT-5 family) ·
+reranker · **Docling** + PyMuPDF parsing · **OpenAI / OpenRouter** LLM ·
 hybrid retrieval (vector + BM25F + RRF + rerank + MMR + HyDE).
 
 See **[`docs/PIPELINE.md`](docs/PIPELINE.md)** for the full walkthrough and
@@ -289,6 +299,9 @@ pyflakes backend webapp      # lint
 <details>
 <summary><b>📁 Project structure</b></summary>
 
+For naming rules and where new files should go, see
+**[`docs/PROJECT_STRUCTURE.md`](docs/PROJECT_STRUCTURE.md)**.
+
 ```
 Audio-research-assistant/
 ├── run.py                  # launch the web app
@@ -298,7 +311,7 @@ Audio-research-assistant/
 │   ├── graph_rag/          # optional Memgraph graph over local paper chunks/concepts
 │   ├── retrieval/          # hybrid_retrieve, vector, fusion, HyDE
 │   ├── ingestion/          # parse → chunk → embed → incremental
-│   ├── llm/                # streaming_provider (OpenAI)
+│   ├── llm/                # streaming_provider (OpenAI / OpenRouter)
 │   ├── auth/               # user store + password hashing + admin CLI
 │   ├── common/ · answering/ · database/ · memory/ · evaluation/
 │   └── config.py

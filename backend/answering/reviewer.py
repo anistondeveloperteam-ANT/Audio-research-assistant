@@ -62,7 +62,12 @@ def review(text: str) -> Dict[str, Any]:
         return {}
     provider = get_provider()
     if not provider.is_available:
-        return {"error": "LLM not available — set OPENAI_API_KEY in .env."}
+        message = getattr(
+            provider,
+            "unavailable_message",
+            lambda: "LLM not available - set OPENAI_API_KEY or DEEPSEEK_API_KEY in .env.",
+        )()
+        return {"error": message}
     user = f"Review the following work:\n\n{text[:MAX_CHARS]}"
     raw = "".join(provider.stream_chat(
         [{"role": "user", "content": user}], system=_SYSTEM,

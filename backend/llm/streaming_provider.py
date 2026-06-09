@@ -1,11 +1,21 @@
 """
-Streaming LLM backend — OpenAI.
+Streaming LLM backend: OpenAI and OpenRouter.
 
 The chat UI calls this; nothing else cares about the details. Configure via .env:
 
-    OPENAI_API_KEY=sk-...                 (required)
+    LLM_PROVIDER=openai                    (openai | openrouter)
+
+    OPENAI_API_KEY=sk-...                  (required when LLM_PROVIDER=openai)
     OPENAI_MODEL=gpt-4o                    (default; e.g. gpt-4o-mini, gpt-4.1)
-    OPENAI_BASE_URL=https://api.openai.com/v1   (optional; only for Azure/proxies)
+    OPENAI_BASE_URL=https://api.openai.com/v1   (optional; Azure/proxies)
+
+    OPENROUTER_API_KEY=sk-or-v1-...        (required when LLM_PROVIDER=openrouter)
+    OPENROUTER_MODEL=deepseek/deepseek-chat  (one key -> DeepSeek, GPT, Claude, 300+)
+    OPENROUTER_BASE_URL=https://openrouter.ai/api/v1  (optional override)
+
+OpenRouter is OpenAI-compatible, so it reuses the OpenAI SDK with a custom base URL.
+One OpenRouter key reaches DeepSeek, GPT, Qwen, Claude and 300+ models by slug
+("vendor/model", e.g. deepseek/deepseek-chat) — a cheap way to use DeepSeek.
 
 Public API:
 
@@ -22,9 +32,12 @@ Public API:
 from __future__ import annotations
 
 import os
-from typing import Iterator, List, Dict, Optional
+from typing import Dict, Iterator, List, Optional
 
-DEFAULT_MODEL = "gpt-4o"
+DEFAULT_OPENAI_MODEL = "gpt-4o"
+DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat"
+DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+SUPPORTED_PROVIDERS = ("openai", "openrouter")
 
 
 class LLMProvider:
@@ -43,6 +56,9 @@ class LLMProvider:
         """Quick liveness check. Cheap; no real LLM call."""
         return False
 
+    def unavailable_message(self) -> str:
+        return "LLM not available - configure a supported provider in .env."
+
     def stream_chat(
         self,
         messages: List[Dict[str, str]],
@@ -53,21 +69,32 @@ class LLMProvider:
         raise NotImplementedError
 
 
-class OpenAIProvider(LLMProvider):
-    """OpenAI chat-completions client with token streaming.
+class OpenAICompatibleProvider(LLMProvider):
+    """OpenAI Chat Completions compatible client with token streaming.
 
-    base_url is normally OpenAI's default; override it only for Azure OpenAI or an
-    OpenAI-compatible proxy.
+    Both OpenAI and OpenRouter use the OpenAI Python SDK here; OpenRouter is just
+    a different base URL + key, with "vendor/model" slugs.
     """
 
-    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None):
-        self._model = model or DEFAULT_MODEL
+    def __init__(
+        self,
+        *,
+        name: str,
+        model: str,
+        api_key: str,
+        api_key_env: str,
+        default_model: str,
+        base_url: Optional[str] = None,
+    ):
+        self._name = name
+        self._model = model or default_model
         self.api_key = api_key
+        self.api_key_env = api_key_env
         self.base_url = base_url
 
     @property
     def name(self) -> str:
-        return "openai"
+        return self._name
 
     @property
     def model(self) -> str:
@@ -83,6 +110,34 @@ class OpenAIProvider(LLMProvider):
         except ImportError:
             return False
 
+    def unavailable_message(self) -> str:
+        if not self.api_key:
+            return f"LLM not available - set {self.api_key_env} in .env."
+        try:
+            __import__("openai")
+        except ImportError:
+            return "LLM not available - install dependencies with `pip install -r requirements.txt`."
+        return "LLM not available - check the provider configuration in .env."
+
+    def _request_variants(self, max_tokens: int, temperature: float) -> List[Dict[str, object]]:
+        # Newer OpenAI models (GPT-5 family, o-series) require `max_completion_tokens`
+        # and only allow the default temperature; everything else (gpt-4o/4.1 and all
+        # OpenRouter slugs) uses `max_tokens` + a custom temperature. Try the right
+        # shape first, then fall back so any current/future model just works.
+        bare = self._model.split("/")[-1]   # OpenRouter slugs look like vendor/model
+        newer = bare.startswith(("gpt-5", "o1", "o3", "o4"))
+        if newer:
+            return [
+                {"max_completion_tokens": max_tokens},
+                {"max_completion_tokens": max_tokens, "temperature": temperature},
+                {"max_tokens": max_tokens, "temperature": temperature},
+            ]
+        return [
+            {"max_tokens": max_tokens, "temperature": temperature},
+            {"max_completion_tokens": max_tokens, "temperature": temperature},
+            {"max_completion_tokens": max_tokens},
+        ]
+
     def stream_chat(self, messages, system="", max_tokens=2048, temperature=0.3):
         import openai
 
@@ -93,27 +148,9 @@ class OpenAIProvider(LLMProvider):
             msgs.append({"role": "system", "content": system})
         msgs.extend(messages)
 
-        # Newer models (GPT-5 family, o-series) require `max_completion_tokens` and
-        # only allow the default temperature; older models (gpt-4o/4.1/3.5) use
-        # `max_tokens` and accept a custom temperature. Try the right shape first,
-        # then fall back so any current or future model just works.
-        newer = self._model.startswith(("gpt-5", "o1", "o3", "o4"))
-        if newer:
-            variants = [
-                {"max_completion_tokens": max_tokens},
-                {"max_completion_tokens": max_tokens, "temperature": temperature},
-                {"max_tokens": max_tokens, "temperature": temperature},
-            ]
-        else:
-            variants = [
-                {"max_tokens": max_tokens, "temperature": temperature},
-                {"max_completion_tokens": max_tokens, "temperature": temperature},
-                {"max_completion_tokens": max_tokens},
-            ]
-
         stream = None
         last_err = None
-        for params in variants:
+        for params in self._request_variants(max_tokens, temperature):
             try:
                 stream = client.chat.completions.create(
                     model=self._model, messages=msgs, stream=True, **params)
@@ -123,7 +160,7 @@ class OpenAIProvider(LLMProvider):
                 low = str(e).lower()
                 if not any(k in low for k in
                            ("max_tokens", "max_completion_tokens", "temperature", "unsupported")):
-                    raise   # a real error (bad model, auth, etc.) — don't mask it
+                    raise
         if stream is None:
             raise last_err
 
@@ -136,14 +173,46 @@ class OpenAIProvider(LLMProvider):
                 yield delta
 
 
+class OpenAIProvider(OpenAICompatibleProvider):
+    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None):
+        super().__init__(
+            name="openai", model=model, api_key=api_key,
+            api_key_env="OPENAI_API_KEY", default_model=DEFAULT_OPENAI_MODEL,
+            base_url=base_url,
+        )
+
+
+class OpenRouterProvider(OpenAICompatibleProvider):
+    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None):
+        super().__init__(
+            name="openrouter", model=model, api_key=api_key,
+            api_key_env="OPENROUTER_API_KEY", default_model=DEFAULT_OPENROUTER_MODEL,
+            base_url=base_url or DEFAULT_OPENROUTER_BASE_URL,
+        )
+
+
 def get_provider() -> LLMProvider:
-    """Construct the OpenAI provider from .env. Always returns a usable object —
-    the caller must check `.is_available` (e.g. to detect a missing API key)."""
-    from dotenv import load_dotenv
-    load_dotenv(override=False)
+    """Construct the active provider from .env.
+
+    Always returns a provider object; callers must check `.is_available` to catch
+    a missing API key or missing dependency.
+    """
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(override=False)
+    except ImportError:
+        pass
+
+    provider = (os.getenv("LLM_PROVIDER", "openai") or "openai").strip().lower()
+    if provider == "openrouter":
+        return OpenRouterProvider(
+            model=os.getenv("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL),
+            api_key=os.getenv("OPENROUTER_API_KEY", ""),
+            base_url=os.getenv("OPENROUTER_BASE_URL") or DEFAULT_OPENROUTER_BASE_URL,
+        )
 
     return OpenAIProvider(
-        model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
+        model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
         api_key=os.getenv("OPENAI_API_KEY", ""),
         base_url=os.getenv("OPENAI_BASE_URL") or None,
     )
@@ -154,7 +223,9 @@ if __name__ == "__main__":
     print(f"Provider:  {p.name}")
     print(f"Model:     {p.model}")
     print(f"Available: {p.is_available}")
-    if p.is_available:
+    if not p.is_available:
+        print(p.unavailable_message())
+    else:
         print("\nQuick test:")
         for chunk in p.stream_chat(
             messages=[{"role": "user", "content": "Reply with exactly: hello"}],

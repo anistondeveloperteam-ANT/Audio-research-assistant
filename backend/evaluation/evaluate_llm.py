@@ -9,7 +9,7 @@ Run from the project root (Oracle DB must be up and papers indexed):
     python -m backend.evaluation.evaluate_llm
 
     # Compare several models head-to-head (provider:model, comma-separated)
-    python -m backend.evaluation.evaluate_llm --models "openai:gpt-4o,openai:gpt-4o-mini,openai:gpt-4.1"
+    python -m backend.evaluation.evaluate_llm --models "openai:gpt-4o,openrouter:deepseek/deepseek-chat"
 
     # Add an LLM-as-judge correctness score (costs extra API calls)
     python -m backend.evaluation.evaluate_llm --judge --judge-model openai:gpt-4o
@@ -152,7 +152,7 @@ def evaluate_model(spec: Optional[str], questions: List[Dict[str, Any]],
     label = f"{provider.name}:{provider.model}"
     print(f"\n{'=' * 70}\nMODEL: {label}\n{'=' * 70}")
     if not provider.is_available:
-        print("  [skipped] provider not available (missing OPENAI_API_KEY).")
+        print(f"  [skipped] {provider.unavailable_message()}")
         return {"model": label, "available": False, "results": []}
 
     rows: List[Dict[str, Any]] = []
