@@ -11,7 +11,21 @@ companion to the git history.
 
 ---
 
+## 2026-06-09
+
+### Automated peer reviewer (idea from Awesome-AI-Scientist)
+- That repo is a reading list (no code); its useful concept is a **review system**.
+  Added `backend/answering/reviewer.py` (original code): `review(text)` returns a
+  structured peer review — summary, strengths, weaknesses, clarifying questions,
+  actionable suggestions, per-criterion scores (novelty/soundness/clarity/significance),
+  and a recommendation. CLI: `python -m backend.answering.reviewer <file|text|stdin>`.
+  Verified live; tests in `tests/test_reviewer.py` (mocked). 94 tests pass.
+
 ## 2026-06-08
+
+### Remove Sources panel + de-emoji login
+- Removed the Sources drawer/button/citation chips entirely; `[n]` markers are now
+  plain text. Replaced the login page's emojis with clean line-SVG icons.
 
 ### Share a public URL (`run.py --share`) + permanent custom domain
 - `python run.py --share` exposes a **public `https://…trycloudflare.com`** link anyone
