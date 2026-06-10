@@ -46,6 +46,11 @@ pypdf==6.11.0
 # --- Chat model client (openai SDK powers OpenRouter; Ollama uses HTTP/requests) ---
 openai==1.109.1
 
+# --- Agent orchestration (optional: RESEARCH_ENGINE=langgraph) ---
+# Powers backend/agent/langgraph_research.py. The app falls back to the built-in
+# research loop if this isn't installed, so it's safe to omit for a minimal setup.
+langgraph==1.2.4
+
 # --- Google Gemini (embeddings: EMBEDDING_PROVIDER=google) ---
 google-genai==1.75.0
 

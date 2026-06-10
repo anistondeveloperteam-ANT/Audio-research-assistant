@@ -13,6 +13,18 @@ companion to the git history.
 
 ## 2026-06-10
 
+### LangGraph research engine (optional)
+- New `backend/agent/langgraph_research.py`: the deep-research pipeline
+  (PLAN → SEARCH → SYNTHESIZE → REFLECT ⟲ → REPORT) is now also available as an explicit
+  **LangGraph** `StateGraph` — typed shared state, named nodes, and a conditional edge that
+  loops back to SEARCH until the question is covered or the round budget ends. The reasoning
+  steps are the proven `research_agent` functions (reused, not re-implemented).
+- Opt in with `RESEARCH_ENGINE=langgraph` (the web `/api/research` and the CLI then use it);
+  defaults to the built-in loop. LangGraph is an **optional** dependency — if it isn't
+  installed the app falls back gracefully. CLI: `python -m backend.agent.langgraph_research "…"`.
+- Added `langgraph==1.2.4` to requirements (optional); 5 offline (mocked) tests cover the
+  graph flow, the reflect→search loop, the round-budget cap, and the fallback path.
+
 ### Code agent works across providers (per-model routing)
 - Fixed: with chat on a cloud provider (e.g. DeepSeek/OpenRouter), a coding task sent
   `AGENT_MODEL=qwen2.5-coder:7b` to the wrong endpoint -> "not a valid model ID". Now a
