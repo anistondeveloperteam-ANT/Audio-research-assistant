@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Two models only — Gemini 2.5 Flash + GPT-5.5
+- Stripped the model picker and router down to exactly two: **Gemini · gemini-2.5-flash**
+  (free, reuses GEMINI_API_KEY) and **OpenAI · gpt-5.5** (needs OPENAI_CLOUD_KEY). Removed
+  Groq, local Ollama (dynamic listing), and DeepSeek/OpenRouter entirely — their routing
+  branches, constants (GROQ_MODELS/GROQ_BASE/OLLAMA_BASE/OPENROUTER_BASE), the `_local_models`
+  Ollama query, the unused `json`/`urllib` imports, and the GROQ/OPENROUTER keys + `AGENT_MODEL`
+  from `.env`. `route_model` is now: `gemini-*` → Gemini, everything else → OpenAI.
+- Active model set to `gemini-2.5-flash`; the code agent (no `AGENT_MODEL`) uses it too.
+
 ### Concise model picker: only working models + re-added GPT-5.5
 - Trimmed the dropdown to verified-working models only: **Groq llama-3.3-70b / llama-3.1-8b**
   (free), **Gemini 2.5 Flash** (free), **GPT-5.5** (your OpenAI key), plus any local **Ollama**.

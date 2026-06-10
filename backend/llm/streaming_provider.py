@@ -4,8 +4,8 @@ Streaming LLM backend: one OpenAI-compatible client for every provider.
 The chat UI calls this; nothing else cares about the details. Configure via .env:
 
     OPENAI_API_KEY=...                    (required)
-    OPENAI_MODEL=gemini-2.5-flash         (e.g. llama-3.3-70b-versatile, deepseek/deepseek-chat, qwen3:8b)
-    OPENAI_BASE_URL=...                   (per provider: Gemini / Groq / OpenRouter / Ollama)
+    OPENAI_MODEL=gemini-2.5-flash         (or gpt-5.5)
+    OPENAI_BASE_URL=...                   (Gemini endpoint, or blank for OpenAI)
 
 Public API:
 
@@ -26,38 +26,18 @@ import re
 from typing import Dict, Iterator, List, Optional
 
 DEFAULT_OPENAI_MODEL = "gemini-2.5-flash"
-OLLAMA_BASE = "http://localhost:11434/v1"
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
-GROQ_BASE = "https://api.groq.com/openai/v1"
-
-# Free, OpenAI-compatible models good for agentic loops (free-llm-api-resources, 2026).
-# Groq gives ~1,000 requests/day on Llama 3.3 70B — the best free pick for chained calls.
-GROQ_MODELS = {"llama-3.3-70b-versatile", "llama-3.1-8b-instant"}
 
 _AFFORD_RE = re.compile(r"can only afford (\d+)")
 
 
 def route_model(model: str):
-    """(base_url, api_key) for a model name, so a model override (e.g. the code
-    agent's AGENT_MODEL) connects to its OWN provider, not the active chat one:
-      gemini-*                     -> Google Gemini (GEMINI_API_KEY)  [free tier]
-      Groq free models             -> Groq          (GROQ_API_KEY)    [free, fast]
-      gpt-* / o* / chatgpt*        -> OpenAI         (OPENAI_CLOUD_KEY)
-      vendor/model slug            -> OpenRouter     (OPENROUTER_API_KEY)
-      anything else (qwen3:8b ...) -> local Ollama
+    """(base_url, api_key) for a model name. Two providers only:
+       gemini-* -> Google Gemini (GEMINI_API_KEY);  anything else -> OpenAI (OPENAI_CLOUD_KEY).
     """
-    m = (model or "").strip()
-    ml = m.lower()
-    if ml.startswith("gemini"):
+    if (model or "").strip().lower().startswith("gemini"):
         return GEMINI_BASE, os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
-    if m in GROQ_MODELS:
-        return GROQ_BASE, os.getenv("GROQ_API_KEY", "")
-    if ml.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
-        return "", os.getenv("OPENAI_CLOUD_KEY", "")
-    if "/" in m:
-        return OPENROUTER_BASE, os.getenv("OPENROUTER_API_KEY", "")
-    return OLLAMA_BASE, "ollama"
+    return "", os.getenv("OPENAI_CLOUD_KEY", "")
 
 
 def _affordable_tokens(message: str) -> Optional[int]:
@@ -145,7 +125,7 @@ class OpenAIProvider(LLMProvider):
                     yield_reasoning=False):
         """Yield answer content as strings. When `yield_reasoning=True`, also yields
         the model's hidden reasoning/'thinking' as {"reasoning": "..."} dicts (for
-        models like qwen3/DeepSeek-R1 that expose it) so the UI can show it."""
+        reasoning models that expose it) so the UI can show it."""
         import openai
 
         client = (openai.OpenAI(api_key=self.api_key, base_url=self.base_url)

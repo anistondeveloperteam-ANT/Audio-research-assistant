@@ -1,12 +1,9 @@
 """
 Chat-model selection for the web UI.
 
-One picker, several providers. A model is routed by its name:
-  - `gemini-*`                                 -> Google Gemini (GEMINI_API_KEY)  [free]
-  - Groq free models (llama-3.3-70b, ...)      -> Groq          (GROQ_API_KEY)    [free]
-  - `gpt-*` / `o*` / `chatgpt*`                -> OpenAI         (OPENAI_CLOUD_KEY)
-  - any other `vendor/model` slug              -> OpenRouter     (OPENROUTER_API_KEY)
-  - anything else (e.g. `qwen3:8b`)            -> local Ollama          (no key)
+Two models only, routed by name:
+  - `gemini-2.5-flash` -> Google Gemini (GEMINI_API_KEY)
+  - `gpt-5.5`          -> OpenAI         (OPENAI_CLOUD_KEY)
 
 Switching a model updates OPENAI_MODEL + OPENAI_BASE_URL + OPENAI_API_KEY in both the
 running process and the on-disk .env, so the whole connection switches — not just the
@@ -14,11 +11,9 @@ model string.
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 import sys
-import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -37,60 +32,28 @@ except Exception:
 
 DEFAULT_OPENAI_MODEL = "gemini-2.5-flash"
 
-OLLAMA_BASE = "http://localhost:11434/v1"
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-
 # Single source of truth for model -> (endpoint, key) routing, shared with the
 # provider factory so the dropdown and the code agent route models identically.
-from backend.llm.streaming_provider import route_model as _route, GROQ_MODELS  # noqa: E402
+from backend.llm.streaming_provider import route_model as _route  # noqa: E402
 
-# Concise picker — only models verified to work. Keys in .env: GROQ_API_KEY (free),
-# GEMINI_API_KEY (free), OPENAI_CLOUD_KEY (for GPT-5.5). Free ones first.
+# The only two models offered. Gemini reuses GEMINI_API_KEY; GPT-5.5 needs OPENAI_CLOUD_KEY.
 CLOUD_MODELS = [
-    "llama-3.3-70b-versatile",   # Groq — free, best for agentic loops (verified)
-    "llama-3.1-8b-instant",      # Groq — free, fast (verified)
-    "gemini-2.5-flash",          # Gemini — free (verified)
-    "gpt-5.5",                   # OpenAI — needs your OPENAI_CLOUD_KEY
+    "gemini-2.5-flash",   # Gemini — free
+    "gpt-5.5",            # OpenAI — needs OPENAI_CLOUD_KEY
 ]
 
 
 def _provider_name(model: str) -> str:
-    m = (model or "").strip()
-    ml = m.lower()
-    if ml.startswith("gemini"):
-        return "Gemini"
-    if m in GROQ_MODELS:
-        return "Groq"
-    if ml.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
-        return "OpenAI"
-    if ml.startswith("deepseek"):
-        return "DeepSeek"
-    if "/" in m:
-        return "OpenRouter"
-    return "Ollama"
+    return "Gemini" if (model or "").strip().lower().startswith("gemini") else "OpenAI"
 
 
 def _label(model: str) -> str:
-    return f"{_provider_name(model)} · {model.split('/')[-1]}"
+    return f"{_provider_name(model)} · {model}"
 
 
 def _available(model: str) -> bool:
     _, key = _route(model)
     return bool(key)
-
-
-def _local_models() -> List[str]:
-    """Models installed on the local Ollama server, queried directly so you can
-    always switch back to a local model regardless of the current selection. []
-    if Ollama is not running."""
-    try:
-        req = urllib.request.Request(OLLAMA_BASE + "/models",
-                                     headers={"Authorization": "Bearer ollama"})
-        with urllib.request.urlopen(req, timeout=2.0) as resp:
-            data = json.load(resp)
-        return sorted({m.get("id") for m in (data.get("data") or []) if m.get("id")})
-    except Exception:
-        return []
 
 
 def current() -> Dict[str, str]:
@@ -100,11 +63,9 @@ def current() -> Dict[str, str]:
 
 def list_models() -> Dict[str, Any]:
     cur = current()
-    models: List[str] = []
-    for m in list(_local_models()) + CLOUD_MODELS + [cur["model"], os.getenv("AGENT_MODEL", "")]:
-        m = (m or "").strip()
-        if m and m not in models:
-            models.append(m)
+    models: List[str] = list(CLOUD_MODELS)
+    if cur["model"] not in models:
+        models.insert(0, cur["model"])
     options = []
     for m in models:
         label = _label(m)

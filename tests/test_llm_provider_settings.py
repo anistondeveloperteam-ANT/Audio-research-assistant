@@ -43,9 +43,9 @@ class _Chunk:
 
 
 def test_stream_chat_shrinks_to_affordable_budget(monkeypatch):
-    # Regression: an OpenRouter 402 "can only afford 180" must shrink the budget BELOW
-    # 180 and still yield content — not silently return an empty answer.
-    p = OpenAIProvider(model="deepseek/deepseek-chat", api_key="k", base_url="http://openrouter")
+    # Regression: a 402 "can only afford 180" must shrink the budget BELOW 180 and still
+    # yield content — not silently return an empty answer.
+    p = OpenAIProvider(model="gpt-5.5", api_key="k", base_url="")
     tried = []
 
     def fake_open(client, openai_mod, msgs, budget, temperature):
@@ -61,36 +61,25 @@ def test_stream_chat_shrinks_to_affordable_budget(monkeypatch):
     assert tried[0] == 8000 and tried[-1] <= 180  # shrank from 8000 to within the cap
 
 
-def test_model_list_uses_openai_compatible_client(monkeypatch):
+def test_dropdown_has_exactly_two_models(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gemini-2.5-flash")
     data = settings.list_models()
-    # Every option goes through the one OpenAI-compatible client (provider field == openai).
-    assert data["current"]["provider"] == "openai"
-    assert {o["provider"] for o in data["options"]} == {"openai"}
-    # Concise dropdown: the verified-working models, incl. the GPT-5.5 option.
-    models = {o["model"] for o in data["options"]}
-    assert {"gemini-2.5-flash", "llama-3.3-70b-versatile", "gpt-5.5"} <= models
-    assert "deepseek/deepseek-chat" not in models   # removed (no credits)
+    assert data["current"]["provider"] == "openai"   # one OpenAI-compatible client
+    assert {o["model"] for o in data["options"]} == {"gemini-2.5-flash", "gpt-5.5"}
 
 
-def test_route_model_free_providers(monkeypatch):
-    from backend.llm.streaming_provider import route_model, GEMINI_BASE, GROQ_BASE
+def test_route_model_two_providers(monkeypatch):
+    from backend.llm.streaming_provider import route_model, GEMINI_BASE
     monkeypatch.setenv("GEMINI_API_KEY", "g-key")
-    monkeypatch.setenv("GROQ_API_KEY", "q-key")
     monkeypatch.setenv("OPENAI_CLOUD_KEY", "o-key")
     assert route_model("gemini-2.5-flash") == (GEMINI_BASE, "g-key")
-    assert route_model("llama-3.3-70b-versatile") == (GROQ_BASE, "q-key")
-    assert route_model("llama-3.1-8b-instant") == (GROQ_BASE, "q-key")
-    assert route_model("gpt-5.5") == ("", "o-key")      # OpenAI (empty base = api.openai.com)
-    # unrelated names still route to their providers
-    assert route_model("deepseek/deepseek-chat")[0].endswith("openrouter.ai/api/v1")
-    assert route_model("qwen3:8b")[0].endswith("11434/v1")
+    assert route_model("gpt-5.5") == ("", "o-key")     # OpenAI (empty base = api.openai.com)
 
 
-def test_dropdown_lists_free_groq_and_gemini(monkeypatch):
+def test_dropdown_labels_and_add_key(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "g-key")
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_CLOUD_KEY", raising=False)
     labels = [o["label"] for o in settings.list_models()["options"]]
     assert any("Gemini · gemini-2.5-flash" in x for x in labels)
-    # Groq present but flagged as needing a key
-    assert any("Groq · llama-3.3-70b-versatile" in x and "add key" in x for x in labels)
+    # GPT-5.5 present but flagged as needing a key
+    assert any("OpenAI · gpt-5.5" in x and "add key" in x for x in labels)
