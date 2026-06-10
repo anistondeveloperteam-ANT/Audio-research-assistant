@@ -13,6 +13,17 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Fix "(no answer)" on low-credit OpenRouter accounts
+- The provider's 402 "can only afford N tokens" handler had a 256-token floor, so when an
+  account could only afford fewer (e.g. 180) the retry kept requesting 256, failed every
+  time, and the stream **silently returned empty** — surfaced as "(no answer)" plus a fake
+  "0/100, 5 round(s)" verification footer. Now it shrinks to the actual affordable amount
+  (small floor) so a near-empty balance still yields a short real answer, and a persistent
+  failure **raises** instead of returning empty.
+- The agentic chat path now shows a clear, actionable message on a truly empty draft
+  (top up credits / use a free local Ollama model / lower `ANSWER_MAX_TOKENS`) instead of
+  "(no answer)" + a meaningless verification verdict. Added a mocked regression test.
+
 ### LangGraph research engine (optional)
 - New `backend/agent/langgraph_research.py`: the deep-research pipeline
   (PLAN → SEARCH → SYNTHESIZE → REFLECT ⟲ → REPORT) is now also available as an explicit

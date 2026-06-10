@@ -154,17 +154,26 @@ class OpenAIProvider(LLMProvider):
         # low-balance OpenRouter account) replies 402 "can only afford N tokens".
         budget = max_tokens
         stream = None
-        for _ in range(3):
+        last_err = None
+        for _ in range(4):
             try:
                 stream = self._open_stream(client, openai, msgs, budget, temperature)
                 break
             except Exception as e:  # noqa: BLE001 - inspect the message for an affordable cap
+                last_err = e
                 afford = _affordable_tokens(str(e))
-                if afford and afford < budget:
-                    budget = max(256, afford - 64)
+                # Shrink to what the account can actually afford (small floor, not 256,
+                # so a near-empty OpenRouter balance still yields a short answer).
+                new_budget = max(64, afford - 16) if afford else 0
+                if new_budget and new_budget < budget:
+                    budget = new_budget
                     continue
                 raise
         if stream is None:
+            # Never silently yield nothing — surface the failure so callers can show
+            # a real message instead of a fake "(no answer)".
+            if last_err is not None:
+                raise last_err
             return
 
         for chunk in stream:

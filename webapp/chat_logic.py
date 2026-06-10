@@ -736,11 +736,22 @@ def stream_chat_events(
                     review_note = _review_footer(rev)
 
             clean_body = answer or ""
-            final_answer = (answer or "(no answer)") + review_note + verification_footer(
-                verdict=verdict,
-                rounds=rounds_done,
-                run_info=run_info,
-            )
+            if not (answer or "").strip():
+                # Empty draft (e.g. an OpenRouter 402 capped output to ~0 tokens): show a
+                # real, actionable message instead of "(no answer)" + a fake verification.
+                final_answer = (
+                    "The model returned an empty answer. This usually means the request "
+                    "exceeded the provider's token budget — for example an OpenRouter 402 "
+                    "\"can only afford N tokens\" on a low-credit account. Try a model that "
+                    "has credits (a local Ollama model is free), or lower `ANSWER_MAX_TOKENS` "
+                    "and `EVIDENCE_BUDGET_CHARS` in `.env`."
+                )
+            else:
+                final_answer = answer + review_note + verification_footer(
+                    verdict=verdict,
+                    rounds=rounds_done,
+                    run_info=run_info,
+                )
             answer_parts.append(final_answer)
             yield {"type": "token", "text": final_answer}
         else:

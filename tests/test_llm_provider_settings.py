@@ -27,6 +27,41 @@ def test_request_variants_adapt_to_model():
     assert "max_completion_tokens" in new[0]
 
 
+class _Delta:
+    def __init__(self, content):
+        self.content = content
+
+
+class _Choice:
+    def __init__(self, content):
+        self.delta = _Delta(content)
+        self.finish_reason = None
+
+
+class _Chunk:
+    def __init__(self, content):
+        self.choices = [_Choice(content)]
+
+
+def test_stream_chat_shrinks_to_affordable_budget(monkeypatch):
+    # Regression: an OpenRouter 402 "can only afford 180" must shrink the budget BELOW
+    # 180 and still yield content — not silently return an empty answer.
+    p = OpenAIProvider(model="deepseek/deepseek-chat", api_key="k", base_url="http://openrouter")
+    tried = []
+
+    def fake_open(client, openai_mod, msgs, budget, temperature):
+        tried.append(budget)
+        if budget > 180:
+            raise Exception("Error code: 402 - requires more credits ... can only afford 180 tokens")
+        return [_Chunk("MVDR is "), _Chunk("a beamformer.")]
+
+    monkeypatch.setattr(p, "_open_stream", fake_open)
+    out = "".join(c for c in p.stream_chat([{"role": "user", "content": "hi"}], max_tokens=8000)
+                  if isinstance(c, str))
+    assert out == "MVDR is a beamformer."        # non-empty: the shrink succeeded
+    assert tried[0] == 8000 and tried[-1] <= 180  # shrank from 8000 to within the cap
+
+
 def test_model_list_is_openai_only(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
     data = settings.list_models()
