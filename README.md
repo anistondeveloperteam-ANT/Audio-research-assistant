@@ -1,478 +1,207 @@
 <div align="center">
 
-# Research Assistant
+# 🔎 Research Assistant
 
-**A source-grounded research workspace for papers, web sources, patents, GitHub repos, and runnable code.**
-
-Ask a technical question. The app searches the right sources, reads the evidence,
-checks the answer, and streams back a cited response you can inspect.
+**Ask anything technical — it searches everywhere, reads the evidence, runs the code, and gives you a clean, verified answer.**
 
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-web_app-009688?logo=fastapi&logoColor=white)
-![Oracle](https://img.shields.io/badge/Oracle_23ai-vector_DB-F80000?logo=oracle&logoColor=white)
-![Frontend](https://img.shields.io/badge/frontend-HTML_CSS_JS-blue)
+![Frontend](https://img.shields.io/badge/frontend-no_build_step-blue)
+![Models](https://img.shields.io/badge/models-OpenAI_·_OpenRouter_·_Ollama-6d7bff)
 ![Tests](https://img.shields.io/badge/tests-pytest-2ea44f)
 
-[Quick start](#quick-start) |
-[How it works](#how-it-works) |
-[Configuration](#configuration) |
-[Project layout](#project-layout) |
-[Docs](#docs)
+[🚀 Quick start](#-quick-start-2-minutes) ·
+[✨ What it does](#-what-it-does) ·
+[🧩 Pick a model](#-pick-a-model-free-options-too) ·
+[🧠 How it works](#-how-it-works) ·
+[⚙️ Configuration](#%EF%B8%8F-configuration)
 
 </div>
 
 ---
 
-## What This Is
+## ✨ What it does
 
-Research Assistant is a local web app for technical research. It is built for
-questions like:
+Type a question. Behind the scenes it:
 
-- "Compare MVDR beamforming with modern neural beamformers."
-- "Read this paper and explain the algorithm."
-- "Find recent GitHub implementations and write a clean Python version."
-- "Search papers, patents, and repos before answering."
-- "Generate a small simulation and verify that it runs."
+1. **Plans** a few angles on your question.
+2. **Searches everywhere** — the web, arXiv, Semantic Scholar, Wikipedia, patents, GitHub, **and your own PDFs**.
+3. **Writes** a clear, well‑structured answer — with **rendered math** ($\LaTeX$) and IDE‑style code blocks.
+4. **Checks itself** — verifies the answer against the evidence and **auto‑reviews** it for quality (no button to click).
+5. **Remembers** it — ask the same or a *similar* question again and it answers **instantly from memory**, spending nothing.
 
-The important bit: answers are grounded in evidence. Sources are shown in the UI,
-and non-trivial claims are cited with numbered references.
+For coding questions it can **write Python and run it** in a locked‑down Docker sandbox, refining until it works.
 
----
-
-## At A Glance
-
-| Area | What the app does |
-|------|-------------------|
-| Web UI | Streaming chat, source drawer, model picker, dark mode, conversation history |
-| External research | Searches web pages, arXiv, Semantic Scholar, Wikipedia, patents, GitHub, and online PDFs |
-| Local papers | Upload PDFs, parse them, embed chunks, and search them with Oracle vector search |
-| Answering | Builds cited evidence, drafts an answer, verifies it, and searches again when needed |
-| Code tasks | Can write Python and run it in a locked-down Docker sandbox |
-| Safety | SSRF guard, request limits, secret-safe `.env`, Docker isolation for generated code |
+> 💡 **Try asking:**
+> - *"Compare MVDR beamforming with modern neural beamformers."*
+> - *"Read this paper and explain the algorithm."*
+> - *"Find recent GitHub implementations and write a clean Python version."*
+> - *"Implement and benchmark quicksort vs mergesort on 100k integers."*
 
 ---
 
-## How It Works
+## 🚀 Quick start (2 minutes)
+
+```bash
+python -m venv .venv
+# Windows:        .\.venv\Scripts\Activate.ps1
+# macOS / Linux:  source .venv/bin/activate
+pip install -r requirements.txt
+copy .env.example .env        # macOS/Linux: cp .env.example .env
+python run.py
+```
+
+Then open **http://localhost:8600** and ask away. It runs on `127.0.0.1` (this machine only).
+
+You only need **one** thing in `.env`: a chat model (see below). Web search works out of the box with **no API key**.
+
+---
+
+## 🧩 Pick a model (free options too)
+
+The chat client is OpenAI‑compatible, so it works with several providers — just set three lines in `.env`. **No code changes needed.**
+
+| Option | Cost | `.env` |
+|--------|------|--------|
+| 🖥️ **Local Ollama** (offline) | **Free** | `OPENAI_API_KEY=ollama`<br>`OPENAI_BASE_URL=http://localhost:11434/v1`<br>`OPENAI_MODEL=qwen3:8b` |
+| 🟣 **OpenRouter** (DeepSeek, Claude, 300+) | cheap | `OPENAI_API_KEY=sk-or-v1-…`<br>`OPENAI_BASE_URL=https://openrouter.ai/api/v1`<br>`OPENAI_MODEL=deepseek/deepseek-chat` |
+| 🟢 **OpenAI** | paid | `OPENAI_API_KEY=sk-…`<br>`OPENAI_MODEL=gpt-4o` |
+| 🔵 **Google Gemini** (free tier) | **Free** | `OPENAI_API_KEY=<gemini key>`<br>`OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`<br>`OPENAI_MODEL=gemini-2.5-flash` |
+
+<details>
+<summary><b>🛠️ Run fully local + free with Ollama</b></summary>
+
+```bash
+ollama pull qwen3:8b            # chat / research model
+ollama pull qwen2.5-coder:7b   # (optional) model for coding tasks
+```
+Then in `.env`:
+```env
+OPENAI_API_KEY=ollama
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_MODEL=qwen3:8b
+AGENT_MODEL=qwen2.5-coder:7b   # the code agent uses the coder model
+```
+> Local models are private and free, but slower. If answers feel sluggish, lower
+> `DEEP_SEARCH_SUBQUERIES=1` and `AGENTIC_MAX_VERIFY_ROUNDS=1` in `.env`.
+
+</details>
+
+You can also switch models live from the **Model** dropdown in the top bar.
+
+---
+
+## 🧠 How it works
 
 ```mermaid
 flowchart LR
-    Q[Question] --> LOCAL[Local PDFs]
-    Q --> EXT[Web / papers / patents / GitHub]
-
-    LOCAL --> RANK[Merge and rerank evidence]
-    EXT --> RANK
-
-    RANK --> DRAFT[Draft cited answer]
-    DRAFT --> VERIFY[Verify support and completeness]
-    VERIFY -->|Missing evidence| EXT
-    VERIFY -->|Looks good| FINAL[Final answer in the UI]
-
-    DRAFT -->|Python block| DOCKER[Run in Docker sandbox]
+    Q[Your question] --> M{Seen a similar<br/>question before?}
+    M -- yes --> CACHE[Answer from memory ⚡]
+    M -- no --> PLAN[Plan a few angles]
+    PLAN --> SEARCH[Search everywhere<br/>web · papers · patents · GitHub · your PDFs]
+    SEARCH --> WRITE[Write a cited answer<br/>+ rendered math]
+    WRITE --> VERIFY[Verify vs. evidence]
+    VERIFY -- gaps --> SEARCH
+    VERIFY -- ok --> REVIEW[Auto-review]
+    REVIEW --> OUT[Answer in the browser]
+    WRITE -- has Python? --> DOCKER[Run in Docker sandbox]
     DOCKER --> VERIFY
 ```
 
-The pipeline is intentionally boring in the best way:
-
-1. Search broadly.
-2. Keep the best evidence.
-3. Ask the model to answer only from that evidence.
-4. Verify the answer.
-5. Search again if the answer is weak.
-6. Show the final answer with citations.
+The idea is simple: **search broadly → keep the best evidence → answer only from it → check the answer → remember it.**
 
 ---
 
-## Quick Start
+## 📚 Use your own PDFs (optional)
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env
-python run.py
-```
-
-Open:
-
-```text
-http://localhost:8600
-```
-
-The app binds to `127.0.0.1` by default, so it is local to your machine.
-
-<details>
-<summary><strong>macOS / Linux shell version</strong></summary>
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-python run.py
-```
-
-</details>
-
----
-
-## Choose A Setup
-
-### Option 1: Web-only mode
-
-Use this when you want the fastest setup with no Oracle database and no uploaded
-papers.
-
-```env
-ENABLE_LOCAL_RAG=false
-ENABLE_WEB_SEARCH=true
-
-OPENAI_API_KEY=<key>
-OPENAI_MODEL=gpt-4o
-```
-
-Free external sources still work out of the box:
-
-- DuckDuckGo
-- arXiv
-- Semantic Scholar
-- Wikipedia
-- GitHub repo search
-
-Optional paid search keys such as Tavily, Brave, or SerpAPI can improve web
-search quality.
-
-### Option 2: Add your own PDFs
-
-Use this when you want your uploaded papers searched together with public sources.
+Want it to also search papers you upload? Turn on local search:
 
 ```env
 ENABLE_LOCAL_RAG=true
-ORACLE_DSN=localhost:1521/FREEPDB1
-GEMINI_API_KEY=<key>
+ORACLE_DSN=localhost:1521/FREEPDB1     # Oracle 23ai (e.g. in Docker)
+GEMINI_API_KEY=<key>                   # free embeddings: https://aistudio.google.com/apikey
 ```
 
-Then upload PDFs from the app. The pipeline parses, chunks, embeds, and stores
-them for retrieval.
-
-### Option 3: OpenRouter or another OpenAI-compatible provider
-
-The chat client is OpenAI-compatible. You can point it at an OpenAI-compatible
-proxy such as OpenRouter:
-
-```env
-OPENAI_API_KEY=<key>
-OPENAI_BASE_URL=https://openrouter.ai/api/v1
-OPENAI_MODEL=deepseek/deepseek-chat
-```
-
-Keep real keys only in `.env`. Never commit `.env`.
+Then click **＋ Add papers** in the sidebar. Your PDFs are parsed, chunked, embedded, and searched **together with the web** on every question. Otherwise the app runs **web‑only** with no database.
 
 ---
 
-## What You Can Search
+## 🤖 Autonomous code agent
 
-| Source | Default support | Notes |
-|--------|-----------------|-------|
-| Uploaded PDFs | Optional | Requires local Oracle RAG setup |
-| Web pages | Yes | DuckDuckGo by default; Tavily/Brave/SerpAPI optional |
-| Research papers | Yes | arXiv and Semantic Scholar |
-| Wikipedia | Yes | Useful for background and definitions |
-| Patents | Yes | Routed through web search with patent focus |
-| GitHub repos | Yes | Token optional for higher limits |
-| GitHub code search | Optional | Requires `GITHUB_TOKEN` |
-| Online PDFs | Yes | Size and page capped |
-
----
-
-## Local PDF Pipeline
-
-```mermaid
-flowchart TD
-    PDF[PDF files] --> PARSE[Docling parser]
-    PARSE -->|fallback| PYMUPDF[PyMuPDF]
-    PARSE --> CHUNK[Section-aware chunks]
-    PYMUPDF --> CHUNK
-    CHUNK --> TAG[Concept and metadata tags]
-    TAG --> EMBED[Gemini embeddings]
-    EMBED --> ORACLE[(Oracle 23ai VECTOR)]
-    ORACLE --> RETRIEVE[Hybrid retrieval]
-```
-
-The local pipeline combines:
-
-- Docling for layout-aware parsing.
-- PyMuPDF as a fallback.
-- Optional OCR for scanned PDFs.
-- Gemini embeddings for vectors.
-- Oracle 23ai native vector search.
-- Optional turbovec compressed vector cache for faster local dense search.
-- BM25 keyword search.
-- RRF fusion, cross-encoder reranking, and MMR diversification.
-
----
-
-## Answer Verification
-
-The web chat can run a bounded verification loop:
-
-```mermaid
-flowchart TD
-    A[Draft answer] --> B[Check citations and evidence support]
-    B --> C{Good enough?}
-    C -->|No| D[Search again]
-    D --> E[Rewrite with more evidence]
-    E --> B
-    C -->|Yes| F[Return final answer]
-```
-
-If the answer contains Python, the app can run the best code block in the same
-networkless Docker sandbox used by the CLI agent. The run result is included in
-verification so broken code is easier to catch.
-
----
-
-## Agent Mode
-
-For coding or algorithm tasks, the assistant can move beyond plain Q&A:
-
-```text
-think -> write code -> run in Docker -> review output -> refine
-```
-
-CLI examples:
+Ask a coding/algorithm task and it loops **think → write code → run in Docker → review → refine** until it has a verified program — you watch each step live. Or from the CLI:
 
 ```bash
 python -m backend.agent "Find the fastest correct primality test up to 10^7 and benchmark it"
-python -m backend.agent --no-search --iters 6 "Compare quicksort and mergesort on 100k integers"
-python -m backend.agent --brief docs/PROJECT_BRIEF.example.md
 ```
 
-Docker is required for code execution. Generated code is not run directly on the
-host machine.
+Generated code runs **only** inside a network‑less, resource‑capped, auto‑removed container — never on your machine.
+
+There's also a standalone **deep‑research** agent that writes a full cited report:
+
+```bash
+python -m backend.agent.research_agent "How do modern neural beamformers compare to MVDR?"
+```
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
-The real `.env` file is private and ignored by Git. The public template is
-[.env.example](.env.example).
+The real `.env` is private and gitignored. The full, commented template is **[.env.example](.env.example)**. The settings you'll actually touch:
 
-Common settings:
-
-| Variable | Meaning |
-|----------|---------|
-| `OPENAI_API_KEY` | Chat model key |
-| `OPENAI_MODEL` | Chat model name or OpenAI-compatible model slug |
-| `OPENAI_BASE_URL` | Optional OpenAI-compatible endpoint |
-| `GEMINI_API_KEY` | Gemini embeddings key |
-| `ENABLE_WEB_SEARCH` | Enable public source search |
-| `ENABLE_LOCAL_RAG` | Enable local Oracle/PDF retrieval |
-| `VECTOR_BACKEND` | `oracle` or optional `turbovec` dense retrieval |
-| `TURBOVEC_ENABLED` | Enable optional compressed local vector cache |
-| `ENABLE_GRAPH_RAG` | Enable optional Memgraph expansion |
-| `ENABLE_AUTH` | Require login |
-| `EXTERNAL_ALLOW_UNSAFE_URLS` | Disable SSRF guard; keep `false` for shared deployments |
-| `ENABLE_AGENTIC_ANSWER_LOOP` | Enable draft -> verify -> refine loop |
+| Variable | What it does |
+|----------|--------------|
+| `OPENAI_API_KEY` / `OPENAI_MODEL` / `OPENAI_BASE_URL` | Your chat model (any OpenAI‑compatible provider) |
+| `AGENT_MODEL` | Optional model just for the code agent (e.g. `qwen2.5-coder:7b`) |
+| `ENABLE_WEB_SEARCH` | Search the public web/papers/patents/GitHub (on by default) |
+| `ENABLE_LOCAL_RAG` | Also search your uploaded PDFs (needs Oracle) |
+| `ENABLE_ANSWER_CACHE` | Reuse saved answers for repeat/similar questions |
+| `AUTO_REVIEW` | Peer‑review every answer automatically (off for faster local runs) |
+| `ENABLE_AUTH` | Require login; private per‑user chats |
 
 <details>
-<summary><strong>Example minimal .env</strong></summary>
+<summary><b>🔗 Share it with others</b></summary>
 
-```env
-DEBUG_MODE=false
-
-OPENAI_API_KEY=<key>
-OPENAI_MODEL=gpt-4o
-
-ENABLE_WEB_SEARCH=true
-ENABLE_LOCAL_RAG=false
-
-GEMINI_API_KEY=<key>
-EMBEDDING_PROVIDER=google
-EMBEDDING_MODEL=gemini-embedding-2
-
-ENABLE_AUTH=false
-EXTERNAL_ALLOW_UNSAFE_URLS=false
+```bash
+python run.py --share   # public https://…trycloudflare.com link (no account needed)
+python run.py --lan     # reachable by other devices on your Wi-Fi
 ```
+Keep `ENABLE_AUTH=true` so visitors must sign in, and set `EXTERNAL_ALLOW_UNSAFE_URLS=false` before exposing it.
 
 </details>
 
 ---
 
-## Optional GraphRAG
+## 🔒 Safe by design
 
-GraphRAG adds relationship-aware expansion over your indexed PDFs. It can help
-with comparison questions and multi-hop questions.
+- Generated code runs only in a **network‑less, resource‑capped Docker sandbox**.
+- **SSRF guard** blocks fetches to localhost/private IPs; every request is size‑ and time‑capped.
+- API keys stay server‑side in `.env` (gitignored) and are never logged or sent to the browser.
+
+---
+
+## 🧪 Develop
 
 ```bash
-docker run -p 7687:7687 -p 7444:7444 --name memgraph memgraph/memgraph-mage
+.\.venv\Scripts\python.exe -m pytest          # run the test suite
+.\.venv\Scripts\pyflakes backend webapp tests # lint
+python pipeline.py --status                   # inspect the local PDF index
 ```
 
-```env
-ENABLE_LOCAL_RAG=true
-ENABLE_GRAPH_RAG=true
-MEMGRAPH_URI=bolt://localhost:7687
+## 🗂️ Project layout
+
+```
+backend/      retrieval · external search · LLM provider · agent · memory · embeddings
+webapp/       FastAPI server + chat orchestration + static UI (no build step)
+docs/         deeper architecture notes
+run.py        launch the web app (--share / --lan)
 ```
 
-Build the graph:
+## 📄 Docs
 
-```bash
-python -m backend.graph_rag.build_graph
-```
-
-Oracle remains the source of truth for full text and citations. Memgraph only
-adds relationship expansion.
-
----
-
-## Optional Turbovec
-
-turbovec is an optional compressed vector-search cache for local PDFs. Oracle
-still stores papers, chunks, metadata, and citations; turbovec only speeds up
-the dense-vector candidate search.
-
-```env
-ENABLE_LOCAL_RAG=true
-VECTOR_BACKEND=turbovec
-TURBOVEC_ENABLED=true
-TURBOVEC_BIT_WIDTH=4
-TURBOVEC_OVERFETCH=3
-```
-
-Build or inspect the cache:
-
-```bash
-python -m backend.retrieval.turbovec_index build
-python -m backend.retrieval.turbovec_index status
-```
-
-If the cache is missing or stale, the app can rebuild it automatically. If
-turbovec is unavailable, retrieval falls back to Oracle unless
-`TURBOVEC_STRICT=true`.
-
----
-
-## Team Login
-
-Enable auth:
-
-```env
-ENABLE_AUTH=true
-AUTH_SECRET_KEY=generate_a_long_random_value
-```
-
-Create users:
-
-```bash
-python -m backend.auth.users add alice
-python -m backend.auth.users list
-python -m backend.auth.users passwd alice
-python -m backend.auth.users delete alice
-```
-
-When auth is enabled, each user gets private conversations.
-
----
-
-## Safety Notes
-
-- `.env` contains secrets and must not be committed.
-- Keep `EXTERNAL_ALLOW_UNSAFE_URLS=false` before sharing the app.
-- Generated Python runs inside Docker, not on the host.
-- External fetches are size-capped and timeout-limited.
-- API keys stay server-side.
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Backend | Python 3.11, FastAPI, Uvicorn |
-| Frontend | HTML, CSS, vanilla JavaScript |
-| Streaming | Server-Sent Events |
-| Local vector DB | Oracle Database Free 23ai |
-| Optional vector accelerator | turbovec |
-| Local graph | Memgraph, optional |
-| Embeddings | Gemini `gemini-embedding-2` or local sentence-transformers |
-| Reranking | BAAI `bge-reranker-v2-m3` |
-| PDF parsing | Docling, PyMuPDF, optional OCR |
-| Chat model | OpenAI client, with optional OpenAI-compatible base URL |
-| External search | DuckDuckGo, Tavily, Brave, SerpAPI, arXiv, Semantic Scholar, Wikipedia, GitHub |
-| Code sandbox | Docker |
-| Tests | pytest |
-
----
-
-## Project Layout
-
-```text
-Audio-research-assistant/
-|-- run.py                  # local web launcher
-|-- pipeline.py             # local PDF index builder
-|-- backend/
-|   |-- agent/              # code agent, sandbox runner, hooks, memory
-|   |-- answering/          # answer loop, verifier, reviewer
-|   |-- external_search/    # web, papers, patents, GitHub, online PDFs
-|   |-- graph_rag/          # optional Memgraph GraphRAG
-|   |-- ingestion/          # PDF parsing, chunking, embedding
-|   |-- llm/                # streaming chat provider
-|   |-- retrieval/          # hybrid retrieval and fusion
-|   |-- memory/             # conversation memory and backup
-|-- webapp/                 # FastAPI app and static UI
-|-- scripts/                # admin/operator helpers
-|-- tests/                  # pytest suite
-|-- docs/                   # architecture and project notes
-|-- data/                   # local runtime data, caches, papers, logs
-```
-
-More naming guidance lives in [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md).
-
----
-
-## Development
-
-```bash
-python -m pytest -q
-pyflakes backend webapp
-```
-
-Useful commands:
-
-```bash
-python pipeline.py --status
-python pipeline.py --incremental
-python -m backend.database.db_status
-python -m backend.evaluation.evaluate_retrieval
-python -m backend.evaluation.evaluate_llm
-```
-
----
-
-## Docs
-
-| Document | What it is for |
-|----------|----------------|
-| [docs/PIPELINE.md](docs/PIPELINE.md) | End-to-end architecture walkthrough |
-| [docs/TECH_STACK.md](docs/TECH_STACK.md) | Tool and technology reference |
-| [docs/TECHNOLOGY_AND_IMPROVEMENTS.md](docs/TECHNOLOGY_AND_IMPROVEMENTS.md) | Design choices and improvements |
-| [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) | Folder and naming rules |
-| [docs/TURBOVEC_ACCELERATOR.md](docs/TURBOVEC_ACCELERATOR.md) | Optional compressed vector-search cache |
-| [docs/CLAUDE_INTERACTIVE_PDF_BRIEF.md](docs/CLAUDE_INTERACTIVE_PDF_BRIEF.md) | Prompt brief for generating an interactive PDF |
-
----
-
-## License And Credits
-
-This repo includes project-specific Claude Code guidance and selected ECC-derived
-workflow material. Imported ECC material is MIT licensed; see `.claude/ECC_LICENSE`.
-
-The code agent design credits ideas from `auto-deep-researcher-24x7`
-(Apache-2.0), implemented here as original project code.
+More detail lives in **[docs/](docs/)** — pipeline, tech stack, and project structure.
 
 ---
 
 <div align="center">
-
-Built for research answers that can be checked, traced, and improved.
-
+<sub>Built with Python · FastAPI · vanilla HTML/CSS/JS · KaTeX · Docker. No frontend build step.</sub>
 </div>

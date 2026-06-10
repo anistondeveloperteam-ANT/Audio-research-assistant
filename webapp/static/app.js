@@ -103,11 +103,56 @@
     setTimeout(() => { t.style.opacity = "0"; t.style.transition = "opacity .3s"; setTimeout(() => t.remove(), 320); }, 3400);
   }
 
-  // ---------- Markdown + citations ----------
+  // ---------- Markdown + math + citations ----------
   function renderMarkdown(el, text) {
-    el.innerHTML = marked.parse(text || "", { breaks: true, gfm: true });
-    linkifyCitations(el);
+    // 1) Protect $…$ / $$…$$ math from the markdown parser (so underscores/backslashes
+    //    survive), 2) parse markdown, 3) restore the raw math, 4) render it with KaTeX.
+    const math = [];
+    const src = (text || "").replace(/\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g, (m) => {
+      math.push(m);
+      return "@@MATH" + (math.length - 1) + "@@";
+    });
+    let html = marked.parse(src, { breaks: true, gfm: true });
+    html = html.replace(/@@MATH(\d+)@@/g, (_, i) => esc(math[+i]));
+    el.innerHTML = html;
+    stripCitations(el);        // drop ugly inline [n] markers (never inside code)
+    renderMath(el);            // KaTeX
     enhanceCodeBlocks(el);
+  }
+
+  function renderMath(el) {
+    if (!window.renderMathInElement) return;
+    try {
+      window.renderMathInElement(el, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "$", right: "$", display: false },
+          { left: "\\[", right: "\\]", display: true },
+          { left: "\\(", right: "\\)", display: false },
+        ],
+        throwOnError: false,
+        ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+      });
+    } catch (e) {}
+  }
+
+  // Remove inline bracketed citations ([2], [12], [3, 4]) from the rendered answer —
+  // they look noisy. Skips code/links so it never mangles things like arr[12].
+  function stripCitations(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => {
+        const p = n.parentElement;
+        if (!p || p.closest("pre, code, a")) return NodeFilter.FILTER_REJECT;
+        return /\[\d+(?:\s*,\s*\d+)*\]/.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      },
+    });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const node of nodes) {
+      node.nodeValue = node.nodeValue
+        .replace(/[ \t]*\[\d+(?:\s*,\s*\d+)*\]/g, "")
+        .replace(/[ \t]{2,}/g, " ");
+    }
   }
 
   function enhanceCodeBlocks(root) {
@@ -372,53 +417,7 @@
       navigator.clipboard.writeText(h.md.innerText).then(() => toast("Answer copied"));
     });
     h.tools.appendChild(copy);
-
-    // "Review" — a structured peer review of this answer (or paste any text).
-    if (!meta || meta.model !== "review") {
-      const rev = document.createElement("button");
-      rev.className = "tool-btn";
-      rev.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> Review`;
-      rev.addEventListener("click", () => runReview(h, rev));
-      h.tools.appendChild(rev);
-    }
-  }
-
-  async function runReview(h, btn) {
-    if (state.streaming) { toast("Please wait for the answer to finish."); return; }
-    const text = (h.md.innerText || "").trim();
-    if (!text) { toast("Nothing to review yet."); return; }
-    const orig = btn.innerHTML;
-    btn.disabled = true; btn.textContent = "Reviewing…";
-    const rh = addAssistantMessage();
-    rh.statusText.textContent = "Reviewing the answer…";
-    try {
-      const r = await api.review(text);
-      rh.statusEl.style.display = "none"; rh.md.style.display = "";
-      renderMarkdown(rh.md, r && !r.error ? reviewToMarkdown(r)
-                    : "_Review failed: " + ((r && r.error) || "unknown error") + "_");
-    } catch (e) {
-      rh.statusEl.style.display = "none"; rh.md.style.display = "";
-      renderMarkdown(rh.md, "_Review failed: " + (e.message || "") + "_");
-    } finally {
-      btn.disabled = false; btn.innerHTML = orig;
-      scrollToBottom();
-    }
-  }
-
-  function reviewToMarkdown(r) {
-    const list = (a) => (a && a.length) ? a.map((x) => "- " + x).join("\n") : "_none_";
-    const sc = r.scores || {};
-    const scoreStr = Object.keys(sc).map((k) => `${k} ${sc[k]}`).join(" · ");
-    let md = "### Review\n";
-    if (r.summary) md += `**Summary.** ${r.summary}\n\n`;
-    if (r.recommendation) md += `**Recommendation:** ${r.recommendation}` +
-      (r.confidence ? ` (confidence ${r.confidence}/5)` : "") + "\n\n";
-    if (scoreStr) md += `**Scores:** ${scoreStr}\n\n`;
-    md += `**Strengths**\n${list(r.strengths)}\n\n`;
-    md += `**Weaknesses**\n${list(r.weaknesses)}\n\n`;
-    if (r.questions && r.questions.length) md += `**Questions**\n${list(r.questions)}\n\n`;
-    md += `**Suggestions**\n${list(r.suggestions)}\n`;
-    return md;
+    // The answer is peer-reviewed automatically (AUTO_REVIEW) — no manual button.
   }
 
   // ----- per-query source navigation -----

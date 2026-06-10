@@ -13,6 +13,17 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Polished answers + UI cleanup
+- **Math now renders** — `$…$` / `$$…$$` formulas display properly via KaTeX (the
+  markdown parser is protected from mangling the LaTeX first).
+- **Removed noisy inline `[n]` citations** from the rendered answer (kept out of code
+  blocks), for a clean Claude/ChatGPT-style result.
+- **Removed the manual "Review" button** — answers are peer-reviewed automatically
+  (`AUTO_REVIEW`); the dead handlers were deleted too.
+- Confirmed the code agent uses the local **qwen2.5-coder:7b** (`AGENT_MODEL`).
+- Rewrote the **README** to be friendlier and interactive (free local/Gemini model
+  options, a flow diagram, collapsible sections).
+
 ### Saved-answer reuse (semantic cache) — finished + hardened
 - Reuse a prior answer for the same/very-similar question (per user) instead of
   re-searching + re-calling the LLM. Matching is near-exact **lexical** (>=0.97) OR

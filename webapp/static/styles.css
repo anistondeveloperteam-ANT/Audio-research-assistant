@@ -514,6 +514,9 @@ body {
 .speed-badge svg { color: var(--accent-600); }
 .mem-badge { color: var(--text-soft); background: var(--surface-2); border-color: var(--border); }
 .mem-badge svg { color: var(--text-soft); }
+/* KaTeX math: let wide display formulas scroll instead of overflowing the bubble */
+.katex-display { margin: .85em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 1px; }
+.katex { font-size: 1.02em; }
 
 /* source cards lift a touch on hover */
 .source-card { transition: border-color .14s ease, box-shadow .14s ease, transform .14s ease; }
