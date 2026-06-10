@@ -67,18 +67,21 @@ def test_model_list_uses_openai_compatible_client(monkeypatch):
     # Every option goes through the one OpenAI-compatible client (provider field == openai).
     assert data["current"]["provider"] == "openai"
     assert {o["provider"] for o in data["options"]} == {"openai"}
-    assert any(o["model"] == "gemini-2.5-flash" for o in data["options"])
-    # GPT/OpenAI-cloud option was removed.
-    assert not any(o["model"].startswith("gpt-") for o in data["options"])
+    # Concise dropdown: the verified-working models, incl. the GPT-5.5 option.
+    models = {o["model"] for o in data["options"]}
+    assert {"gemini-2.5-flash", "llama-3.3-70b-versatile", "gpt-5.5"} <= models
+    assert "deepseek/deepseek-chat" not in models   # removed (no credits)
 
 
 def test_route_model_free_providers(monkeypatch):
     from backend.llm.streaming_provider import route_model, GEMINI_BASE, GROQ_BASE
     monkeypatch.setenv("GEMINI_API_KEY", "g-key")
     monkeypatch.setenv("GROQ_API_KEY", "q-key")
+    monkeypatch.setenv("OPENAI_CLOUD_KEY", "o-key")
     assert route_model("gemini-2.5-flash") == (GEMINI_BASE, "g-key")
     assert route_model("llama-3.3-70b-versatile") == (GROQ_BASE, "q-key")
     assert route_model("llama-3.1-8b-instant") == (GROQ_BASE, "q-key")
+    assert route_model("gpt-5.5") == ("", "o-key")      # OpenAI (empty base = api.openai.com)
     # unrelated names still route to their providers
     assert route_model("deepseek/deepseek-chat")[0].endswith("openrouter.ai/api/v1")
     assert route_model("qwen3:8b")[0].endswith("11434/v1")

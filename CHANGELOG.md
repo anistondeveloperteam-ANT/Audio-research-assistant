@@ -13,6 +13,14 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Concise model picker: only working models + re-added GPT-5.5
+- Trimmed the dropdown to verified-working models only: **Groq llama-3.3-70b / llama-3.1-8b**
+  (free), **Gemini 2.5 Flash** (free), **GPT-5.5** (your OpenAI key), plus any local **Ollama**.
+  Removed DeepSeek (OpenRouter out of credits → 402) and Gemini 2.0 Flash (daily quota → 429).
+- Re-added GPT-5.5 routing (now that a valid key is available): `gpt-*` → OpenAI via
+  `OPENAI_CLOUD_KEY`. Paste the ChatGPT/OpenAI key into `OPENAI_CLOUD_KEY` in `.env`, then pick
+  "OpenAI · gpt-5.5" in the dropdown. (Dark mode remains the default theme.)
+
 ### Removed the GPT/OpenAI-cloud option (dead key)
 - Live-tested every model in the picker. GPT-5.5 and GPT-4o both returned 401 "Invalid API
   Key", so the OpenAI-cloud option was removed completely: dropped from the dropdown

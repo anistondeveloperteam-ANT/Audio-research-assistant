@@ -2,10 +2,11 @@
 Chat-model selection for the web UI.
 
 One picker, several providers. A model is routed by its name:
-  - `gemini-*`                                 -> Google Gemini (GEMINI_API_KEY) [free]
-  - Groq free models (llama-3.3-70b, ...)      -> Groq          (GROQ_API_KEY)   [free]
-  - `deepseek/...` or any `vendor/model` slug  -> DeepSeek / OpenRouter (OPENROUTER_API_KEY)
-  - anything else (e.g. `qwen3:8b`)            -> local Ollama         (no key)
+  - `gemini-*`                                 -> Google Gemini (GEMINI_API_KEY)  [free]
+  - Groq free models (llama-3.3-70b, ...)      -> Groq          (GROQ_API_KEY)    [free]
+  - `gpt-*` / `o*` / `chatgpt*`                -> OpenAI         (OPENAI_CLOUD_KEY)
+  - any other `vendor/model` slug              -> OpenRouter     (OPENROUTER_API_KEY)
+  - anything else (e.g. `qwen3:8b`)            -> local Ollama          (no key)
 
 Switching a model updates OPENAI_MODEL + OPENAI_BASE_URL + OPENAI_API_KEY in both the
 running process and the on-disk .env, so the whole connection switches — not just the
@@ -43,18 +44,13 @@ OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 # provider factory so the dropdown and the code agent route models identically.
 from backend.llm.streaming_provider import route_model as _route, GROQ_MODELS  # noqa: E402
 
-# Cloud models always offered in the picker. Each needs its key in .env:
-#   GROQ_API_KEY (Groq, free), GEMINI_API_KEY (Gemini, free),
-#   OPENROUTER_API_KEY (DeepSeek).
+# Concise picker — only models verified to work. Keys in .env: GROQ_API_KEY (free),
+# GEMINI_API_KEY (free), OPENAI_CLOUD_KEY (for GPT-5.5). Free ones first.
 CLOUD_MODELS = [
-    # Free, good for agentic loops (free-llm-api-resources, 2026):
-    "llama-3.3-70b-versatile",   # Groq — best free pick (~1,000 req/day, fast)
-    "llama-3.1-8b-instant",      # Groq — fastest, for high-volume loops
-    "gemini-2.5-flash",          # Gemini — free, strong reasoning
-    "gemini-2.0-flash",          # Gemini — free, lighter
-    # Paid:
-    "deepseek/deepseek-chat",
-    "deepseek/deepseek-r1",
+    "llama-3.3-70b-versatile",   # Groq — free, best for agentic loops (verified)
+    "llama-3.1-8b-instant",      # Groq — free, fast (verified)
+    "gemini-2.5-flash",          # Gemini — free (verified)
+    "gpt-5.5",                   # OpenAI — needs your OPENAI_CLOUD_KEY
 ]
 
 
@@ -65,6 +61,8 @@ def _provider_name(model: str) -> str:
         return "Gemini"
     if m in GROQ_MODELS:
         return "Groq"
+    if ml.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
+        return "OpenAI"
     if ml.startswith("deepseek"):
         return "DeepSeek"
     if "/" in m:

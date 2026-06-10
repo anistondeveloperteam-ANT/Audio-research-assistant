@@ -41,9 +41,10 @@ _AFFORD_RE = re.compile(r"can only afford (\d+)")
 def route_model(model: str):
     """(base_url, api_key) for a model name, so a model override (e.g. the code
     agent's AGENT_MODEL) connects to its OWN provider, not the active chat one:
-      gemini-*                     -> Google Gemini (GEMINI_API_KEY) [free tier]
-      Groq free models             -> Groq          (GROQ_API_KEY)   [free, fast]
-      deepseek/... or vendor/model -> OpenRouter     (OPENROUTER_API_KEY)
+      gemini-*                     -> Google Gemini (GEMINI_API_KEY)  [free tier]
+      Groq free models             -> Groq          (GROQ_API_KEY)    [free, fast]
+      gpt-* / o* / chatgpt*        -> OpenAI         (OPENAI_CLOUD_KEY)
+      vendor/model slug            -> OpenRouter     (OPENROUTER_API_KEY)
       anything else (qwen3:8b ...) -> local Ollama
     """
     m = (model or "").strip()
@@ -52,7 +53,9 @@ def route_model(model: str):
         return GEMINI_BASE, os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
     if m in GROQ_MODELS:
         return GROQ_BASE, os.getenv("GROQ_API_KEY", "")
-    if ml.startswith("deepseek") or "/" in m:
+    if ml.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
+        return "", os.getenv("OPENAI_CLOUD_KEY", "")
+    if "/" in m:
         return OPENROUTER_BASE, os.getenv("OPENROUTER_API_KEY", "")
     return OLLAMA_BASE, "ollama"
 
