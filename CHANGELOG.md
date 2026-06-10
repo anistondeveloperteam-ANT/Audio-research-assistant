@@ -13,6 +13,17 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Removed the GPT/OpenAI-cloud option (dead key)
+- Live-tested every model in the picker. GPT-5.5 and GPT-4o both returned 401 "Invalid API
+  Key", so the OpenAI-cloud option was removed completely: dropped from the dropdown
+  (`CLOUD_MODELS`), the `gpt-*` routing branch and `_provider_name` case, the `OPENAI_CLOUD_KEY`
+  env var (.env + .env.example), and the GPT-specific `_request_variants` special-case (the
+  generic max_tokens→max_completion_tokens fallback still covers any OpenAI-compatible model).
+  Default model is now `gemini-2.5-flash`. Tests updated.
+- Working dropdown is now: **Groq** (llama-3.3-70b, llama-3.1-8b — verified), **Gemini**
+  (2.5-flash verified; 2.0-flash subject to the free daily quota), **DeepSeek** (chat verified;
+  r1 needs credits), and local **Ollama**.
+
 ### Free LLMs for agentic work (Groq + Gemini) — from free-llm-api-resources
 - Added two FREE, OpenAI-compatible providers to the model router/dropdown, chosen from
   cheahjs/free-llm-api-resources (2026) for chained agentic loops:

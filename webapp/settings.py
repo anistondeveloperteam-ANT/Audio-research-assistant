@@ -2,8 +2,9 @@
 Chat-model selection for the web UI.
 
 One picker, several providers. A model is routed by its name:
-  - `deepseek/...` or any `vendor/model` slug -> DeepSeek / OpenRouter (OPENROUTER_API_KEY)
-  - `gpt-*` / `o*` / `chatgpt*`                -> OpenAI               (OPENAI_CLOUD_KEY)
+  - `gemini-*`                                 -> Google Gemini (GEMINI_API_KEY) [free]
+  - Groq free models (llama-3.3-70b, ...)      -> Groq          (GROQ_API_KEY)   [free]
+  - `deepseek/...` or any `vendor/model` slug  -> DeepSeek / OpenRouter (OPENROUTER_API_KEY)
   - anything else (e.g. `qwen3:8b`)            -> local Ollama         (no key)
 
 Switching a model updates OPENAI_MODEL + OPENAI_BASE_URL + OPENAI_API_KEY in both the
@@ -33,7 +34,7 @@ try:
 except Exception:
     pass
 
-DEFAULT_OPENAI_MODEL = "gpt-4o"
+DEFAULT_OPENAI_MODEL = "gemini-2.5-flash"
 
 OLLAMA_BASE = "http://localhost:11434/v1"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
@@ -44,7 +45,7 @@ from backend.llm.streaming_provider import route_model as _route, GROQ_MODELS  #
 
 # Cloud models always offered in the picker. Each needs its key in .env:
 #   GROQ_API_KEY (Groq, free), GEMINI_API_KEY (Gemini, free),
-#   OPENROUTER_API_KEY (DeepSeek), OPENAI_CLOUD_KEY (GPT/OpenAI).
+#   OPENROUTER_API_KEY (DeepSeek).
 CLOUD_MODELS = [
     # Free, good for agentic loops (free-llm-api-resources, 2026):
     "llama-3.3-70b-versatile",   # Groq — best free pick (~1,000 req/day, fast)
@@ -52,8 +53,6 @@ CLOUD_MODELS = [
     "gemini-2.5-flash",          # Gemini — free, strong reasoning
     "gemini-2.0-flash",          # Gemini — free, lighter
     # Paid:
-    "gpt-5.5",
-    "gpt-4o",
     "deepseek/deepseek-chat",
     "deepseek/deepseek-r1",
 ]
@@ -70,8 +69,6 @@ def _provider_name(model: str) -> str:
         return "DeepSeek"
     if "/" in m:
         return "OpenRouter"
-    if ml.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
-        return "OpenAI"
     return "Ollama"
 
 

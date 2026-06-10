@@ -5,26 +5,25 @@ from webapp import settings
 
 def test_get_provider_is_openai(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
+    monkeypatch.setenv("OPENAI_MODEL", "gemini-2.5-flash")
     p = get_provider()
-    assert p.name == "openai"
-    assert p.model == "gpt-4o"
+    assert p.name == "openai"           # one OpenAI-compatible client for every provider
+    assert p.model == "gemini-2.5-flash"
     assert p.is_available is True
 
 
 def test_openai_unavailable_message_names_key():
     # Construct directly so we don't depend on the local .env having a key.
-    p = OpenAIProvider(model="gpt-4o", api_key="")
+    p = OpenAIProvider(model="gemini-2.5-flash", api_key="")
     assert p.is_available is False
     assert "OPENAI_API_KEY" in p.unavailable_message()
 
 
-def test_request_variants_adapt_to_model():
-    # gpt-4o uses max_tokens first; the gpt-5 family uses max_completion_tokens first.
-    old = OpenAIProvider(model="gpt-4o", api_key="x")._request_variants(100, 0.3)
-    new = OpenAIProvider(model="gpt-5.5", api_key="x")._request_variants(100, 0.3)
-    assert "max_tokens" in old[0]
-    assert "max_completion_tokens" in new[0]
+def test_request_variants_have_token_fallbacks():
+    # Common shape first, with a max_completion_tokens fallback for stricter APIs.
+    v = OpenAIProvider(model="llama-3.3-70b-versatile", api_key="x")._request_variants(100, 0.3)
+    assert "max_tokens" in v[0]
+    assert any("max_completion_tokens" in variant for variant in v)
 
 
 class _Delta:
@@ -62,12 +61,15 @@ def test_stream_chat_shrinks_to_affordable_budget(monkeypatch):
     assert tried[0] == 8000 and tried[-1] <= 180  # shrank from 8000 to within the cap
 
 
-def test_model_list_is_openai_only(monkeypatch):
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
+def test_model_list_uses_openai_compatible_client(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gemini-2.5-flash")
     data = settings.list_models()
+    # Every option goes through the one OpenAI-compatible client (provider field == openai).
     assert data["current"]["provider"] == "openai"
     assert {o["provider"] for o in data["options"]} == {"openai"}
-    assert any(o["model"] == "gpt-4o" for o in data["options"])
+    assert any(o["model"] == "gemini-2.5-flash" for o in data["options"])
+    # GPT/OpenAI-cloud option was removed.
+    assert not any(o["model"].startswith("gpt-") for o in data["options"])
 
 
 def test_route_model_free_providers(monkeypatch):
@@ -76,8 +78,7 @@ def test_route_model_free_providers(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "q-key")
     assert route_model("gemini-2.5-flash") == (GEMINI_BASE, "g-key")
     assert route_model("llama-3.3-70b-versatile") == (GROQ_BASE, "q-key")
-    # a Groq model id containing a slash must NOT be mis-routed to OpenRouter
-    assert route_model("openai/gpt-oss-20b")[0] == GROQ_BASE
+    assert route_model("llama-3.1-8b-instant") == (GROQ_BASE, "q-key")
     # unrelated names still route to their providers
     assert route_model("deepseek/deepseek-chat")[0].endswith("openrouter.ai/api/v1")
     assert route_model("qwen3:8b")[0].endswith("11434/v1")

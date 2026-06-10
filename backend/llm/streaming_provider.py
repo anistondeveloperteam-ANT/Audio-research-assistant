@@ -1,11 +1,11 @@
 """
-Streaming LLM backend: OpenAI.
+Streaming LLM backend: one OpenAI-compatible client for every provider.
 
 The chat UI calls this; nothing else cares about the details. Configure via .env:
 
-    OPENAI_API_KEY=sk-...                 (required)
-    OPENAI_MODEL=gpt-4o                   (default; e.g. gpt-4o-mini, gpt-4.1, gpt-5.5)
-    OPENAI_BASE_URL=https://api.openai.com/v1   (optional; Azure / OpenAI-compatible proxy)
+    OPENAI_API_KEY=...                    (required)
+    OPENAI_MODEL=gemini-2.5-flash         (e.g. llama-3.3-70b-versatile, deepseek/deepseek-chat, qwen3:8b)
+    OPENAI_BASE_URL=...                   (per provider: Gemini / Groq / OpenRouter / Ollama)
 
 Public API:
 
@@ -25,7 +25,7 @@ import os
 import re
 from typing import Dict, Iterator, List, Optional
 
-DEFAULT_OPENAI_MODEL = "gpt-4o"
+DEFAULT_OPENAI_MODEL = "gemini-2.5-flash"
 OLLAMA_BASE = "http://localhost:11434/v1"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -33,7 +33,7 @@ GROQ_BASE = "https://api.groq.com/openai/v1"
 
 # Free, OpenAI-compatible models good for agentic loops (free-llm-api-resources, 2026).
 # Groq gives ~1,000 requests/day on Llama 3.3 70B — the best free pick for chained calls.
-GROQ_MODELS = {"llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b"}
+GROQ_MODELS = {"llama-3.3-70b-versatile", "llama-3.1-8b-instant"}
 
 _AFFORD_RE = re.compile(r"can only afford (\d+)")
 
@@ -44,7 +44,6 @@ def route_model(model: str):
       gemini-*                     -> Google Gemini (GEMINI_API_KEY) [free tier]
       Groq free models             -> Groq          (GROQ_API_KEY)   [free, fast]
       deepseek/... or vendor/model -> OpenRouter     (OPENROUTER_API_KEY)
-      gpt-* / o* / chatgpt*        -> OpenAI         (OPENAI_CLOUD_KEY)
       anything else (qwen3:8b ...) -> local Ollama
     """
     m = (model or "").strip()
@@ -55,8 +54,6 @@ def route_model(model: str):
         return GROQ_BASE, os.getenv("GROQ_API_KEY", "")
     if ml.startswith("deepseek") or "/" in m:
         return OPENROUTER_BASE, os.getenv("OPENROUTER_API_KEY", "")
-    if ml.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
-        return "", os.getenv("OPENAI_CLOUD_KEY", "")
     return OLLAMA_BASE, "ollama"
 
 
@@ -132,17 +129,9 @@ class OpenAIProvider(LLMProvider):
         return "LLM not available - check the OpenAI configuration in .env."
 
     def _request_variants(self, max_tokens: int, temperature: float) -> List[Dict[str, object]]:
-        # Newer OpenAI models (GPT-5 family, o-series) require `max_completion_tokens`
-        # and only allow the default temperature; older models (gpt-4o/4.1/3.5) use
-        # `max_tokens` + a custom temperature. Try the right shape first, then fall
-        # back so any current or future model just works.
-        newer = self._model.startswith(("gpt-5", "o1", "o3", "o4"))
-        if newer:
-            return [
-                {"max_completion_tokens": max_tokens},
-                {"max_completion_tokens": max_tokens, "temperature": temperature},
-                {"max_tokens": max_tokens, "temperature": temperature},
-            ]
+        # Try the common shape first (max_tokens + temperature), then fall back to
+        # max_completion_tokens / default temperature, so any OpenAI-compatible model
+        # (Groq, Gemini, DeepSeek, Ollama, o-series, …) just works.
         return [
             {"max_tokens": max_tokens, "temperature": temperature},
             {"max_completion_tokens": max_tokens, "temperature": temperature},
