@@ -186,17 +186,40 @@ body {
   border-radius: 11px; transition: border-color .14s, box-shadow .14s;
 }
 .model-pick:hover { border-color: var(--border-strong); background: var(--surface-3); }
-.model-pick:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+.model-pick.open { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
 .model-pick .mp-ic { flex: none; display: grid; place-items: center; color: var(--accent); }
 .model-pick .mp-ic svg { width: 17px; height: 17px; }
-.model-pick select {
-  appearance: none; -webkit-appearance: none; flex: 1; min-width: 0; height: 100%;
+.model-pick .mp-current {
+  flex: 1; min-width: 0; height: 100%; text-align: left;
   font: inherit; font-size: 13px; font-weight: 600; color: var(--text);
   background: none; border: none; cursor: pointer; padding: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.model-pick select:focus { outline: none; }
-.model-pick .mp-chev { width: 15px; height: 15px; color: var(--muted); flex: none; pointer-events: none; }
+.model-pick .mp-current:focus { outline: none; }
+.model-pick .mp-current span { display: block; overflow: hidden; text-overflow: ellipsis; }
+.model-pick .mp-chev { width: 15px; height: 15px; color: var(--muted); flex: none; pointer-events: none; transition: transform .18s ease; }
+.model-pick.open .mp-chev { transform: rotate(180deg); color: var(--accent); }
+
+/* the dropdown list — opens upward, fully themed */
+.mp-menu {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 7px); z-index: 45;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px;
+  box-shadow: var(--shadow-lg); padding: 5px; display: flex; flex-direction: column; gap: 2px;
+  opacity: 0; transform: translateY(8px) scale(.98); pointer-events: none;
+  transition: opacity .16s ease, transform .16s ease;
+}
+.model-pick.open .mp-menu { opacity: 1; transform: none; pointer-events: auto; }
+.mp-opt {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  font: inherit; font-size: 13px; font-weight: 550; color: var(--text-soft);
+  background: none; border: none; border-radius: 8px; padding: 9px 10px; cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.mp-opt:hover { background: var(--surface-2); color: var(--text); }
+.mp-opt-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-opt-tick { width: 16px; height: 16px; flex: none; color: var(--accent); opacity: 0; }
+.mp-opt.active { color: var(--accent-600); font-weight: 650; background: var(--accent-weak); }
+.mp-opt.active .mp-opt-tick { opacity: 1; }
 
 /* Signed-in user + sign out (bottom-left) */
 .user-row {

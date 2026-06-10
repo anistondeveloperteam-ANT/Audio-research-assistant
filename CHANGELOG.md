@@ -13,6 +13,17 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Themed model dropdown + remove Google button
+- Replaced the native `<select>` model picker (whose open list couldn't be themed and looked
+  bad in dark mode) with a **custom dropdown** that opens upward — fully themed, with hover
+  states, a checkmark on the active model, a rotating chevron, and click-outside / Escape to
+  close.
+- Removed the "Continue with Google" button from the sign-in page (the OAuth backend stays
+  dormant — re-enable any time by setting GOOGLE_CLIENT_ID/SECRET).
+- Note: search already reaches everywhere — `EXTERNAL_ALLOW_UNSAFE_URLS=true` (set in .env)
+  fully disables the SSRF URL guard; the guard code stays in place (inert) per the project's
+  security rules.
+
 ### Sidebar cleanup, "Ask again" button, and real Google sign-in
 - Sidebar foot: removed the duplicate model line and the green status dot from the model
   picker (now a model-chip icon); polished the model picker + the signed-in user row for dark

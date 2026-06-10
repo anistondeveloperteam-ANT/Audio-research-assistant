@@ -695,9 +695,8 @@
     $("input").disabled = on;
   }
 
-  function currentModelName() {
-    try { return JSON.parse($("modelSel").value).model || ""; } catch { return ""; }
-  }
+  let _currentModel = "";
+  function currentModelName() { return _currentModel; }
 
   async function send() {
     const text = $("input").value.trim();
@@ -1183,27 +1182,47 @@
     const pl = $("provLabel"); if (pl) pl.textContent = label;
     const pd = $("provDot"); if (pd) pd.style.background = "var(--ok)";
   }
+  function closeModelMenu() {
+    const p = $("modelPick"); if (p) p.classList.remove("open");
+    const b = $("modelBtn"); if (b) b.setAttribute("aria-expanded", "false");
+  }
+  function toggleModelMenu() {
+    const p = $("modelPick"); if (!p) return;
+    const open = p.classList.toggle("open");
+    const b = $("modelBtn"); if (b) b.setAttribute("aria-expanded", open ? "true" : "false");
+  }
   async function loadModels() {
     try {
       const data = await api.models();
-      const sel = $("modelSel");
-      sel.innerHTML = "";
-      (data.options || []).forEach((o) => {
-        const opt = document.createElement("option");
-        opt.value = JSON.stringify({ provider: o.provider, model: o.model });
-        opt.textContent = o.label;
-        sel.appendChild(opt);
-      });
+      const menu = $("modelMenu");
+      menu.innerHTML = "";
       const cur = data.current || {};
-      sel.value = JSON.stringify({ provider: cur.provider, model: cur.model });
+      let curLabel = "";
+      (data.options || []).forEach((o) => {
+        if (o.model === cur.model) curLabel = o.label;
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "mp-opt" + (o.model === cur.model ? " active" : "");
+        row.setAttribute("role", "option");
+        row.innerHTML = `<span class="mp-opt-label">${esc(o.label)}</span>` +
+          `<svg class="mp-opt-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`;
+        row.addEventListener("click", () => selectModel(o, row));
+        menu.appendChild(row);
+      });
+      _currentModel = cur.model || "";
+      $("modelLabel").textContent = curLabel || `${cur.provider} · ${cur.model}`;
       setProviderLabel(`${cur.provider} · ${cur.model}`);
-    } catch { $("modelSel").innerHTML = '<option>unavailable</option>'; }
+    } catch { const ml = $("modelLabel"); if (ml) ml.textContent = "unavailable"; }
   }
-  async function onModelChange() {
-    let v; try { v = JSON.parse($("modelSel").value); } catch { return; }
+  async function selectModel(o, row) {
+    closeModelMenu();
     try {
-      const res = await api.setModel(v.provider, v.model);
+      const res = await api.setModel(o.provider, o.model);
       if (res.error) { toast(res.error, "error"); return; }
+      _currentModel = o.model;
+      $("modelLabel").textContent = o.label;
+      $("modelMenu").querySelectorAll(".mp-opt").forEach((el) => el.classList.remove("active"));
+      if (row) row.classList.add("active");
       setProviderLabel(res.label);
       toast("Model switched to " + res.model);
     } catch { toast("Could not switch model.", "error"); }
@@ -1263,7 +1282,9 @@
     $("pdfInput").addEventListener("change", onPdfChosen);
     $("imDone").addEventListener("click", closeIngestModal);
     $("themeBtn").addEventListener("click", toggleTheme);
-    $("modelSel").addEventListener("change", onModelChange);
+    $("modelBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleModelMenu(); });
+    document.addEventListener("click", (e) => { if (!e.target.closest("#modelPick")) closeModelMenu(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModelMenu(); });
     $("manageBtn").addEventListener("click", openPapers);
     $("pmClose").addEventListener("click", closePapers);
     $("papersScrim").addEventListener("click", closePapers);
