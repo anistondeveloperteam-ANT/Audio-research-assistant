@@ -13,6 +13,20 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Free LLMs for agentic work (Groq + Gemini) — from free-llm-api-resources
+- Added two FREE, OpenAI-compatible providers to the model router/dropdown, chosen from
+  cheahjs/free-llm-api-resources (2026) for chained agentic loops:
+  - **Groq** (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`) — the repo's top pick:
+    ~1,000 requests/day, very fast, strong reasoning. Needs a free `GROQ_API_KEY`.
+  - **Gemini** (`gemini-2.5-flash`, `gemini-2.0-flash`) — reuses the existing
+    `GEMINI_API_KEY`; verified working live (no 402 token-budget issues).
+- `route_model()` now maps `gemini-*` → Google and the Groq model ids → Groq; the picker
+  labels them and shows "(add key)" when the key is missing. Models without a slash-collision
+  risk are handled (a Groq id containing `/` still routes to Groq, not OpenRouter).
+- Switched the local `.env` active model to `gemini-2.5-flash` so chat works for free out of
+  the box (the prior DeepSeek/OpenRouter account was out of credits). Tests cover routing +
+  the dropdown.
+
 ### Fix "(no answer)" on low-credit OpenRouter accounts
 - The provider's 402 "can only afford N tokens" handler had a 256-token floor, so when an
   account could only afford fewer (e.g. 180) the retry kept requesting 256, failed every

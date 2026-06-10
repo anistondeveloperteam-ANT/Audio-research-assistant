@@ -68,3 +68,25 @@ def test_model_list_is_openai_only(monkeypatch):
     assert data["current"]["provider"] == "openai"
     assert {o["provider"] for o in data["options"]} == {"openai"}
     assert any(o["model"] == "gpt-4o" for o in data["options"])
+
+
+def test_route_model_free_providers(monkeypatch):
+    from backend.llm.streaming_provider import route_model, GEMINI_BASE, GROQ_BASE
+    monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+    monkeypatch.setenv("GROQ_API_KEY", "q-key")
+    assert route_model("gemini-2.5-flash") == (GEMINI_BASE, "g-key")
+    assert route_model("llama-3.3-70b-versatile") == (GROQ_BASE, "q-key")
+    # a Groq model id containing a slash must NOT be mis-routed to OpenRouter
+    assert route_model("openai/gpt-oss-20b")[0] == GROQ_BASE
+    # unrelated names still route to their providers
+    assert route_model("deepseek/deepseek-chat")[0].endswith("openrouter.ai/api/v1")
+    assert route_model("qwen3:8b")[0].endswith("11434/v1")
+
+
+def test_dropdown_lists_free_groq_and_gemini(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    labels = [o["label"] for o in settings.list_models()["options"]]
+    assert any("Gemini · gemini-2.5-flash" in x for x in labels)
+    # Groq present but flagged as needing a key
+    assert any("Groq · llama-3.3-70b-versatile" in x and "add key" in x for x in labels)

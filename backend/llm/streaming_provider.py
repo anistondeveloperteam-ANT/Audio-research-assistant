@@ -28,6 +28,12 @@ from typing import Dict, Iterator, List, Optional
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 OLLAMA_BASE = "http://localhost:11434/v1"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
+GROQ_BASE = "https://api.groq.com/openai/v1"
+
+# Free, OpenAI-compatible models good for agentic loops (free-llm-api-resources, 2026).
+# Groq gives ~1,000 requests/day on Llama 3.3 70B — the best free pick for chained calls.
+GROQ_MODELS = {"llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b"}
 
 _AFFORD_RE = re.compile(r"can only afford (\d+)")
 
@@ -35,14 +41,21 @@ _AFFORD_RE = re.compile(r"can only afford (\d+)")
 def route_model(model: str):
     """(base_url, api_key) for a model name, so a model override (e.g. the code
     agent's AGENT_MODEL) connects to its OWN provider, not the active chat one:
-      deepseek/... or vendor/model -> OpenRouter (OPENROUTER_API_KEY)
-      gpt-* / o* / chatgpt*        -> OpenAI     (OPENAI_CLOUD_KEY)
+      gemini-*                     -> Google Gemini (GEMINI_API_KEY) [free tier]
+      Groq free models             -> Groq          (GROQ_API_KEY)   [free, fast]
+      deepseek/... or vendor/model -> OpenRouter     (OPENROUTER_API_KEY)
+      gpt-* / o* / chatgpt*        -> OpenAI         (OPENAI_CLOUD_KEY)
       anything else (qwen3:8b ...) -> local Ollama
     """
-    m = (model or "").strip().lower()
-    if m.startswith("deepseek") or "/" in m:
+    m = (model or "").strip()
+    ml = m.lower()
+    if ml.startswith("gemini"):
+        return GEMINI_BASE, os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
+    if m in GROQ_MODELS:
+        return GROQ_BASE, os.getenv("GROQ_API_KEY", "")
+    if ml.startswith("deepseek") or "/" in m:
         return OPENROUTER_BASE, os.getenv("OPENROUTER_API_KEY", "")
-    if m.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
+    if ml.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
         return "", os.getenv("OPENAI_CLOUD_KEY", "")
     return OLLAMA_BASE, "ollama"
 

@@ -38,30 +38,39 @@ DEFAULT_OPENAI_MODEL = "gpt-4o"
 OLLAMA_BASE = "http://localhost:11434/v1"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
+# Single source of truth for model -> (endpoint, key) routing, shared with the
+# provider factory so the dropdown and the code agent route models identically.
+from backend.llm.streaming_provider import route_model as _route, GROQ_MODELS  # noqa: E402
+
 # Cloud models always offered in the picker. Each needs its key in .env:
-# OPENROUTER_API_KEY for DeepSeek, OPENAI_CLOUD_KEY for GPT/OpenAI.
+#   GROQ_API_KEY (Groq, free), GEMINI_API_KEY (Gemini, free),
+#   OPENROUTER_API_KEY (DeepSeek), OPENAI_CLOUD_KEY (GPT/OpenAI).
 CLOUD_MODELS = [
+    # Free, good for agentic loops (free-llm-api-resources, 2026):
+    "llama-3.3-70b-versatile",   # Groq — best free pick (~1,000 req/day, fast)
+    "llama-3.1-8b-instant",      # Groq — fastest, for high-volume loops
+    "gemini-2.5-flash",          # Gemini — free, strong reasoning
+    "gemini-2.0-flash",          # Gemini — free, lighter
+    # Paid:
     "gpt-5.5",
-    "gpt-5.5-pro",
     "gpt-4o",
-    "gpt-4o-mini",
     "deepseek/deepseek-chat",
     "deepseek/deepseek-r1",
 ]
 
 
-# Single source of truth for model -> (endpoint, key) routing, shared with the
-# provider factory so the dropdown and the code agent route models identically.
-from backend.llm.streaming_provider import route_model as _route  # noqa: E402
-
-
 def _provider_name(model: str) -> str:
-    m = (model or "").strip().lower()
-    if m.startswith("deepseek"):
+    m = (model or "").strip()
+    ml = m.lower()
+    if ml.startswith("gemini"):
+        return "Gemini"
+    if m in GROQ_MODELS:
+        return "Groq"
+    if ml.startswith("deepseek"):
         return "DeepSeek"
     if "/" in m:
         return "OpenRouter"
-    if m.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
+    if ml.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
         return "OpenAI"
     return "Ollama"
 
