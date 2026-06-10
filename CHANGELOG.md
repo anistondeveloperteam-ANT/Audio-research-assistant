@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Rename to "Research Assistant" + interactive sign-in polish
+- Renamed the brand from "ResearchAI" back to **Research Assistant** everywhere (login, reset,
+  app title + sidebar). The accent stays the brand blue.
+- Made the sign-in page more alive: the logo gently pulses its glow (and tilts on hover),
+  the feature cards lift + their icons scale on hover, and the card + brand fade/rise in on
+  load (staggered), all respecting `prefers-reduced-motion`.
+
 ### Fix login layout + carry the ResearchAI brand into the app
 - Fixed the broken sign-in layout: the decorative `.dots` overlay was a direct child of the
   CSS grid, so it consumed the first cell and pushed the brand/card into the wrong places.

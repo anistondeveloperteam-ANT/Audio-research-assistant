@@ -16,7 +16,7 @@
   --muted: #7b8597;
   --muted-2: #9aa3b2;
 
-  --accent: #1E6FD9;          /* ResearchAI blue */
+  --accent: #1E6FD9;          /* brand blue */
   --accent-600: #1856b0;
   --accent-weak: #e8f1fd;
   --accent-border: #cfe0fa;
@@ -57,7 +57,7 @@
   --muted: #8c95ab;
   --muted-2: #6b7488;
 
-  --accent: #3b82f6;          /* ResearchAI blue (dark) */
+  --accent: #3b82f6;          /* brand blue (dark) */
   --accent-600: #60a5fa;
   --accent-weak: rgba(59, 130, 246, 0.16);
   --accent-border: rgba(59, 130, 246, 0.34);
