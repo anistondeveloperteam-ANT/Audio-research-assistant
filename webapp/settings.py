@@ -1,9 +1,14 @@
 """
-OpenAI chat-model selection for the web UI.
+Chat-model selection for the web UI.
 
-Lists the OpenAI models the user can pick and switches the active one by updating
-both the running process env and the on-disk .env, so the choice persists. OpenAI
-is the only chat provider, so there is no provider concept to manage.
+One picker, several providers. A model is routed by its name:
+  - `deepseek/...` or any `vendor/model` slug -> DeepSeek / OpenRouter (OPENROUTER_API_KEY)
+  - `gpt-*` / `o*` / `chatgpt*`                -> OpenAI               (OPENAI_CLOUD_KEY)
+  - anything else (e.g. `qwen3:8b`)            -> local Ollama         (no key)
+
+Switching a model updates OPENAI_MODEL + OPENAI_BASE_URL + OPENAI_API_KEY in both the
+running process and the on-disk .env, so the whole connection switches — not just the
+model string.
 """
 from __future__ import annotations
 
@@ -21,8 +26,7 @@ if str(ROOT) not in sys.path:
 
 ENV_PATH = ROOT / ".env"
 
-# Ensure .env is loaded even if this module is imported before the app wires it up,
-# so OPENAI_BASE_URL / OPENAI_MODEL are visible when listing models.
+# Ensure .env is loaded even if this module is imported first.
 try:
     from dotenv import load_dotenv
     load_dotenv(ENV_PATH, override=False)
@@ -31,41 +35,59 @@ except Exception:
 
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 
-# The provider adapts API parameters per model, so GPT-5 / o-series and the older
-# gpt-4o/4.1 models all work. Your account may not have every model listed.
-OPENAI_MODELS = [
+OLLAMA_BASE = "http://localhost:11434/v1"
+OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+
+# Cloud models always offered in the picker. Each needs its key in .env:
+# OPENROUTER_API_KEY for DeepSeek, OPENAI_CLOUD_KEY for GPT/OpenAI.
+CLOUD_MODELS = [
     "gpt-5.5",
     "gpt-5.5-pro",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.1",
-    "gpt-4.1",
     "gpt-4o",
     "gpt-4o-mini",
+    "deepseek/deepseek-chat",
+    "deepseek/deepseek-r1",
 ]
 
 
-def _base_url() -> str:
-    return (os.getenv("OPENAI_BASE_URL") or "").rstrip("/")
+def _route(model: str):
+    """(base_url, api_key) inferred from the model name."""
+    m = (model or "").strip().lower()
+    if m.startswith("deepseek") or "/" in m:
+        return OPENROUTER_BASE, os.getenv("OPENROUTER_API_KEY", "")
+    if m.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
+        return "", os.getenv("OPENAI_CLOUD_KEY", "")
+    return OLLAMA_BASE, "ollama"
 
 
-def _is_ollama() -> bool:
-    b = _base_url().lower()
-    return "11434" in b or "ollama" in b
+def _provider_name(model: str) -> str:
+    m = (model or "").strip().lower()
+    if m.startswith("deepseek"):
+        return "DeepSeek"
+    if "/" in m:
+        return "OpenRouter"
+    if m.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
+        return "OpenAI"
+    return "Ollama"
 
 
 def _label(model: str) -> str:
-    return f"{'Ollama' if _is_ollama() else 'OpenAI'} · {model}"
+    return f"{_provider_name(model)} · {model.split('/')[-1]}"
+
+
+def _available(model: str) -> bool:
+    _, key = _route(model)
+    return bool(key)
 
 
 def _local_models() -> List[str]:
-    """Models installed on a local OpenAI-compatible server (Ollama). [] otherwise."""
-    if not _is_ollama():
-        return []
+    """Models installed on the local Ollama server, queried directly so you can
+    always switch back to a local model regardless of the current selection. []
+    if Ollama is not running."""
     try:
-        req = urllib.request.Request(_base_url() + "/models",
+        req = urllib.request.Request(OLLAMA_BASE + "/models",
                                      headers={"Authorization": "Bearer ollama"})
-        with urllib.request.urlopen(req, timeout=2.5) as resp:
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
             data = json.load(resp)
         return sorted({m.get("id") for m in (data.get("data") or []) if m.get("id")})
     except Exception:
@@ -79,14 +101,17 @@ def current() -> Dict[str, str]:
 
 def list_models() -> Dict[str, Any]:
     cur = current()
-    # On Ollama, list the actually-installed models; otherwise the cloud list.
-    models = _local_models() or list(OPENAI_MODELS)
-    # Always include the active model and the configured agent model (e.g. a coder).
-    for extra in (cur["model"], os.getenv("AGENT_MODEL", "")):
-        extra = (extra or "").strip()
-        if extra and extra not in models:
-            models.append(extra)
-    options = [{"provider": "openai", "model": m, "label": _label(m)} for m in models]
+    models: List[str] = []
+    for m in list(_local_models()) + CLOUD_MODELS + [cur["model"], os.getenv("AGENT_MODEL", "")]:
+        m = (m or "").strip()
+        if m and m not in models:
+            models.append(m)
+    options = []
+    for m in models:
+        label = _label(m)
+        if not _available(m):
+            label += "  (add key)"
+        options.append({"provider": "openai", "model": m, "label": label})
     return {"current": cur, "options": options}
 
 
@@ -109,14 +134,17 @@ def _persist_env(updates: Dict[str, str]) -> None:
 
 
 def set_model(provider: str, model: str) -> Dict[str, str]:
-    """Switch the active OpenAI model. `provider` is accepted for API compatibility
-    but ignored — OpenAI is the only chat provider."""
+    """Switch the active model AND its endpoint/key (inferred from the model name),
+    persisting to .env so the choice survives a restart."""
     model = (model or "").strip()
     if not model:
         raise ValueError("Model is required")
-
-    # Update the running process immediately (get_provider reads os.environ with
-    # override=False, so this wins) and persist to disk for next time.
+    base, key = _route(model)
     os.environ["OPENAI_MODEL"] = model
-    _persist_env({"OPENAI_MODEL": model})
+    os.environ["OPENAI_BASE_URL"] = base
+    updates: Dict[str, str] = {"OPENAI_MODEL": model, "OPENAI_BASE_URL": base}
+    if key:
+        os.environ["OPENAI_API_KEY"] = key
+        updates["OPENAI_API_KEY"] = key
+    _persist_env(updates)
     return {"provider": "openai", "model": model, "label": _label(model)}

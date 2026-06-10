@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-10
 
+### One model picker across providers (Ollama + DeepSeek + GPT-5.5)
+- The Model dropdown now lists your local **Ollama** models *and* cloud models —
+  **GPT-5.5 / GPT-4o** and **DeepSeek (V3 + R1)** — and switching one rewrites the
+  endpoint **and** key automatically (routing inferred from the model name). Cloud keys
+  live in `OPENROUTER_API_KEY` (DeepSeek) and `OPENAI_CLOUD_KEY` (GPT); models without a
+  key show "(add key)".
+
 ### Readable progress + no-emoji answers
 - The status line used an unreadable shimmering-gradient text that looked like a blank
   bar during long runs — replaced with **plain, readable status text** (gentle pulse), so
