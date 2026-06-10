@@ -9,12 +9,6 @@ import types
 import pytest
 
 from backend.external_search.base import ExternalSource, is_safe_url
-
-
-@pytest.fixture(autouse=True)
-def _ssrf_guard_on(monkeypatch):
-    """Ensure the SSRF guard is active for tests regardless of the local .env."""
-    monkeypatch.delenv("EXTERNAL_ALLOW_UNSAFE_URLS", raising=False)
 from backend.external_search.source_ranker import (
     deduplicate, rerank_sources, _wants_latest, _recency_score,
 )
@@ -50,31 +44,21 @@ import backend.external_search.pdf_reader as pr
 
 
 # ----------------------------------------------------------------------
-# URL safety (SSRF guard) — IP literals / schemes need no DNS
+# URL validation — the SSRF guard was removed, so only scheme/host are checked.
 # ----------------------------------------------------------------------
-@pytest.mark.parametrize("url", [
-    "", None, "ftp://host/x", "file:///etc/passwd", "http://localhost/x",
-    "http://127.0.0.1/x", "https://127.0.0.1", "http://10.0.0.1/", "http://192.168.1.5/",
-    "http://172.16.0.9/", "http://169.254.169.254/latest/meta-data/", "http://[::1]/",
-])
-def test_is_safe_url_blocks_unsafe(url):
+@pytest.mark.parametrize("url", ["", None, "ftp://host/x", "file:///etc/passwd", "justtext", "https://"])
+def test_is_safe_url_rejects_non_http_or_hostless(url):
     ok, _ = is_safe_url(url)
     assert ok is False
 
 
-def test_is_safe_url_allows_public(monkeypatch):
-    monkeypatch.setattr("backend.external_search.base.socket.getaddrinfo",
-                        lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))])
-    ok, reason = is_safe_url("https://example.com/page")
+@pytest.mark.parametrize("url", [
+    "https://example.com/page", "http://localhost/x", "http://127.0.0.1/x",
+    "http://10.0.0.1/", "http://169.254.169.254/latest/meta-data/",
+])
+def test_is_safe_url_allows_any_http_host(url):
+    ok, reason = is_safe_url(url)
     assert ok is True, reason
-
-
-def test_is_safe_url_blocks_dns_rebind_to_private(monkeypatch):
-    # Host name resolves to a private IP -> must be blocked (SSRF / DNS rebinding).
-    monkeypatch.setattr("backend.external_search.base.socket.getaddrinfo",
-                        lambda *a, **k: [(2, 1, 6, "", ("10.0.0.5", 80))])
-    ok, _ = is_safe_url("https://evil.example.com/")
-    assert ok is False
 
 
 # ----------------------------------------------------------------------

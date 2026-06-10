@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Removed the SSRF guard (owner request) + refreshed README
+- Per the owner's explicit request, the SSRF URL guard is **removed**: `is_safe_url()` in
+  `backend/external_search/base.py` now only validates scheme + host (no private/loopback/
+  link-local IP blocking, no DNS re-resolution). External search can fetch any reachable
+  address. The `EXTERNAL_ALLOW_UNSAFE_URLS` flag is gone (no longer needed). ⚠️ Re-add IP/DNS
+  checks before any untrusted/public deployment. Tests updated.
+- Rewrote the README to be accurate + more interactive (two-model setup, accounts/forgot-
+  password, feature grid, flow diagram, collapsible setup sections).
+
 ### Themed model dropdown + remove Google button
 - Replaced the native `<select>` model picker (whose open list couldn't be themed and looked
   bad in dark mode) with a **custom dropdown** that opens upward — fully themed, with hover

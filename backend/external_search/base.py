@@ -1,13 +1,13 @@
 """
 Foundation for external search: the shared `ExternalSource` data structure,
-SSRF-safe URL validation, a guarded HTTP fetcher with timeouts / size caps /
-retries, and a tiny TTL disk cache. Everything else in this package builds on it.
+basic URL validation, an HTTP fetcher with timeouts / size caps / retries, and a
+tiny TTL disk cache. Everything else in this package builds on it.
 
-Security model:
-  - Only http/https URLs are allowed.
-  - The hostname is resolved and EVERY resolved IP must be public — this blocks
-    localhost, 127.0.0.1, ::1, link-local, and private LAN ranges (SSRF guard),
-    including DNS-rebinding tricks.
+Fetch model:
+  - Only http/https URLs with a host are fetched (basic validation).
+  - The SSRF guard (blocking localhost / private / link-local IPs) was removed at
+    the project owner's request, so any reachable address may be fetched. Re-add
+    IP/DNS checks in `is_safe_url` if deploying for untrusted users.
   - Responses are capped in size and time; downloaded bytes are never executed.
   - Secrets (API keys) are passed via headers only and are never logged.
 """
@@ -15,12 +15,10 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import ipaddress
 import json
 import logging
 import os
 import re
-import socket
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -114,20 +112,15 @@ class ExternalSource:
 
 
 # ----------------------------------------------------------------------
-# URL safety (SSRF guard)
+# URL validation
 # ----------------------------------------------------------------------
-def _ip_is_public(ip_str: str) -> bool:
-    try:
-        ip = ipaddress.ip_address(ip_str)
-    except ValueError:
-        return False
-    return not (ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_multicast or ip.is_reserved or ip.is_unspecified)
-
-
+# NOTE: The SSRF guard (blocking localhost / private / link-local / reserved
+# addresses and re-resolving DNS) was removed at the project owner's request so
+# external search can fetch any address. Only basic scheme/host validation
+# remains. Re-add IP/DNS checks here if this is ever deployed for untrusted users.
 def is_safe_url(url: str) -> Tuple[bool, str]:
-    """Return (ok, reason). Blocks non-http(s), missing host, and any host that
-    resolves to a private/loopback/link-local/reserved address (SSRF)."""
+    """Basic URL validation: require an http(s) URL with a host. No SSRF/private-IP
+    blocking — every reachable address is allowed."""
     if not url or not isinstance(url, str):
         return False, "empty url"
     try:
@@ -136,28 +129,8 @@ def is_safe_url(url: str) -> Tuple[bool, str]:
         return False, "unparseable url"
     if parsed.scheme not in ("http", "https"):
         return False, f"scheme {parsed.scheme!r} not allowed"
-    host = parsed.hostname
-    if not host:
+    if not parsed.hostname:
         return False, "missing host"
-    # Opt-out: EXTERNAL_ALLOW_UNSAFE_URLS=true disables the SSRF guard entirely
-    # (allows localhost / private / internal addresses). Default OFF — only flip it
-    # on a trusted single-user machine; NEVER on a public/shared deployment.
-    if env_flag("EXTERNAL_ALLOW_UNSAFE_URLS"):
-        return True, "ok (SSRF guard disabled by EXTERNAL_ALLOW_UNSAFE_URLS)"
-    if host.lower() in ("localhost", "localhost.localdomain", "ip6-localhost"):
-        return False, "localhost blocked"
-    # Resolve and verify every address is public.
-    try:
-        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80),
-                                   proto=socket.IPPROTO_TCP)
-    except Exception as exc:
-        return False, f"dns resolution failed: {exc}"
-    addrs = {info[4][0] for info in infos}
-    if not addrs:
-        return False, "no addresses resolved"
-    for addr in addrs:
-        if not _ip_is_public(addr):
-            return False, f"resolves to non-public address {addr}"
     return True, "ok"
 
 
@@ -213,12 +186,12 @@ def safe_get(
     retries: int = MAX_RETRIES,
     data: Optional[Dict[str, Any]] = None,   # if set -> POST
 ) -> Optional[Any]:
-    """Safe HTTP GET (or POST when `data` is given) with SSRF check, timeout, size
+    """HTTP GET (or POST when `data` is given) with URL validation, timeout, size
     cap, and retries. Returns the text / bytes / parsed-json body, or None on any
     failure (never raises)."""
     ok, reason = is_safe_url(url)
     if not ok:
-        logger.warning("blocked unsafe url (%s)", reason)
+        logger.warning("skipped invalid url (%s)", reason)
         return None
 
     hdrs = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"}
@@ -230,8 +203,7 @@ def safe_get(
         try:
             with requests.request(method, url, headers=hdrs, params=params, data=data,
                                   timeout=timeout, stream=True, allow_redirects=True) as resp:
-                # Re-validate the final URL after redirects (defends against
-                # open redirects into private space).
+                # Re-validate the final URL after redirects (scheme/host sanity).
                 ok, reason = is_safe_url(resp.url)
                 if not ok:
                     logger.warning("blocked redirect target (%s)", reason)
