@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Code agent works across providers (per-model routing)
+- Fixed: with chat on a cloud provider (e.g. DeepSeek/OpenRouter), a coding task sent
+  `AGENT_MODEL=qwen2.5-coder:7b` to the wrong endpoint -> "not a valid model ID". Now a
+  model override (the agent's model) routes to ITS own endpoint/key by name via
+  `route_model()` — so the coder runs on local Ollama even while chat is on OpenRouter.
+  Routing is shared between the provider factory and the UI model picker.
+
 ### One model picker across providers (Ollama + DeepSeek + GPT-5.5)
 - The Model dropdown now lists your local **Ollama** models *and* cloud models —
   **GPT-5.5 / GPT-4o** and **DeepSeek (V3 + R1)** — and switching one rewrites the

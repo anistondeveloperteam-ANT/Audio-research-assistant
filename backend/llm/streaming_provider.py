@@ -26,8 +26,25 @@ import re
 from typing import Dict, Iterator, List, Optional
 
 DEFAULT_OPENAI_MODEL = "gpt-4o"
+OLLAMA_BASE = "http://localhost:11434/v1"
+OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 _AFFORD_RE = re.compile(r"can only afford (\d+)")
+
+
+def route_model(model: str):
+    """(base_url, api_key) for a model name, so a model override (e.g. the code
+    agent's AGENT_MODEL) connects to its OWN provider, not the active chat one:
+      deepseek/... or vendor/model -> OpenRouter (OPENROUTER_API_KEY)
+      gpt-* / o* / chatgpt*        -> OpenAI     (OPENAI_CLOUD_KEY)
+      anything else (qwen3:8b ...) -> local Ollama
+    """
+    m = (model or "").strip().lower()
+    if m.startswith("deepseek") or "/" in m:
+        return OPENROUTER_BASE, os.getenv("OPENROUTER_API_KEY", "")
+    if m.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
+        return "", os.getenv("OPENAI_CLOUD_KEY", "")
+    return OLLAMA_BASE, "ollama"
 
 
 def _affordable_tokens(message: str) -> Optional[int]:
@@ -195,8 +212,15 @@ def get_provider(model: Optional[str] = None) -> LLMProvider:
     except ImportError:
         pass
 
+    # A model override (e.g. the code agent's AGENT_MODEL) routes to its own
+    # endpoint/key by name, so it works even when the active chat model is on a
+    # different provider (e.g. coder on local Ollama while chat is on OpenRouter).
+    if model:
+        base, key = route_model(model)
+        return OpenAIProvider(model=model, api_key=key, base_url=base or None)
+
     return OpenAIProvider(
-        model=model or os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+        model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
         api_key=os.getenv("OPENAI_API_KEY", ""),
         base_url=os.getenv("OPENAI_BASE_URL") or None,
     )

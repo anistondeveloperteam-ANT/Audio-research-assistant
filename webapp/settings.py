@@ -50,14 +50,9 @@ CLOUD_MODELS = [
 ]
 
 
-def _route(model: str):
-    """(base_url, api_key) inferred from the model name."""
-    m = (model or "").strip().lower()
-    if m.startswith("deepseek") or "/" in m:
-        return OPENROUTER_BASE, os.getenv("OPENROUTER_API_KEY", "")
-    if m.startswith(("gpt-", "chatgpt", "o1", "o3", "o4")):
-        return "", os.getenv("OPENAI_CLOUD_KEY", "")
-    return OLLAMA_BASE, "ollama"
+# Single source of truth for model -> (endpoint, key) routing, shared with the
+# provider factory so the dropdown and the code agent route models identically.
+from backend.llm.streaming_provider import route_model as _route  # noqa: E402
 
 
 def _provider_name(model: str) -> str:
