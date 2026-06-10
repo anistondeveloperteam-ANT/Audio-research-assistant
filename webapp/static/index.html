@@ -50,12 +50,29 @@
       <div class="sessions" id="sessions"></div>
 
       <div class="sidebar-foot">
-        <div class="foot-row"><span class="dot" id="provDot"></span><span id="provLabel">connecting…</span></div>
+        <!-- Model switcher -->
+        <div class="model-pick" title="Choose the language model">
+          <span class="mp-ic"><span class="dot" id="provDot"></span></span>
+          <select id="modelSel" aria-label="Model"></select>
+          <svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+        <div class="mp-label" id="provLabel">connecting…</div>
+
+        <!-- Your papers -->
         <button class="foot-row foot-lib" id="manageBtn" title="View and delete your papers">
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
           <span id="libLabel">loading library…</span>
           <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:auto;opacity:.6"><path d="M9 18l6-6-6-6"/></svg>
         </button>
+
+        <!-- Signed-in user + sign out (bottom-left) -->
+        <div class="user-row" id="userChip" style="display:none">
+          <span class="avatar" id="userAvatar" aria-hidden="true"></span>
+          <span class="user-meta"><span class="user-name" id="userName" title="Signed in"></span><span class="user-sub">Signed in</span></span>
+          <button class="signout-btn" id="logoutBtn" title="Sign out" aria-label="Sign out">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
+          </button>
+        </div>
       </div>
     </aside>
 
@@ -66,17 +83,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
         </button>
         <span class="spacer"></span>
-
-        <span class="control">
-          <label for="modelSel">Model</label>
-          <select class="select" id="modelSel" title="Choose the language model"></select>
-        </span>
         <button class="icon-btn theme-toggle" id="themeBtn" title="Toggle dark / light theme" aria-label="Toggle theme"></button>
-        <span class="user-chip" id="userChip" style="display:none">
-          <span class="avatar" id="userAvatar" aria-hidden="true"></span>
-          <span class="user-name" id="userName" title="Signed in"></span>
-          <button class="signout-btn" id="logoutBtn" title="Sign out">Sign out</button>
-        </span>
       </header>
 
       <div class="transcript" id="transcript">

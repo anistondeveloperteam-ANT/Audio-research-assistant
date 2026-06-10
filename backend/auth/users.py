@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import os
 import re
+import secrets
 import sqlite3
 import time
 from pathlib import Path
@@ -21,6 +22,12 @@ AUTH_DB = Path(os.getenv("AUTH_DB_PATH", str(ROOT / "data" / "auth.db")))
 
 _PBKDF2_ROUNDS = 200_000
 _USER_RE = re.compile(r"^[A-Za-z0-9._@-]{3,64}$")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_RESET_TTL_SECONDS = 30 * 60   # password-reset links expire after 30 minutes
+
+
+def valid_email(email: str) -> bool:
+    return bool(_EMAIL_RE.match((email or "").strip()))
 
 
 # ----------------------------------------------------------------------
@@ -63,21 +70,42 @@ def _conn() -> sqlite3.Connection:
             created_at    REAL NOT NULL
         )
     """)
+    # Migration: add the optional email column to pre-existing databases.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "email" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    # One-time, single-use, expiring password-reset tokens (only the hash is stored).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS password_resets (
+            token_hash TEXT PRIMARY KEY,
+            user_id    TEXT NOT NULL,
+            expires_at REAL NOT NULL,
+            used       INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL
+        )
+    """)
     return conn
 
 
-def create_user(user_id: str, password: str, is_admin: bool = False) -> None:
+def create_user(user_id: str, password: str, is_admin: bool = False,
+                email: Optional[str] = None) -> None:
     user_id = (user_id or "").strip()
+    email = (email or "").strip().lower() or None
     if not valid_user_id(user_id):
         raise ValueError("user_id must be 3-64 chars: letters, digits, . _ - @")
     if not password or len(password) < 6:
         raise ValueError("password must be at least 6 characters")
+    if email and not valid_email(email):
+        raise ValueError("please enter a valid email address")
     with _conn() as conn:
         if conn.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,)).fetchone():
             raise ValueError(f"user {user_id!r} already exists")
+        if email and conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+            raise ValueError("that email is already registered")
         conn.execute(
-            "INSERT INTO users (user_id, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)",
-            (user_id, hash_password(password), 1 if is_admin else 0, time.time()),
+            "INSERT INTO users (user_id, password_hash, is_admin, created_at, email) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user_id, hash_password(password), 1 if is_admin else 0, time.time(), email),
         )
 
 
@@ -104,6 +132,84 @@ def set_password(user_id: str, password: str) -> None:
                            (hash_password(password), (user_id or "").strip()))
         if cur.rowcount == 0:
             raise ValueError(f"no such user: {user_id!r}")
+
+
+# ----------------------------------------------------------------------
+# Email + password-reset tokens
+# ----------------------------------------------------------------------
+def get_email(user_id: str) -> Optional[str]:
+    with _conn() as conn:
+        row = conn.execute("SELECT email FROM users WHERE user_id = ?",
+                           ((user_id or "").strip(),)).fetchone()
+    return row["email"] if row else None
+
+
+def set_email(user_id: str, email: str) -> None:
+    email = (email or "").strip().lower()
+    if email and not valid_email(email):
+        raise ValueError("please enter a valid email address")
+    with _conn() as conn:
+        cur = conn.execute("UPDATE users SET email = ? WHERE user_id = ?",
+                           (email or None, (user_id or "").strip()))
+        if cur.rowcount == 0:
+            raise ValueError(f"no such user: {user_id!r}")
+
+
+def find_user_by_email(email: str) -> Optional[str]:
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    with _conn() as conn:
+        row = conn.execute("SELECT user_id FROM users WHERE email = ?", (email,)).fetchone()
+    return row["user_id"] if row else None
+
+
+def resolve_user(identifier: str) -> Optional[str]:
+    """Look up a user by user_id OR email. Returns the user_id, or None."""
+    ident = (identifier or "").strip()
+    if not ident:
+        return None
+    if user_exists(ident):
+        return ident
+    return find_user_by_email(ident)
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def create_reset_token(user_id: str) -> str:
+    """Issue a single-use, 30-minute password-reset token for an existing user.
+    Only the SHA-256 hash is stored; the raw token goes in the reset link. Any
+    prior unused tokens for the user are invalidated."""
+    user_id = (user_id or "").strip()
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    with _conn() as conn:
+        conn.execute("UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0", (user_id,))
+        conn.execute(
+            "INSERT INTO password_resets (token_hash, user_id, expires_at, used, created_at) "
+            "VALUES (?, ?, ?, 0, ?)",
+            (_hash_token(token), user_id, now + _RESET_TTL_SECONDS, now),
+        )
+    return token
+
+
+def consume_reset_token(token: str) -> Optional[str]:
+    """Validate + burn a reset token. Returns the user_id if valid (exists, not
+    expired, not used); marks it used so it can't be replayed. None otherwise."""
+    if not token:
+        return None
+    th = _hash_token(token)
+    now = time.time()
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT user_id, expires_at, used FROM password_resets WHERE token_hash = ?",
+            (th,)).fetchone()
+        if not row or row["used"] or row["expires_at"] < now:
+            return None
+        conn.execute("UPDATE password_resets SET used = 1 WHERE token_hash = ?", (th,))
+        return row["user_id"]
 
 
 def delete_user(user_id: str) -> bool:

@@ -17,9 +17,10 @@ from fastapi import Request
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Paths that never require a login (the login page, the auth endpoints, static assets).
-PUBLIC_PATHS = {"/", "/login", "/api/login", "/api/logout", "/api/me",
-                "/api/signup", "/favicon.ico"}
+# Paths that never require a login (the login/reset pages, auth endpoints, static assets).
+PUBLIC_PATHS = {"/", "/login", "/reset", "/api/login", "/api/logout", "/api/me",
+                "/api/signup", "/api/forgot-password", "/api/reset-password",
+                "/favicon.ico"}
 
 LOCAL_USER = "local"
 
@@ -35,6 +36,13 @@ def auth_enabled() -> bool:
 def signup_enabled() -> bool:
     """Optional self-service registration. Off by default (admin creates accounts)."""
     return _flag("ENABLE_SIGNUP")
+
+
+def reset_return_link() -> bool:
+    """When true (single-user self-hosted, no SMTP), the forgot-password endpoint
+    returns the reset link to the page so it works without an email server. Keep OFF
+    in any multi-user/production deployment (use SMTP instead)."""
+    return _flag("AUTH_RESET_RETURN_LINK")
 
 
 def session_secret() -> str:

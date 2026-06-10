@@ -13,6 +13,25 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Production sign-in + forgot-password, and a cleaner app chrome
+- **Forgot password (real, secure):** new single-use, 30-minute, SHA-256-hashed reset tokens
+  (`backend/auth/users.py`); endpoints `/api/forgot-password` + `/api/reset-password`; a
+  `/reset` page. Emails the link via SMTP when configured (`backend/auth/mailer.py`), else
+  returns it on-page for single-user self-hosted (`AUTH_RESET_RETURN_LINK`). New tokens
+  invalidate old ones; reset clears the session. Sign-up now accepts an optional **email**.
+- **Adversarially hardened** (a 3-agent security review found 1 critical + several issues, all
+  fixed): the on-page reset link is now only ever returned to a **single-user instance from
+  loopback** (closes a username→takeover hole); **rate limiting** on login/signup/forgot/reset
+  (429); the new password is validated **before** the token is burned; the token is logged only
+  when no SMTP is configured; the reset link is built via the **DOM** (no Host-header XSS) and can
+  be pinned with `PUBLIC_BASE_URL`. 13 auth tests (token flow + endpoint security).
+- **World-class sign-in page** (`login.html`): split-screen brand + form, animated aurora,
+  sign-in / sign-up / forgot views, password peek, caps-lock hint, dark by default. New
+  matching `reset.html` with a password-strength meter.
+- **Cleaner app chrome:** the top bar now holds **only** the dark/light toggle; the model
+  switcher and the signed-in user + **sign-out** moved to the **bottom-left** sidebar foot.
+  (Pure HTML/CSS move — app.js ids unchanged.)
+
 ### Two models only — Gemini 2.5 Flash + GPT-5.5
 - Stripped the model picker and router down to exactly two: **Gemini · gemini-2.5-flash**
   (free, reuses GEMINI_API_KEY) and **OpenAI · gpt-5.5** (needs OPENAI_CLOUD_KEY). Removed

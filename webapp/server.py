@@ -12,7 +12,11 @@ Members then sign in at /login; each member's conversations are private.
 from __future__ import annotations
 
 import json
+import os
+import secrets
 import sys
+import time as _time
+from collections import defaultdict, deque
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
@@ -27,7 +31,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from webapp import auth as webauth, chat_logic, ingest, settings
-from backend.auth.users import create_user, verify_user
+from backend.auth.users import (
+    create_user, verify_user, resolve_user, get_email, set_password,
+    create_reset_token, consume_reset_token, count_users,
+)
+from backend.auth import mailer
 from backend.llm.streaming_provider import get_provider
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -39,6 +47,40 @@ def require_login(request: Request) -> None:
         return
     if not request.session.get("user_id"):
         raise HTTPException(status_code=401, detail="Authentication required")
+
+
+# ---- Brute-force / abuse protection: simple per-IP sliding-window rate limiter ----
+_RATE_BUCKETS: dict = defaultdict(deque)
+
+
+def _rate_ok(request: Request, name: str, limit: int, window: float = 60.0) -> bool:
+    """False when this client IP has exceeded `limit` hits to `name` within `window`s."""
+    ip = (request.client.host if request.client else "?") or "?"
+    dq = _RATE_BUCKETS[f"{name}:{ip}"]
+    now = _time.time()
+    while dq and dq[0] < now - window:
+        dq.popleft()
+    if len(dq) >= limit:
+        return False
+    dq.append(now)
+    return True
+
+
+def _too_many():
+    return JSONResponse({"error": "Too many attempts. Please wait a minute and try again."},
+                        status_code=429)
+
+
+def _is_loopback(request: Request) -> bool:
+    host = (request.client.host if request.client else "") or ""
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
+def _reset_base(request: Request) -> str:
+    """Base URL for reset links: an explicit PUBLIC_BASE_URL if set (so an attacker-
+    controlled Host header can never poison the link), else the request's base URL."""
+    base = (os.getenv("PUBLIC_BASE_URL") or "").strip()
+    return base.rstrip("/") if base else str(request.base_url).rstrip("/")
 
 
 app = FastAPI(title="Research Assistant", dependencies=[Depends(require_login)])
@@ -80,6 +122,11 @@ def login_page():
     return FileResponse(str(STATIC / "login.html"), headers=_NO_STORE)
 
 
+@app.get("/reset")
+def reset_page():
+    return FileResponse(str(STATIC / "reset.html"), headers=_NO_STORE)
+
+
 # ----------------------------------------------------------------------
 # Auth
 # ----------------------------------------------------------------------
@@ -96,6 +143,8 @@ def whoami(request: Request):
 
 @app.post("/api/login")
 def api_login(request: Request, body: dict = Body(default={})):
+    if not _rate_ok(request, "login", limit=10):
+        return _too_many()
     uid = (body.get("user_id") or "").strip()
     pw = body.get("password") or ""
     if verify_user(uid, pw):
@@ -113,18 +162,78 @@ def api_logout(request: Request):
 
 @app.post("/api/signup")
 def api_signup(request: Request, body: dict = Body(default={})):
+    if not _rate_ok(request, "signup", limit=5):
+        return _too_many()
     if not webauth.signup_enabled():
         return JSONResponse(
             {"error": "Sign-ups are disabled. Ask an admin to create your account."},
             status_code=403)
     uid = (body.get("user_id") or "").strip()
     pw = body.get("password") or ""
+    email = (body.get("email") or "").strip()
     try:
-        create_user(uid, pw)
+        create_user(uid, pw, email=email)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     request.session["user_id"] = uid
     return {"ok": True, "user_id": uid}
+
+
+@app.post("/api/forgot-password")
+def api_forgot_password(request: Request, body: dict = Body(default={})):
+    """Start a password reset. Always returns a generic message (no account
+    enumeration). If the account exists we issue a token and email the link."""
+    if not _rate_ok(request, "forgot", limit=5):
+        return _too_many()
+    generic = {"ok": True,
+               "message": "If an account matches, a password-reset link has been sent."}
+    identifier = (body.get("identifier") or body.get("user_id") or body.get("email") or "").strip()
+    user_id = resolve_user(identifier)
+    if not user_id:
+        secrets.token_urlsafe(32)   # equalize work vs. the found-account branch (timing)
+        return generic
+    token = create_reset_token(user_id)
+    reset_url = f"{_reset_base(request)}/reset?token={token}"
+    email = get_email(user_id)
+    sent = mailer.send_email(
+        email or "",
+        "Reset your Research Assistant password",
+        f"Hi {user_id},\n\nUse this link to reset your password (valid for 30 minutes):\n\n"
+        f"{reset_url}\n\nIf you didn't request this, you can ignore this email.\n",
+    ) if email else False
+    if not sent:
+        # Only log the token when there is genuinely no email path (self-hosted), so a
+        # production SMTP deployment never writes a live bearer token to its logs.
+        if not mailer.email_configured():
+            print(f"[auth] password-reset link for {user_id!r}: {reset_url}")
+        # Self-hosted escape hatch: only ever hand the link back to a SINGLE-USER instance
+        # accessed from LOOPBACK — never to a remote or multi-user caller (else knowing a
+        # username would be account takeover).
+        if (webauth.reset_return_link() and count_users() == 1 and _is_loopback(request)):
+            return {**generic, "reset_url": reset_url}
+    return generic
+
+
+@app.post("/api/reset-password")
+def api_reset_password(request: Request, body: dict = Body(default={})):
+    if not _rate_ok(request, "reset", limit=10):
+        return _too_many()
+    token = (body.get("token") or "").strip()
+    pw = body.get("password") or ""
+    # Validate BEFORE consuming the token, so a too-short password doesn't burn the link.
+    if len(pw) < 6:
+        return JSONResponse({"error": "Password must be at least 6 characters."}, status_code=400)
+    user_id = consume_reset_token(token)
+    if not user_id:
+        return JSONResponse(
+            {"error": "This reset link is invalid or has expired. Please request a new one."},
+            status_code=400)
+    try:
+        set_password(user_id, pw)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    request.session.clear()   # force a fresh sign-in with the new password
+    return {"ok": True, "user_id": user_id}
 
 
 # ----------------------------------------------------------------------
