@@ -103,6 +103,7 @@ SYSTEM_PROMPT = (
     "  example) and explain each step, citing the source. Do NOT copy code verbatim from\n"
     "  repositories; reimplement the idea and note any license constraints.\n"
     "- Prefer depth, accuracy, and breadth over brevity.\n"
+    "- Write in clean, professional prose. Do NOT use emojis or decorative symbols.\n"
 )
 
 

@@ -138,12 +138,14 @@
 
   // Remove inline bracketed citations ([2], [12], [3, 4]) from the rendered answer —
   // they look noisy. Skips code/links so it never mangles things like arr[12].
+  // Remove noisy inline [n] citations AND emojis from the rendered answer (kept out
+  // of code blocks/links), for a clean, professional look.
+  const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}]/gu;
   function stripCitations(root) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
         const p = n.parentElement;
-        if (!p || p.closest("pre, code, a")) return NodeFilter.FILTER_REJECT;
-        return /\[\d+(?:\s*,\s*\d+)*\]/.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        return (!p || p.closest("pre, code, a")) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
       },
     });
     const nodes = [];
@@ -151,6 +153,7 @@
     for (const node of nodes) {
       node.nodeValue = node.nodeValue
         .replace(/[ \t]*\[\d+(?:\s*,\s*\d+)*\]/g, "")
+        .replace(EMOJI_RE, "")
         .replace(/[ \t]{2,}/g, " ");
     }
   }

@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Readable progress + no-emoji answers
+- The status line used an unreadable shimmering-gradient text that looked like a blank
+  bar during long runs — replaced with **plain, readable status text** (gentle pulse), so
+  you can actually see "Searching… / Drafting… / Thinking… / Verifying…" while it works.
+- Answers are now **emoji-free**: the system prompt forbids emojis and the renderer also
+  strips any emoji the model emits (code blocks untouched) — clean, professional output.
+
 ### Visible "Thinking" panel (Claude/ChatGPT style)
 - The model's hidden reasoning is now captured and shown in a **collapsible "Thinking"
   panel** above the answer — click to expand/collapse; it streams live (pulsing icon)
