@@ -119,7 +119,11 @@ class OpenAIProvider(LLMProvider):
             {"max_completion_tokens": max_tokens},
         ]
 
-    def stream_chat(self, messages, system="", max_tokens=2048, temperature=0.3):
+    def stream_chat(self, messages, system="", max_tokens=2048, temperature=0.3,
+                    yield_reasoning=False):
+        """Yield answer content as strings. When `yield_reasoning=True`, also yields
+        the model's hidden reasoning/'thinking' as {"reasoning": "..."} dicts (for
+        models like qwen3/DeepSeek-R1 that expose it) so the UI can show it."""
         import openai
 
         client = (openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
@@ -148,11 +152,16 @@ class OpenAIProvider(LLMProvider):
 
         for chunk in stream:
             try:
-                delta = chunk.choices[0].delta.content
+                delta = chunk.choices[0].delta
             except Exception:
-                delta = None
-            if delta:
-                yield delta
+                continue
+            if yield_reasoning:
+                think = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                if think:
+                    yield {"reasoning": think}
+            content = getattr(delta, "content", None)
+            if content:
+                yield content
 
     def _open_stream(self, client, openai, msgs, max_tokens: int, temperature: float):
         """Create the streaming completion, adapting the token/temperature params."""

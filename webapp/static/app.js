@@ -365,6 +365,10 @@
       <div class="body">
         <div class="bubble assistant">
           <div class="statusline"><span class="typing"><span></span><span></span><span></span></span><span class="status-text">Thinking…</span><span class="elapsed"></span></div>
+          <details class="thinking" style="display:none">
+            <summary><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg><span class="th-label">Thinking…</span><span class="th-caret">▸</span></summary>
+            <div class="th-body"></div>
+          </details>
           <div class="md" style="display:none"></div>
         </div>
         <div class="msg-tools" style="display:none"></div>
@@ -376,9 +380,30 @@
       statusEl: m.querySelector(".statusline"),
       statusText: m.querySelector(".status-text"),
       elapsed: m.querySelector(".elapsed"),
+      thinking: m.querySelector(".thinking"),
+      thinkBody: m.querySelector(".th-body"),
+      thinkLabel: m.querySelector(".th-label"),
       md: m.querySelector(".md"),
       tools: m.querySelector(".msg-tools"),
     };
+  }
+
+  function appendThinking(h, text) {
+    if (!h.thinking || !text) return;
+    if (h.thinking.style.display === "none") {
+      h.thinking.style.display = "";
+      h.thinking.classList.add("live");
+    }
+    h._thinkRaw = (h._thinkRaw || "") + text;
+    h.thinkBody.textContent = h._thinkRaw;
+    if (h.thinking.open) h.thinkBody.scrollTop = h.thinkBody.scrollHeight;
+    if (state.autoStick) scrollToBottom();
+  }
+
+  function finishThinking(h) {
+    if (!h || !h.thinking || !h._thinkRaw) return;
+    h.thinking.classList.remove("live");
+    if (h.thinkLabel) h.thinkLabel.textContent = "Thought process";
   }
 
   function renderHistoryMessage(turn) {
@@ -895,6 +920,9 @@
       case "status":
         h.statusText.textContent = ev.message || "Working…";
         break;
+      case "thinking":
+        appendThinking(h, ev.text || "");
+        break;
       case "sanity":
         h.statusEl.style.display = "none"; h.md.style.display = "";
         renderMarkdown(h.md, "⚠️ " + (ev.message || "Please rephrase your question."));
@@ -905,6 +933,7 @@
         break;
       }
       case "token":
+        finishThinking(h);
         setAns(getAns() + (ev.text || ""));
         scheduleRender();
         break;
@@ -917,6 +946,7 @@
         scheduleRender();
         break;
       case "done":
+        finishThinking(h);
         if (ev.cached) { h._cached = true; h._cachedPct = ev.similarity || 0; h._cachedKind = ev.match_kind || ""; }
         break;
     }

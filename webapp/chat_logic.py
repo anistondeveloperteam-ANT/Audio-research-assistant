@@ -616,9 +616,15 @@ def stream_chat_events(
                 for _shrink in range(5):
                     err = None
                     try:
-                        answer = complete_text(
-                            provider, _messages_for(evidence),
-                            system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS, temperature=0.3)
+                        parts = []
+                        for piece in provider.stream_chat(
+                                _messages_for(evidence), system=SYSTEM_PROMPT,
+                                max_tokens=ANSWER_MAX_TOKENS, temperature=0.3, yield_reasoning=True):
+                            if isinstance(piece, dict):
+                                yield {"type": "thinking", "text": piece.get("reasoning", "")}
+                            else:
+                                parts.append(piece)
+                        answer = "".join(parts).strip()
                     except Exception as exc:
                         err = exc
                     # Shrink the evidence and retry if the prompt was rejected as too
@@ -743,10 +749,14 @@ def stream_chat_events(
             user_msg = build_user_message(q, evidence)
             messages = history + [{"role": "user", "content": user_msg}]
             for chunk in provider.stream_chat(
-                messages, system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS, temperature=0.3
+                messages, system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS,
+                temperature=0.3, yield_reasoning=True
             ):
-                answer_parts.append(chunk)
-                yield {"type": "token", "text": chunk}
+                if isinstance(chunk, dict):
+                    yield {"type": "thinking", "text": chunk.get("reasoning", "")}
+                else:
+                    answer_parts.append(chunk)
+                    yield {"type": "token", "text": chunk}
             clean_body = "".join(answer_parts)
     except Exception as exc:
         gen_failed = True

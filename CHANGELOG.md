@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Visible "Thinking" panel (Claude/ChatGPT style)
+- The model's hidden reasoning is now captured and shown in a **collapsible "Thinking"
+  panel** above the answer — click to expand/collapse; it streams live (pulsing icon)
+  while the model thinks, then settles to "Thought process". Works for reasoning models
+  (qwen3, DeepSeek-R1, …) that expose `reasoning_content`; gracefully absent otherwise.
+- `stream_chat(..., yield_reasoning=True)` now surfaces reasoning as `{"reasoning": …}`
+  chunks; the chat pipeline forwards them as `thinking` events. The answer itself keeps
+  streaming token-by-token as before.
+
 ### Model dropdown lists local Ollama models
 - When `OPENAI_BASE_URL` points at Ollama, the Model picker now lists the models you
   actually have installed (queried from Ollama's `/v1/models`) — e.g.

@@ -518,6 +518,22 @@ body {
 .katex-display { margin: .85em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 1px; }
 .katex { font-size: 1.02em; }
 
+/* Collapsible "Thinking" panel (Claude/ChatGPT style) */
+.thinking { margin: 2px 0 10px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-2); overflow: hidden; }
+.thinking > summary { list-style: none; cursor: pointer; display: flex; align-items: center;
+  gap: 7px; padding: 7px 11px; font-size: 12.5px; font-weight: 600; color: var(--text-soft);
+  user-select: none; }
+.thinking > summary::-webkit-details-marker { display: none; }
+.thinking > summary:hover { color: var(--text); }
+.thinking .th-caret { margin-left: auto; transition: transform .15s; opacity: .55; font-size: 11px; }
+.thinking[open] .th-caret { transform: rotate(90deg); }
+.thinking.live > summary svg { color: var(--accent); animation: thinkpulse 1.2s ease-in-out infinite; }
+.th-body { padding: 9px 12px 11px; margin-top: 2px; font-size: 12.5px; line-height: 1.55;
+  color: var(--muted); white-space: pre-wrap; max-height: 320px; overflow-y: auto;
+  border-top: 1px solid var(--border); }
+@keyframes thinkpulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+
 /* source cards lift a touch on hover */
 .source-card { transition: border-color .14s ease, box-shadow .14s ease, transform .14s ease; }
 .source-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
