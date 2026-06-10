@@ -3,63 +3,56 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Reset password · Research Assistant</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&display=swap" rel="stylesheet" />
-<script>try{var t=localStorage.getItem("ara-theme")||"dark";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","dark");}</script>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237c83ff' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.3-4.3'/%3E%3C/svg%3E" />
+<title>Reset password · ResearchAI</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231E6FD9' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E" />
 <style>
-:root{--bg:#f4f6fb;--panel:#ffffff;--panel-2:#f6f8fc;--border:#e4e8f0;--border-2:#d6dce8;
-  --text:#111726;--soft:#475067;--muted:#8b95a9;--accent:#5b54f0;--ring:rgba(91,84,240,.22);
-  --field:#fff;--grad:linear-gradient(135deg,#6366f1,#8b5cf6 55%,#d946ef);--ok:#0f9d6e;--err:#e0466b}
-[data-theme="dark"]{--bg:#080a14;--panel:#0f1322;--panel-2:#141a2c;--border:#222a40;--border-2:#2c3550;
-  --text:#eef1f8;--soft:#b6bfd4;--muted:#7a8399;--accent:#7c83ff;--ring:rgba(124,131,255,.32);
-  --field:#0d1120;--grad:linear-gradient(135deg,#7c83ff,#a78bfa 55%,#e879f9)}
+:root{--blue:#1E6FD9;--blue2:#3b82f6;--ink:#0A1628;--ink2:#1A3A6B;--slate:#cbd5e1;--err:#dc2626;--ok:#0f9d6e;
+  --font:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 *{box-sizing:border-box}html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--text);font-family:"Inter",system-ui,sans-serif;
-  -webkit-font-smoothing:antialiased;display:grid;place-items:center;overflow:hidden;font-size:15px}
-.aurora{position:fixed;inset:0;overflow:hidden;z-index:0;pointer-events:none}
-.aurora span{position:absolute;border-radius:50%;filter:blur(80px);opacity:.4;background:var(--grad)}
-.aurora span:nth-child(1){width:42vw;height:42vw;left:-10vw;top:-12vh}
-.aurora span:nth-child(2){width:36vw;height:36vw;right:-10vw;bottom:-12vh;background:linear-gradient(135deg,#22d3ee,#8b5cf6)}
-[data-theme="light"] .aurora span{opacity:.22}
-.card{position:relative;z-index:1;width:100%;max-width:392px;padding:34px 32px;border-radius:22px;
-  background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--border);
-  box-shadow:0 30px 80px -24px rgba(0,0,0,.5);backdrop-filter:blur(16px)}
-.mk{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;background:var(--grad);margin-bottom:18px}
-.mk svg{width:24px;height:24px}
-h2{font-size:24px;font-weight:700;letter-spacing:-.02em;margin:0 0 6px}
-.sub{font-size:14px;color:var(--soft);margin:0 0 22px;line-height:1.5}
-label{display:block;font-size:13px;font-weight:600;color:var(--soft);margin:0 0 7px}
+body{margin:0;font-family:var(--font);color:var(--ink);-webkit-font-smoothing:antialiased;
+  background:linear-gradient(135deg,#0A1628 0%,#102a52 45%,#1A3A6B 100%);display:grid;place-items:center;overflow:hidden}
+.dots span{position:fixed;border-radius:50%;background:var(--blue2);filter:blur(.5px);opacity:.5}
+.dots span:nth-child(1){width:9px;height:9px;left:14%;top:26%}
+.dots span:nth-child(2){width:7px;height:7px;right:16%;bottom:24%;opacity:.4}
+.card{position:relative;z-index:1;width:100%;max-width:430px;padding:36px;border-radius:24px;
+  background:rgba(255,255,255,.97);border:1px solid rgba(255,255,255,.5);
+  box-shadow:0 0 60px rgba(30,111,217,.30),0 30px 60px -30px rgba(0,0,0,.5);backdrop-filter:blur(20px)}
+.mk{width:52px;height:52px;border-radius:14px;display:grid;place-items:center;margin-bottom:18px;
+  background:linear-gradient(135deg,#1E6FD9,#3b82f6);box-shadow:0 0 32px rgba(30,111,217,.5)}
+.mk svg{width:26px;height:26px;color:#fff}
+h2{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px}
+.sub{font-size:15px;color:rgba(26,58,107,.7);margin:0 0 24px;line-height:1.5}
+label{display:block;font-size:14px;font-weight:600;color:var(--ink2);margin:0 0 8px}
 .inp{position:relative;margin-bottom:14px}
-.inp input{width:100%;height:48px;padding:0 44px 0 15px;border-radius:13px;font-size:15px;color:var(--text);
-  background:var(--field);border:1.5px solid var(--border);font-family:inherit;transition:.15s}
-.inp input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--ring)}
+.inp input{width:100%;height:46px;padding:0 44px 0 15px;border-radius:12px;font-size:15px;color:var(--ink);
+  background:#fff;border:1.5px solid var(--slate);font-family:inherit;transition:.15s}
+.inp input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 4px rgba(30,111,217,.16)}
 .peek{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;
-  color:var(--muted);padding:8px;border-radius:9px;display:grid;place-items:center}
-.peek:hover{color:var(--text);background:var(--panel-2)}.peek svg{width:18px;height:18px}
-.bar{height:5px;border-radius:3px;background:var(--panel-2);overflow:hidden;margin:2px 0 16px}
+  color:rgba(26,58,107,.5);padding:8px;border-radius:8px;display:grid;place-items:center}
+.peek:hover{color:var(--ink);background:#f1f5f9}.peek svg{width:17px;height:17px}
+.bar{height:5px;border-radius:3px;background:#e2e8f0;overflow:hidden;margin:2px 0 16px}
 .bar i{display:block;height:100%;width:0;border-radius:3px;transition:width .25s,background .25s}
-.btn{width:100%;height:49px;border:none;border-radius:13px;cursor:pointer;font:inherit;font-size:15px;
-  font-weight:650;color:#fff;background:var(--grad);box-shadow:0 10px 28px -10px var(--ring);
-  transition:transform .14s;display:flex;align-items:center;justify-content:center;gap:9px}
-.btn:hover{transform:translateY(-1.5px)}.btn[disabled]{opacity:.65;cursor:not-allowed;transform:none}
+.btn{width:100%;height:48px;border:none;border-radius:12px;cursor:pointer;font:inherit;font-size:16px;font-weight:700;
+  color:#fff;background:var(--blue);box-shadow:0 8px 24px rgba(30,111,217,.4);
+  display:flex;align-items:center;justify-content:center;gap:9px;transition:transform .14s,filter .14s}
+.btn:hover{filter:brightness(1.06);transform:translateY(-1px)}.btn[disabled]{opacity:.7;cursor:not-allowed;transform:none}
 .btn .spin{width:17px;height:17px;border:2.4px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:none}
 .btn.loading .spin{display:block}@keyframes spin{to{transform:rotate(360deg)}}
-.msg{margin-top:14px;font-size:13.5px;padding:11px 13px;border-radius:11px;display:none;line-height:1.5;border:1px solid transparent}
+.msg{margin-top:14px;font-size:14px;padding:11px 14px;border-radius:11px;display:none;line-height:1.5;border:1px solid transparent}
 .msg.show{display:block}
-.msg.err{color:var(--err);background:color-mix(in srgb,var(--err) 10%,transparent);border-color:color-mix(in srgb,var(--err) 24%,transparent)}
-.msg.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 10%,transparent);border-color:color-mix(in srgb,var(--ok) 24%,transparent)}
-.msg a{color:inherit;font-weight:700}
-.foot{margin-top:18px;text-align:center;font-size:13px}
-.foot a{color:var(--accent);font-weight:600;text-decoration:none}.foot a:hover{text-decoration:underline}
+.msg.err{color:var(--err);background:#fef2f2;border-color:#fecaca}
+.msg.ok{color:var(--ok);background:#f0fdf4;border-color:#bbf7d0}
+.foot{margin-top:18px;text-align:center;font-size:14px}
+.foot a{color:var(--blue);font-weight:700;text-decoration:none}.foot a:hover{text-decoration:underline}
 </style>
 </head>
 <body>
-<div class="aurora"><span></span><span></span></div>
+<div class="dots"><span></span><span></span></div>
 <div class="card">
   <div class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
   <h2>Choose a new password</h2>
-  <p class="sub">Pick something you'll remember. It needs to be at least 6 characters.</p>
+  <p class="sub">Pick something you'll remember — at least 6 characters.</p>
   <form id="form" novalidate>
     <label for="pw">New password</label>
     <div class="inp">
@@ -68,9 +61,7 @@ label{display:block;font-size:13px;font-weight:600;color:var(--soft);margin:0 0 
     </div>
     <div class="bar"><i id="bar"></i></div>
     <label for="pw2">Confirm password</label>
-    <div class="inp">
-      <input id="pw2" type="password" autocomplete="new-password" placeholder="••••••••" />
-    </div>
+    <div class="inp"><input id="pw2" type="password" autocomplete="new-password" placeholder="••••••••" /></div>
     <button class="btn" id="submit" type="submit"><span class="spin"></span><span class="label">Update password</span></button>
     <div class="msg" id="msg"></div>
   </form>
@@ -79,12 +70,12 @@ label{display:block;font-size:13px;font-weight:600;color:var(--soft);margin:0 0 
 <script>
 const $=id=>document.getElementById(id);
 const token=new URLSearchParams(location.search).get("token")||"";
-const eye='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
-const eyeOff='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3l18 18M10.6 10.7a3 3 0 0 0 4.2 4.2"/><path d="M9.9 5.2A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.4 4.1M6.5 6.6A17 17 0 0 0 2 12s3.6 7 10 7c1 0 2-.1 2.9-.4"/></svg>';
+const eye='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+const eyeOff='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 3l18 18M10.6 10.7a3 3 0 0 0 4.2 4.2"/><path d="M9.9 5.2A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.4 4.1M6.5 6.6A17 17 0 0 0 2 12s3.6 7 10 7c1 0 2-.1 2.9-.4"/></svg>';
 $("peek").innerHTML=eye;
 $("peek").onclick=()=>{const i=$("pw");const s=i.type==="password";i.type=s?"text":"password";$("peek").innerHTML=s?eyeOff:eye;i.focus();};
 $("pw").addEventListener("input",()=>{const v=$("pw").value;let s=0;if(v.length>=6)s++;if(v.length>=10)s++;if(/[A-Z]/.test(v)&&/[a-z]/.test(v))s++;if(/[0-9\W]/.test(v))s++;
-  const pct=[0,25,50,80,100][s]||0;const col=["#e0466b","#e0466b","#d97706","#0f9d6e","#0f9d6e"][s];$("bar").style.width=pct+"%";$("bar").style.background=col;});
+  const pct=[0,25,50,80,100][s]||0;const col=["#dc2626","#dc2626","#d97706","#0f9d6e","#0f9d6e"][s];$("bar").style.width=pct+"%";$("bar").style.background=col;});
 function fail(t){const m=$("msg");m.className="msg err show";m.textContent=t;}
 if(!token)fail("This reset link is missing its token. Request a new one from the sign-in page.");
 $("form").addEventListener("submit",async e=>{
@@ -97,7 +88,7 @@ $("form").addEventListener("submit",async e=>{
   try{
     const res=await fetch("/api/reset-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token,password:pw})});
     const d=await res.json().catch(()=>({}));
-    if(res.ok&&d.ok){const m=$("msg");m.className="msg ok show";m.innerHTML="Password updated. Redirecting to sign in…";setTimeout(()=>location.href="/login",1400);return;}
+    if(res.ok&&d.ok){const m=$("msg");m.className="msg ok show";m.textContent="Password updated. Redirecting to sign in…";setTimeout(()=>location.href="/login",1400);return;}
     fail(d.error||"Couldn't reset your password. Please try again.");
   }catch(err){fail("Network error — please try again.");}
   btn.classList.remove("loading");btn.disabled=false;

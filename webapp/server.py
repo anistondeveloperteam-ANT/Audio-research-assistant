@@ -145,12 +145,13 @@ def whoami(request: Request):
 def api_login(request: Request, body: dict = Body(default={})):
     if not _rate_ok(request, "login", limit=10):
         return _too_many()
-    uid = (body.get("user_id") or "").strip()
+    identifier = (body.get("user_id") or body.get("identifier") or body.get("email") or "").strip()
     pw = body.get("password") or ""
+    uid = resolve_user(identifier) or identifier   # accept email OR username
     if verify_user(uid, pw):
         request.session["user_id"] = uid
         return {"ok": True, "user_id": uid}
-    return JSONResponse({"ok": False, "error": "Invalid user ID or password."},
+    return JSONResponse({"ok": False, "error": "Invalid email/username or password."},
                         status_code=401)
 
 

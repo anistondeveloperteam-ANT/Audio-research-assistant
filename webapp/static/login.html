@@ -3,236 +3,209 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Sign in · Research Assistant</title>
-<meta name="description" content="Sign in to your source-grounded research workspace." />
+<title>Sign in · ResearchAI</title>
+<meta name="description" content="Sign in to your intelligent research companion." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&display=swap" rel="stylesheet" />
-<script>try{var t=localStorage.getItem("ara-theme")||"dark";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","dark");}</script>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237c83ff' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.3-4.3'/%3E%3C/svg%3E" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231E6FD9' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M12 5a3 3 0 1 0-3 3M12 19a3 3 0 1 0 3-3M5 12a3 3 0 1 0 3 3M19 12a3 3 0 1 0-3-3'/%3E%3C/svg%3E" />
 <style>
 :root{
-  --bg:#f4f6fb; --panel:#ffffff; --panel-2:#f6f8fc; --border:#e4e8f0; --border-2:#d6dce8;
-  --text:#111726; --soft:#475067; --muted:#8b95a9;
-  --accent:#5b54f0; --accent-2:#8b5cf6; --ring:rgba(91,84,240,.22);
-  --field:#ffffff; --shadow:0 24px 70px -20px rgba(31,38,72,.28);
-  --grad:linear-gradient(135deg,#6366f1,#8b5cf6 55%,#d946ef);
-  --ok:#0f9d6e; --err:#e0466b;
-}
-[data-theme="dark"]{
-  --bg:#080a14; --panel:#0f1322; --panel-2:#141a2c; --border:#222a40; --border-2:#2c3550;
-  --text:#eef1f8; --soft:#b6bfd4; --muted:#7a8399;
-  --accent:#7c83ff; --accent-2:#a78bfa; --ring:rgba(124,131,255,.32);
-  --field:#0d1120; --shadow:0 30px 80px -24px rgba(0,0,0,.75);
-  --grad:linear-gradient(135deg,#7c83ff,#a78bfa 55%,#e879f9);
+  --navy1:#0A1628; --navy2:#102a52; --navy3:#1A3A6B;
+  --blue:#1E6FD9; --blue2:#3b82f6; --blue300:#93c5fd;
+  --ink:#0A1628; --ink2:#1A3A6B; --slate:#cbd5e1; --slate2:#e2e8f0;
+  --err:#dc2626; --ok:#0f9d6e;
+  --font:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--text);
-  font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  -webkit-font-smoothing:antialiased;overflow:hidden;font-size:15px}
+body{margin:0;font-family:var(--font);color:var(--ink);-webkit-font-smoothing:antialiased;
+  background:linear-gradient(135deg,#0A1628 0%,#102a52 45%,#1A3A6B 100%);min-height:100vh}
 
-.aurora{position:fixed;inset:0;overflow:hidden;z-index:0;pointer-events:none}
-.aurora span{position:absolute;border-radius:50%;filter:blur(70px);opacity:.55;
-  background:var(--grad);animation:float 22s ease-in-out infinite}
-.aurora span:nth-child(1){width:46vw;height:46vw;left:-12vw;top:-14vh}
-.aurora span:nth-child(2){width:40vw;height:40vw;right:-12vw;top:18vh;opacity:.4;
-  background:linear-gradient(135deg,#22d3ee,#6366f1);animation-delay:-7s}
-.aurora span:nth-child(3){width:34vw;height:34vw;left:24vw;bottom:-18vh;opacity:.35;
-  background:linear-gradient(135deg,#a78bfa,#ec4899);animation-delay:-13s}
-[data-theme="light"] .aurora span{opacity:.26}
-@keyframes float{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(4vw,3vh) scale(1.08)}66%{transform:translate(-3vw,-2vh) scale(.95)}}
-@media (prefers-reduced-motion:reduce){.aurora span{animation:none}}
+.wrap{position:relative;display:grid;grid-template-columns:1fr 1fr;min-height:100vh;overflow:hidden}
+@media (max-width:980px){.wrap{grid-template-columns:1fr}}
 
-.theme{position:fixed;top:20px;right:22px;z-index:5;width:40px;height:40px;border-radius:12px;
-  display:grid;place-items:center;cursor:pointer;color:var(--soft);
-  background:color-mix(in srgb,var(--panel) 70%,transparent);border:1px solid var(--border);
-  backdrop-filter:blur(10px);transition:.18s}
-.theme:hover{color:var(--text);transform:translateY(-1px)}
-.theme svg{width:18px;height:18px}
+/* decorative floating dots */
+.dots span{position:absolute;border-radius:50%;background:var(--blue2);filter:blur(.5px);
+  animation:floaty 9s ease-in-out infinite}
+.dots span:nth-child(1){width:8px;height:8px;left:10%;top:24%;opacity:.7}
+.dots span:nth-child(2){width:6px;height:6px;left:5%;top:52%;opacity:.55;animation-delay:-2s}
+.dots span:nth-child(3){width:10px;height:10px;left:18%;bottom:26%;opacity:.5;animation-delay:-4s;filter:blur(1px)}
+.dots span:nth-child(4){width:6px;height:6px;left:44%;top:34%;opacity:.4;animation-delay:-6s}
+.dots span:nth-child(5){width:7px;height:7px;right:46%;bottom:18%;opacity:.45;animation-delay:-3s}
+@keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-14px)}}
+@media (prefers-reduced-motion:reduce){.dots span{animation:none}}
 
-.wrap{position:relative;z-index:1;height:100%;display:grid;grid-template-columns:1.05fr .95fr}
-@media (max-width:920px){.wrap{grid-template-columns:1fr}}
+/* ---- brand side ---- */
+.brand{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;gap:34px;padding:56px 60px;color:#fff}
+@media (max-width:980px){.brand{padding:40px 28px 8px;gap:22px;justify-content:flex-start}}
+.logo{display:flex;align-items:center;gap:16px}
+.logo .mk{width:60px;height:60px;border-radius:16px;display:grid;place-items:center;flex:none;
+  background:linear-gradient(135deg,#1E6FD9,#3b82f6);box-shadow:0 0 40px rgba(30,111,217,.7)}
+.logo .mk svg{width:32px;height:32px;color:#fff}
+.logo b{font-size:30px;font-weight:800;letter-spacing:-.02em}
+.brand h1{font-size:46px;line-height:1.1;font-weight:800;letter-spacing:-.03em;margin:0}
+@media (max-width:980px){.brand h1{font-size:32px}}
+.brand .lede{color:var(--blue300);font-size:18px;line-height:1.6;max-width:34ch;margin:0}
+.feats{display:flex;flex-direction:column;gap:14px;max-width:440px}
+@media (max-width:980px){.feats{display:none}}
+.feat{display:flex;align-items:center;gap:16px;padding:16px;border-radius:14px;
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)}
+.feat .fic{width:44px;height:44px;border-radius:11px;flex:none;display:grid;place-items:center;
+  background:rgba(30,111,217,.25);color:#60a5fa}
+.feat .fic svg{width:20px;height:20px}
+.feat .ft{font-weight:600;font-size:14px;color:#fff;display:block}
+.feat .fd{font-size:12px;color:rgba(147,197,253,.85)}
 
-.brand{position:relative;display:flex;flex-direction:column;justify-content:space-between;
-  padding:46px 52px;color:#fff;overflow:hidden}
-.brand::before{content:"";position:absolute;inset:0;background:var(--grad);opacity:.94;z-index:-2}
-.brand::after{content:"";position:absolute;inset:0;z-index:-1;
-  background:radial-gradient(120% 80% at 80% 0%,rgba(255,255,255,.18),transparent 60%),
-             url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Cpath d='M0 39.5H40M39.5 0V40' stroke='%23ffffff' stroke-opacity='.06'/%3E%3C/svg%3E")}
-@media (max-width:920px){.brand{display:none}}
-.logo{display:flex;align-items:center;gap:12px;font-weight:700;font-size:18px;letter-spacing:-.01em}
-.logo .mk{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
-  background:rgba(255,255,255,.16);backdrop-filter:blur(6px)}
-.logo .mk svg{width:21px;height:21px}
-.brand h1{font-size:39px;line-height:1.12;font-weight:800;letter-spacing:-.03em;margin:0 0 16px}
-.brand h1 .thin{font-weight:450;opacity:.92}
-.brand p.lede{font-size:16px;line-height:1.6;color:rgba(255,255,255,.86);max-width:32ch;margin:0 0 26px}
-.feats{display:flex;flex-direction:column;gap:13px}
-.feat{display:flex;gap:12px;align-items:flex-start;font-size:14.5px;color:rgba(255,255,255,.94)}
-.feat .tick{flex:none;width:22px;height:22px;border-radius:7px;display:grid;place-items:center;
-  background:rgba(255,255,255,.18);margin-top:1px}
-.feat .tick svg{width:13px;height:13px}
-.feat b{font-weight:600}
-.brand .foot{font-size:12.5px;color:rgba(255,255,255,.6)}
+/* ---- form side ---- */
+.pane{position:relative;z-index:1;display:grid;place-items:center;padding:40px 28px}
+.card{width:100%;max-width:440px;padding:36px;border-radius:24px;
+  background:rgba(255,255,255,.97);border:1px solid rgba(255,255,255,.5);
+  box-shadow:0 0 60px rgba(30,111,217,.30),0 30px 60px -30px rgba(0,0,0,.5);backdrop-filter:blur(20px)}
+.card h2{font-size:30px;font-weight:800;letter-spacing:-.02em;color:var(--ink);margin:0 0 6px}
+.card .desc{color:rgba(26,58,107,.7);font-size:16px;margin:0 0 24px}
 
-.pane{display:flex;align-items:center;justify-content:center;padding:40px 28px}
-.card{width:100%;max-width:404px}
-.card .top{margin-bottom:8px}
-.eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;
-  color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);
-  padding:5px 11px;border-radius:999px;margin-bottom:16px}
-.eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);
-  box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 24%,transparent)}
-.card h2{font-size:27px;font-weight:700;letter-spacing:-.02em;margin:0 0 7px}
-.card .sub{font-size:14.5px;color:var(--soft);margin:0}
-.card .sub a{color:var(--accent);font-weight:600;text-decoration:none;cursor:pointer}
-.card .sub a:hover{text-decoration:underline}
-
-form{margin-top:22px}
-.field{margin-bottom:15px}
-.field label{display:block;font-size:13px;font-weight:600;color:var(--soft);margin:0 0 7px}
-.field .opt{font-weight:450;color:var(--muted)}
+.field{margin-bottom:16px}
+.field label{display:block;font-size:14px;font-weight:600;color:var(--ink2);margin:0 0 8px}
 .inp{position:relative}
-.inp input{width:100%;height:48px;padding:0 44px 0 15px;border-radius:13px;font-size:15px;
-  color:var(--text);background:var(--field);border:1.5px solid var(--border);
-  font-family:inherit;transition:border-color .15s,box-shadow .15s,background .15s}
-.inp input::placeholder{color:var(--muted)}
-.inp input:hover{border-color:var(--border-2)}
-.inp input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--ring);background:var(--panel)}
-.inp .ic{position:absolute;right:14px;top:50%;transform:translateY(-50%);color:var(--muted);display:grid;place-items:center}
-.inp .ic svg{width:18px;height:18px}
-.inp button.peek{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;
-  border:none;cursor:pointer;color:var(--muted);padding:8px;border-radius:9px;display:grid;place-items:center}
-.inp button.peek:hover{color:var(--text);background:var(--panel-2)}
-.inp button.peek svg{width:18px;height:18px}
+.inp .lic{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:rgba(26,58,107,.5);display:grid;place-items:center}
+.inp .lic svg{width:17px;height:17px}
+.inp input{width:100%;height:46px;padding:0 44px;border-radius:12px;font-size:15px;color:var(--ink);
+  background:#fff;border:1.5px solid var(--slate);font-family:inherit;transition:border-color .15s,box-shadow .15s}
+.inp input::placeholder{color:rgba(26,58,107,.4)}
+.inp input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 4px rgba(30,111,217,.16)}
+.inp .peek{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;
+  color:rgba(26,58,107,.5);padding:8px;border-radius:8px;display:grid;place-items:center}
+.inp .peek:hover{color:var(--ink);background:#f1f5f9}
+.inp .peek svg{width:17px;height:17px}
 
 .caps{display:none;align-items:center;gap:6px;font-size:12px;color:var(--err);margin-top:6px}
 .caps.on{display:flex}
-.row{display:flex;align-items:center;justify-content:space-between;margin:4px 0 18px}
-.linkbtn{background:none;border:none;color:var(--accent);font:inherit;font-size:13px;font-weight:600;cursor:pointer;padding:0}
-.linkbtn:hover{text-decoration:underline}
-.check{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--soft);cursor:pointer;user-select:none}
-.check input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+.forgot{display:block;text-align:right;font-size:14px;font-weight:600;color:var(--blue);
+  text-decoration:none;background:none;border:none;cursor:pointer;padding:0;margin:-4px 0 18px auto}
+.forgot:hover{text-decoration:underline}
 
-.btn{width:100%;height:49px;border:none;border-radius:13px;cursor:pointer;font:inherit;
-  font-size:15px;font-weight:650;color:#fff;background:var(--grad);background-size:140% 140%;
-  box-shadow:0 10px 28px -10px var(--ring);transition:transform .14s,box-shadow .14s,background-position .3s;
-  display:flex;align-items:center;justify-content:center;gap:9px}
-.btn:hover{transform:translateY(-1.5px);box-shadow:0 16px 34px -10px var(--ring);background-position:100% 0}
+.btn{width:100%;height:48px;border:none;border-radius:12px;cursor:pointer;font:inherit;font-size:16px;font-weight:700;
+  color:#fff;background:var(--blue);box-shadow:0 8px 24px rgba(30,111,217,.4);
+  display:flex;align-items:center;justify-content:center;gap:9px;transition:transform .14s,box-shadow .14s,filter .14s}
+.btn:hover{filter:brightness(1.06);transform:translateY(-1px);box-shadow:0 12px 30px rgba(30,111,217,.5)}
 .btn:active{transform:translateY(0)}
-.btn[disabled]{opacity:.65;cursor:not-allowed;transform:none}
-.btn .spin{width:17px;height:17px;border:2.4px solid rgba(255,255,255,.4);border-top-color:#fff;
-  border-radius:50%;animation:spin .7s linear infinite;display:none}
-.btn.loading .spin{display:block}.btn.loading .label{opacity:.85}
+.btn[disabled]{opacity:.7;cursor:not-allowed;transform:none}
+.btn svg{width:19px;height:19px}
+.btn .spin{width:17px;height:17px;border:2.4px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:none}
+.btn.loading .spin{display:block}.btn.loading svg{display:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-.msg{margin-top:15px;font-size:13.5px;padding:11px 13px;border-radius:11px;display:none;line-height:1.5;border:1px solid transparent}
+.msg{margin-top:16px;font-size:14px;padding:11px 14px;border-radius:11px;display:none;line-height:1.5;border:1px solid transparent}
 .msg.show{display:block}
-.msg.err{color:var(--err);background:color-mix(in srgb,var(--err) 10%,transparent);border-color:color-mix(in srgb,var(--err) 24%,transparent)}
-.msg.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 10%,transparent);border-color:color-mix(in srgb,var(--ok) 24%,transparent)}
+.msg.err{color:var(--err);background:#fef2f2;border-color:#fecaca}
+.msg.ok{color:var(--ok);background:#f0fdf4;border-color:#bbf7d0}
 .msg a{color:inherit;font-weight:700}
 
-.legal{margin-top:24px;font-size:12px;color:var(--muted);text-align:center;line-height:1.5}
+.foot{margin-top:22px;text-align:center;font-size:14px;color:rgba(26,58,107,.7)}
+.foot a{font-weight:700;color:var(--blue);cursor:pointer;text-decoration:none}
+.foot a:hover{text-decoration:underline}
 .hidden{display:none!important}
 .shake{animation:shake .4s}
 @keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-7px)}40%,80%{transform:translateX(7px)}}
 </style>
 </head>
 <body>
-<div class="aurora"><span></span><span></span><span></span></div>
-<button class="theme" id="themeBtn" title="Toggle theme" aria-label="Toggle theme"></button>
-
 <div class="wrap">
+  <div class="dots"><span></span><span></span><span></span><span></span><span></span></div>
+
+  <!-- Brand side -->
   <section class="brand">
     <div class="logo">
-      <span class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></span>
-      Research Assistant
+      <span class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.142 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588 4 4 0 0 0 7.967.273V5z"/><path d="M12 5a3 3 0 1 1 5.997.142 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588 4 4 0 0 1-7.967.273V5z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4M6 18a4 4 0 0 1-1.967-.516M19.967 17.484A4 4 0 0 1 18 18"/></svg></span>
+      <b>ResearchAI</b>
     </div>
     <div>
-      <h1>Answers you can <span class="thin">trust,</span><br/>grounded in real sources.</h1>
-      <p class="lede">Ask anything technical. It searches papers, the web, and code, verifies the evidence, and writes a clear, cited answer — or runs the simulation for you.</p>
-      <div class="feats">
-        <div class="feat"><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span><b>Source-grounded</b> — every claim cited; nothing invented.</span></div>
-        <div class="feat"><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span><b>Runs &amp; verifies code</b> in a sandbox before answering.</span></div>
-        <div class="feat"><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span><b>Private</b> — your conversations stay yours.</span></div>
+      <h1>Your Intelligent<br/>Research Companion</h1>
+      <p class="lede" style="margin-top:16px">Accelerate discovery with AI that reads, understands, and surfaces insights from your documents in seconds.</p>
+    </div>
+    <div class="feats">
+      <div class="feat">
+        <span class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M12 18v-6"/><path d="m9 15 3-3 3 3"/></svg></span>
+        <span><span class="ft">Upload PDFs &amp; Docs</span><span class="fd">Drop your sources and let AI parse them</span></span>
+      </div>
+      <div class="feat">
+        <span class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+        <span><span class="ft">Smart Search &amp; Query</span><span class="fd">Ask questions in natural language</span></span>
+      </div>
+      <div class="feat">
+        <span class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M3 12h3M18 12h3M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3.2"/></svg></span>
+        <span><span class="ft">AI-Powered Insights</span><span class="fd">Summaries, citations, and key findings</span></span>
       </div>
     </div>
-    <div class="foot">Built for researchers, engineers, and the curious.</div>
   </section>
 
+  <!-- Form side -->
   <section class="pane">
     <div class="card">
-      <div class="top">
-        <span class="eyebrow"><span class="dot"></span><span id="eyebrow">Welcome back</span></span>
-        <h2 id="title">Sign in to continue</h2>
-        <p class="sub" id="subtitle">New here? <a id="toSignup">Create an account</a></p>
-      </div>
+      <h2 id="title">Welcome Back</h2>
+      <p class="desc" id="desc">Sign in to continue your research</p>
 
+      <!-- sign in / sign up -->
       <form id="authForm" novalidate>
-        <div class="field" id="emailField" style="display:none">
-          <label for="email">Email <span class="opt">(optional — lets you reset your password)</span></label>
+        <div class="field">
+          <label for="uid" id="uidLabel">Email or username</label>
           <div class="inp">
-            <input id="email" type="email" autocomplete="email" placeholder="you@example.com" />
-            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></span>
+            <span class="lic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
+            <input id="uid" type="text" autocomplete="username" placeholder="you@research.edu" autofocus />
           </div>
         </div>
-        <div class="field">
-          <label for="uid">User ID</label>
+        <div class="field hidden" id="emailField">
+          <label for="email">Email</label>
           <div class="inp">
-            <input id="uid" type="text" autocomplete="username" placeholder="your username" autofocus />
-            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6"/></svg></span>
+            <span class="lic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
+            <input id="email" type="email" autocomplete="email" placeholder="you@research.edu" />
           </div>
         </div>
         <div class="field">
           <label for="pw">Password</label>
           <div class="inp">
+            <span class="lic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
             <input id="pw" type="password" autocomplete="current-password" placeholder="••••••••" />
-            <button type="button" class="peek" id="peek" title="Show password" aria-label="Show password"></button>
+            <button type="button" class="peek" id="peek" aria-label="Show password"></button>
           </div>
           <div class="caps" id="caps"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 9 9h-5v9H8v-9H3z"/></svg> Caps Lock is on</div>
         </div>
-        <div class="row" id="signinRow">
-          <label class="check"><input type="checkbox" id="remember" /> Keep me signed in</label>
-          <button type="button" class="linkbtn" id="toForgot">Forgot password?</button>
-        </div>
-        <button class="btn" id="submit" type="submit"><span class="spin"></span><span class="label">Sign in</span></button>
+        <button type="button" class="forgot" id="toForgot">Forgot Password?</button>
+        <button class="btn" id="submit" type="submit"><span class="spin"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></svg><span class="label">Sign In</span></button>
         <div class="msg" id="msg"></div>
       </form>
 
+      <!-- forgot password -->
       <form id="forgotForm" class="hidden" novalidate>
         <div class="field">
-          <label for="fid">User ID or email</label>
+          <label for="fid">Email or username</label>
           <div class="inp">
-            <input id="fid" type="text" autocomplete="username" placeholder="your username or email" />
-            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6"/></svg></span>
+            <span class="lic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
+            <input id="fid" type="text" autocomplete="username" placeholder="you@research.edu or username" />
           </div>
         </div>
         <button class="btn" id="forgotSubmit" type="submit"><span class="spin"></span><span class="label">Send reset link</span></button>
         <div class="msg" id="forgotMsg"></div>
-        <div class="legal"><button type="button" class="linkbtn" id="backToSignin">← Back to sign in</button></div>
       </form>
 
-      <p class="legal">Protected workspace · your data stays on this server.</p>
+      <div class="foot" id="foot">
+        <span id="footText">Don't have an account?</span> <a id="footLink">Sign Up</a>
+      </div>
     </div>
   </section>
 </div>
 
 <script>
 const $=id=>document.getElementById(id);
-const SUN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/></svg>';
-const MOON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
-function paintTheme(){const t=document.documentElement.getAttribute("data-theme")||"dark";$("themeBtn").innerHTML=t==="dark"?SUN:MOON;}
-$("themeBtn").onclick=()=>{const n=(document.documentElement.getAttribute("data-theme")==="dark")?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("ara-theme",n);}catch(e){}paintTheme();};
-paintTheme();
-
 let mode="login", signupAllowed=false;
-fetch("/api/me").then(r=>r.json()).then(d=>{signupAllowed=(d.signup!==false);if(!signupAllowed)$("subtitle").style.display="none";}).catch(()=>{});
+fetch("/api/me").then(r=>r.json()).then(d=>{signupAllowed=(d.signup!==false);if(!signupAllowed)$("foot").style.display="none";}).catch(()=>{});
 
-const eye='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
-const eyeOff='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3l18 18M10.6 10.7a3 3 0 0 0 4.2 4.2"/><path d="M9.9 5.2A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.4 4.1M6.5 6.6A17 17 0 0 0 2 12s3.6 7 10 7c1 0 2-.1 2.9-.4"/></svg>';
+// password peek
+const eye='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+const eyeOff='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 3l18 18M10.6 10.7a3 3 0 0 0 4.2 4.2"/><path d="M9.9 5.2A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.4 4.1M6.5 6.6A17 17 0 0 0 2 12s3.6 7 10 7c1 0 2-.1 2.9-.4"/></svg>';
 $("peek").innerHTML=eye;
-$("peek").onclick=()=>{const i=$("pw");const show=i.type==="password";i.type=show?"text":"password";$("peek").innerHTML=show?eyeOff:eye;i.focus();};
+$("peek").onclick=()=>{const i=$("pw");const s=i.type==="password";i.type=s?"text":"password";$("peek").innerHTML=s?eyeOff:eye;i.focus();};
 function capsWatch(e){const on=e.getModifierState&&e.getModifierState("CapsLock");$("caps").classList.toggle("on",!!on);}
 $("pw").addEventListener("keyup",capsWatch);$("pw").addEventListener("keydown",capsWatch);
 
@@ -240,32 +213,37 @@ function setMode(m){
   mode=m;
   $("authForm").classList.toggle("hidden",m==="forgot");
   $("forgotForm").classList.toggle("hidden",m!=="forgot");
-  $("emailField").style.display=(m==="signup"&&signupAllowed)?"block":"none";
-  $("signinRow").style.display=(m==="login")?"flex":"none";
-  $("msg").className="msg";
-  if(m==="login"){$("eyebrow").textContent="Welcome back";$("title").textContent="Sign in to continue";
-    $("subtitle").innerHTML='New here? <a id="toSignup">Create an account</a>';$("submit").querySelector(".label").textContent="Sign in";$("uid").focus();}
-  if(m==="signup"){$("eyebrow").textContent="Get started";$("title").textContent="Create your account";
-    $("subtitle").innerHTML='Already have one? <a id="toLogin">Sign in</a>';$("submit").querySelector(".label").textContent="Create account";$("uid").focus();}
-  if(m==="forgot"){$("eyebrow").textContent="No worries";$("title").textContent="Reset your password";
-    $("subtitle").textContent="Enter your account and we'll send you a reset link.";$("forgotMsg").className="msg";$("fid").focus();}
-  rebind();
-}
-function rebind(){
-  const su=$("toSignup"),lo=$("toLogin");
-  if(su)su.onclick=()=>setMode("signup");
-  if(lo)lo.onclick=()=>setMode("login");
+  $("emailField").classList.toggle("hidden",m!=="signup");
+  $("toForgot").style.display=(m==="login")?"block":"none";
+  $("foot").style.display=(m==="forgot"||!signupAllowed)?"none":"block";
+  $("msg").className="msg";$("forgotMsg").className="msg";
+  if(m==="login"){
+    $("title").textContent="Welcome Back";$("desc").textContent="Sign in to continue your research";
+    $("uidLabel").textContent="Email or username";$("uid").placeholder="you@research.edu";
+    $("submit").querySelector(".label").textContent="Sign In";
+    $("footText").textContent="Don't have an account?";$("footLink").textContent="Sign Up";$("uid").focus();
+  }
+  if(m==="signup"){
+    $("title").textContent="Create your account";$("desc").textContent="Start your research in seconds";
+    $("uidLabel").textContent="Username";$("uid").placeholder="choose a username";
+    $("submit").querySelector(".label").textContent="Create Account";
+    $("footText").textContent="Already have an account?";$("footLink").textContent="Sign In";$("uid").focus();
+  }
+  if(m==="forgot"){
+    $("title").textContent="Reset your password";$("desc").textContent="We'll send you a link to set a new one";
+    $("fid").focus();
+  }
 }
 $("toForgot").onclick=()=>setMode("forgot");
-$("backToSignin").onclick=()=>setMode("login");
-rebind();
+$("footLink").onclick=()=>setMode(mode==="login"?"signup":"login");
 
+function backToSignin(){setMode("login");}
 function fail(boxId,text){const b=$(boxId);b.className="msg err show";b.textContent=text;const f=b.closest("form");f.classList.remove("shake");void f.offsetWidth;f.classList.add("shake");}
 
 $("authForm").addEventListener("submit",async e=>{
   e.preventDefault();
   const uid=$("uid").value.trim(),pw=$("pw").value;
-  if(!uid||!pw){fail("msg","Please enter your user ID and password.");return;}
+  if(!uid||!pw){fail("msg",mode==="signup"?"Pick a username and password.":"Enter your email/username and password.");return;}
   if(mode==="signup"&&pw.length<6){fail("msg","Password must be at least 6 characters.");return;}
   const btn=$("submit");btn.classList.add("loading");btn.disabled=true;
   const payload={user_id:uid,password:pw};
@@ -283,20 +261,20 @@ $("authForm").addEventListener("submit",async e=>{
 $("forgotForm").addEventListener("submit",async e=>{
   e.preventDefault();
   const id=$("fid").value.trim();
-  if(!id){fail("forgotMsg","Enter your user ID or email.");return;}
+  if(!id){fail("forgotMsg","Enter your email or username.");return;}
   const btn=$("forgotSubmit");btn.classList.add("loading");btn.disabled=true;
   try{
     const res=await fetch("/api/forgot-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({identifier:id})});
     const d=await res.json().catch(()=>({}));
     const m=$("forgotMsg");m.className="msg ok show";
     if(d.reset_url){
-      // Build the link via the DOM (never innerHTML) so a server-provided URL can't inject markup.
       m.textContent="Your reset link is ready (valid 30 min): ";
-      const a=document.createElement("a");a.href=d.reset_url;a.textContent="Reset your password →";
-      m.appendChild(a);
+      const a=document.createElement("a");a.href=d.reset_url;a.textContent="Reset your password →";m.appendChild(a);
     } else {
       m.textContent=d.message||"If an account matches, a reset link has been sent. Check your email.";
     }
+    const back=document.createElement("button");back.type="button";back.className="forgot";back.style.margin="14px auto 0";back.style.textAlign="center";back.textContent="← Back to sign in";back.onclick=backToSignin;
+    m.parentNode.appendChild(back);
   }catch(err){fail("forgotMsg","Network error — please try again.");}
   btn.classList.remove("loading");btn.disabled=false;
 });

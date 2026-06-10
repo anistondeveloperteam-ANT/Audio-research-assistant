@@ -68,6 +68,17 @@ def test_short_password_does_not_burn_the_token(client):
     assert c.post("/api/reset-password", json={"token": token, "password": "goodpw9"}).status_code == 200
 
 
+def test_login_accepts_email_or_username(client):
+    c, server, users = client
+    users.create_user("dave", "pw12345", email="dave@x.com")
+    server._RATE_BUCKETS.clear()
+    assert c.post("/api/login", json={"user_id": "dave@x.com", "password": "pw12345"}).status_code == 200
+    server._RATE_BUCKETS.clear()
+    assert c.post("/api/login", json={"user_id": "dave", "password": "pw12345"}).status_code == 200
+    server._RATE_BUCKETS.clear()
+    assert c.post("/api/login", json={"user_id": "dave@x.com", "password": "wrong"}).status_code == 401
+
+
 def test_forgot_unknown_user_is_generic(client):
     c, server, users = client
     users.create_user("real", "pw12345")

@@ -13,6 +13,17 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Sign-in redesign — "ResearchAI" (ported from a React/Tailwind mockup)
+- Reworked `login.html` to the navy split-screen design: brand panel (logo, headline, three
+  feature cards) on a deep-blue gradient + a white glass sign-in card. Kept it **vanilla
+  HTML/CSS/JS** (no React/Tailwind/build step, per project rules), with the full auth flow
+  (sign-in / sign-up / forgot), password peek, and caps-lock hint. `reset.html` restyled to
+  match.
+- Login now accepts **email OR username** (`/api/login` resolves either) so the email field
+  works; sign-up collects username + optional email.
+- Left out the mockup's "Continue with Google" button — the backend has no Google OAuth, so a
+  dead button would mislead. (Can add real Google sign-in as a follow-up.)
+
 ### Production sign-in + forgot-password, and a cleaner app chrome
 - **Forgot password (real, secure):** new single-use, 30-minute, SHA-256-hashed reset tokens
   (`backend/auth/users.py`); endpoints `/api/forgot-password` + `/api/reset-password`; a
