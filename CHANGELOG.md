@@ -13,6 +13,12 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Model dropdown lists local Ollama models
+- When `OPENAI_BASE_URL` points at Ollama, the Model picker now lists the models you
+  actually have installed (queried from Ollama's `/v1/models`) — e.g.
+  `Ollama · qwen3:8b`, `Ollama · qwen2.5-coder:7b` — instead of cloud-only names. Falls
+  back to the curated cloud list otherwise; always includes the active + `AGENT_MODEL`.
+
 ### Polished answers + UI cleanup
 - **Math now renders** — `$…$` / `$$…$$` formulas display properly via KaTeX (the
   markdown parser is protected from mangling the LaTeX first).

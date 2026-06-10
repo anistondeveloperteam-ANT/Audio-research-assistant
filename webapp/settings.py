@@ -7,9 +7,11 @@ is the only chat provider, so there is no provider concept to manage.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -18,6 +20,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 ENV_PATH = ROOT / ".env"
+
+# Ensure .env is loaded even if this module is imported before the app wires it up,
+# so OPENAI_BASE_URL / OPENAI_MODEL are visible when listing models.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(ENV_PATH, override=False)
+except Exception:
+    pass
 
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 
@@ -35,8 +45,31 @@ OPENAI_MODELS = [
 ]
 
 
+def _base_url() -> str:
+    return (os.getenv("OPENAI_BASE_URL") or "").rstrip("/")
+
+
+def _is_ollama() -> bool:
+    b = _base_url().lower()
+    return "11434" in b or "ollama" in b
+
+
 def _label(model: str) -> str:
-    return f"OpenAI · {model}"
+    return f"{'Ollama' if _is_ollama() else 'OpenAI'} · {model}"
+
+
+def _local_models() -> List[str]:
+    """Models installed on a local OpenAI-compatible server (Ollama). [] otherwise."""
+    if not _is_ollama():
+        return []
+    try:
+        req = urllib.request.Request(_base_url() + "/models",
+                                     headers={"Authorization": "Bearer ollama"})
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
+            data = json.load(resp)
+        return sorted({m.get("id") for m in (data.get("data") or []) if m.get("id")})
+    except Exception:
+        return []
 
 
 def current() -> Dict[str, str]:
@@ -46,13 +79,14 @@ def current() -> Dict[str, str]:
 
 def list_models() -> Dict[str, Any]:
     cur = current()
-    options: List[Dict[str, str]] = [
-        {"provider": "openai", "model": model, "label": _label(model)}
-        for model in OPENAI_MODELS
-    ]
-    # Always include the current selection, even if it's a custom model not listed.
-    if not any(o["model"] == cur["model"] for o in options):
-        options.insert(0, {"provider": "openai", "model": cur["model"], "label": _label(cur["model"])})
+    # On Ollama, list the actually-installed models; otherwise the cloud list.
+    models = _local_models() or list(OPENAI_MODELS)
+    # Always include the active model and the configured agent model (e.g. a coder).
+    for extra in (cur["model"], os.getenv("AGENT_MODEL", "")):
+        extra = (extra or "").strip()
+        if extra and extra not in models:
+            models.append(extra)
+    options = [{"provider": "openai", "model": m, "label": _label(m)} for m in models]
     return {"current": cur, "options": options}
 
 
