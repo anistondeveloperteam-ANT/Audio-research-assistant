@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Paths that never require a login (the login/reset pages, auth endpoints, static assets).
 PUBLIC_PATHS = {"/", "/login", "/reset", "/api/login", "/api/logout", "/api/me",
                 "/api/signup", "/api/forgot-password", "/api/reset-password",
-                "/favicon.ico"}
+                "/auth/google/login", "/auth/google/callback", "/favicon.ico"}
 
 LOCAL_USER = "local"
 

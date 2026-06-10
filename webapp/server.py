@@ -35,7 +35,7 @@ from backend.auth.users import (
     create_user, verify_user, resolve_user, get_email, set_password,
     create_reset_token, consume_reset_token, count_users,
 )
-from backend.auth import mailer
+from backend.auth import mailer, google_oauth
 from backend.llm.streaming_provider import get_provider
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -138,6 +138,7 @@ def whoami(request: Request):
         "auth": True,
         "user_id": request.session.get("user_id"),
         "signup": webauth.signup_enabled(),
+        "google": google_oauth.enabled(),
     }
 
 
@@ -235,6 +236,48 @@ def api_reset_password(request: Request, body: dict = Body(default={})):
         return JSONResponse({"error": str(exc)}, status_code=400)
     request.session.clear()   # force a fresh sign-in with the new password
     return {"ok": True, "user_id": user_id}
+
+
+def _google_redirect_uri(request: Request) -> str:
+    return _reset_base(request) + "/auth/google/callback"
+
+
+@app.get("/auth/google/login")
+def google_login(request: Request):
+    if not google_oauth.enabled():
+        return RedirectResponse("/login?error=google_off")
+    if not _rate_ok(request, "google", limit=10):
+        return RedirectResponse("/login?error=rate")
+    state = secrets.token_urlsafe(24)
+    request.session["oauth_state"] = state
+    return RedirectResponse(google_oauth.authorize_url(_google_redirect_uri(request), state))
+
+
+@app.get("/auth/google/callback")
+def google_callback(request: Request, code: str = "", state: str = ""):
+    if not google_oauth.enabled():
+        return RedirectResponse("/login")
+    saved = request.session.pop("oauth_state", None)
+    if not code or not state or state != saved:
+        return RedirectResponse("/login?error=google")
+    try:
+        info = google_oauth.exchange_code(code, _google_redirect_uri(request))
+    except Exception:
+        return RedirectResponse("/login?error=google")
+    email = (info.get("email") or "").strip().lower()
+    if not email or info.get("email_verified") is False:
+        return RedirectResponse("/login?error=google_email")
+    # Find the account by email, or create one (email is a valid user_id; the random
+    # password is never used — Google users sign in via Google or reset it).
+    uid = resolve_user(email)
+    if not uid:
+        try:
+            create_user(email, secrets.token_urlsafe(24), email=email)
+            uid = email
+        except ValueError:
+            return RedirectResponse("/login?error=google")
+    request.session["user_id"] = uid
+    return RedirectResponse("/")
 
 
 # ----------------------------------------------------------------------

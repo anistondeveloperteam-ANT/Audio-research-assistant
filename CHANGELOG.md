@@ -13,6 +13,18 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Sidebar cleanup, "Ask again" button, and real Google sign-in
+- Sidebar foot: removed the duplicate model line and the green status dot from the model
+  picker (now a model-chip icon); polished the model picker + the signed-in user row for dark
+  mode with hover states and a clearer (red-on-hover) sign-out.
+- Every question now has an **"Ask again"** action that regenerates its answer in place
+  (drops that Q + everything after, re-runs the same query).
+- **Real "Sign in with Google"** (OAuth 2.0 authorization-code flow, `backend/auth/google_oauth.py`
+  + `/auth/google/login` + `/auth/google/callback`). Enabled when `GOOGLE_CLIENT_ID` +
+  `GOOGLE_CLIENT_SECRET` are set; the button appears on the sign-in page only then. CSRF-guarded
+  via a session `state`, creates/links the account by verified email, rate-limited. `PUBLIC_BASE_URL`
+  pins the redirect/reset URLs.
+
 ### Rename to "Research Assistant" + interactive sign-in polish
 - Renamed the brand from "ResearchAI" back to **Research Assistant** everywhere (login, reset,
   app title + sidebar). The accent stays the brand blue.

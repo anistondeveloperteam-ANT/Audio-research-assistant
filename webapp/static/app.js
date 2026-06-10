@@ -73,6 +73,7 @@
   const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
   const ICON_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
   const ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
+  const ICON_REPEAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v6h6"/><path d="M3 13a9 9 0 1 0 3-7.7L3 8"/></svg>';
 
   const SEND_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11l5-5 5 5M12 6v13"/></svg>';
   const STOP_ICON = '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor"/></svg>';
@@ -277,6 +278,7 @@
       if (!b || !m.contains(b)) return;
       if (b.dataset.act === "copy") copyUserMessage(m);
       else if (b.dataset.act === "edit") startEditUserMessage(m);
+      else if (b.dataset.act === "repeat") repeatUserMessage(m);
       else if (b.dataset.act === "delete") deleteUserMessage(m);
     });
     inner().appendChild(m);
@@ -291,6 +293,7 @@
       <div class="bubble"></div>
       <div class="msg-actions">
         <button class="ua-btn" data-act="copy" title="Copy question" aria-label="Copy question">${ICON_COPY}</button>
+        <button class="ua-btn" data-act="repeat" title="Ask again (regenerate)" aria-label="Ask again">${ICON_REPEAT}</button>
         <button class="ua-btn" data-act="edit" title="Edit & resend" aria-label="Edit question">${ICON_EDIT}</button>
         <button class="ua-btn danger" data-act="delete" title="Delete question" aria-label="Delete question">${ICON_TRASH}</button>
       </div>`;
@@ -310,6 +313,25 @@
     } catch { toast("Couldn't delete the question.", "error"); return; }
     await reloadTurns();   // re-render from the DB so turn indices + sources stay correct
     toast("Question deleted");
+  }
+
+  // "Ask again" — re-run this exact question, regenerating its answer in place
+  // (drops this Q + everything after it, then re-sends the same text).
+  async function repeatUserMessage(m) {
+    if (state.streaming) { toast("Please wait for the answer to finish."); return; }
+    const text = (m.querySelector(".bubble") || {}).textContent || "";
+    if (!text.trim()) return;
+    const idx = m.dataset.turnIndex;
+    try {
+      if (idx != null) await api.truncateTurns(state.currentId, idx);
+    } catch { toast("Couldn't reprocess the question.", "error"); return; }
+    let n = m.nextElementSibling;
+    while (n) { const after = n.nextElementSibling; n.remove(); n = after; }
+    m.remove();
+    if (idx != null) state.nextTurnIndex = parseInt(idx, 10);
+    $("input").value = text;
+    autosize();
+    send();
   }
 
   function startEditUserMessage(m) {
@@ -1158,8 +1180,8 @@
 
   // ---------- Model switcher ----------
   function setProviderLabel(label) {
-    $("provLabel").textContent = label;
-    $("provDot").style.background = "var(--ok)";
+    const pl = $("provLabel"); if (pl) pl.textContent = label;
+    const pd = $("provDot"); if (pd) pd.style.background = "var(--ok)";
   }
   async function loadModels() {
     try {
@@ -1206,12 +1228,10 @@
         });
       }
     } catch {}
-    // One optimized retrieval mode now; the server selects how many sources to
-    // use adaptively, so there's nothing to configure here.
-    $("provLabel").textContent = state.cfg.provider || "ready";
     // Web search is automatic (no toggle): the server falls back to web / research
     // papers / patents / GitHub whenever the local papers don't have the answer.
-    if (!state.cfg.provider || state.cfg.provider === "unknown") $("provDot").style.background = "var(--amber)";
+    { const pl = $("provLabel"); if (pl) pl.textContent = state.cfg.provider || "ready"; }
+    if (!state.cfg.provider || state.cfg.provider === "unknown") { const pd = $("provDot"); if (pd) pd.style.background = "var(--amber)"; }
 
     // Web-search assistant mode: hide local-paper UI when local RAG is off.
     if (state.cfg.local_rag_enabled) {
