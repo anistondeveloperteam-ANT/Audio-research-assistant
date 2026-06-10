@@ -22,10 +22,11 @@ html,body{height:100%}
 body{margin:0;font-family:var(--font);color:var(--ink);-webkit-font-smoothing:antialiased;
   background:linear-gradient(135deg,#0A1628 0%,#102a52 45%,#1A3A6B 100%);min-height:100vh}
 
-.wrap{position:relative;display:grid;grid-template-columns:1fr 1fr;min-height:100vh;overflow:hidden}
+.wrap{position:relative;display:grid;grid-template-columns:1fr 1fr;min-height:100vh}
 @media (max-width:980px){.wrap{grid-template-columns:1fr}}
 
-/* decorative floating dots */
+/* decorative floating dots — absolute overlay so it doesn't take a grid cell */
+.dots{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0}
 .dots span{position:absolute;border-radius:50%;background:var(--blue2);filter:blur(.5px);
   animation:floaty 9s ease-in-out infinite}
 .dots span:nth-child(1){width:8px;height:8px;left:10%;top:24%;opacity:.7}

@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-10
 
+### Fix login layout + carry the ResearchAI brand into the app
+- Fixed the broken sign-in layout: the decorative `.dots` overlay was a direct child of the
+  CSS grid, so it consumed the first cell and pushed the brand/card into the wrong places.
+  Made it `position:absolute` (out of the grid) and dropped `overflow:hidden` so short
+  viewports scroll instead of clipping — the split-screen now renders correctly.
+- Made the **after-login app** cohesive with the new sign-in: recolored the accent from indigo
+  to the ResearchAI **blue** (light + dark themes, via the shared CSS tokens) and renamed the
+  sidebar brand to **ResearchAI** with the brain-circuit mark.
+
 ### Sign-in redesign — "ResearchAI" (ported from a React/Tailwind mockup)
 - Reworked `login.html` to the navy split-screen design: brand panel (logo, headline, three
   feature cards) on a deep-blue gradient + a white glass sign-in card. Kept it **vanilla
