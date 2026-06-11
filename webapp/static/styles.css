@@ -605,8 +605,17 @@ body {
 .thinking[open] .th-caret { transform: rotate(90deg); }
 .thinking.live > summary svg { color: var(--accent); animation: thinkpulse 1.2s ease-in-out infinite; }
 .th-body { padding: 9px 12px 11px; margin-top: 2px; font-size: 12.5px; line-height: 1.55;
-  color: var(--muted); white-space: pre-wrap; max-height: 320px; overflow-y: auto;
+  color: var(--muted); white-space: normal; max-height: 320px; overflow-y: auto;
   border-top: 1px solid var(--border); }
+/* each agent step as a bulleted line; the current one pulses while live */
+.th-step { position: relative; padding: 3px 0 3px 17px; color: var(--text-soft); }
+.th-step::before { content: ""; position: absolute; left: 3px; top: 9px; width: 5px; height: 5px;
+  border-radius: 50%; background: var(--accent); opacity: .75; }
+.thinking.live .th-step:last-of-type { color: var(--text); }
+.thinking.live .th-step:last-of-type::before { opacity: 1; animation: thinkpulse 1.1s ease-in-out infinite; }
+/* the model's own reasoning (when it exposes it) below the steps */
+.th-reason { margin-top: 7px; padding-top: 8px; border-top: 1px dashed var(--border);
+  color: var(--muted); white-space: pre-wrap; }
 @keyframes thinkpulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
 
 /* source cards lift a touch on hover */

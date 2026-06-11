@@ -414,22 +414,49 @@
     };
   }
 
-  function appendThinking(h, text) {
-    if (!h.thinking || !text) return;
-    if (h.thinking.style.display === "none") {
+  function revealThinking(h) {
+    if (h.thinking && h.thinking.style.display === "none") {
       h.thinking.style.display = "";
       h.thinking.classList.add("live");
+      h._thinkShown = true;
+    }
+  }
+
+  // The agent's process steps (plan / search / read / verify / review) — works for
+  // every model, so there's always a thinking process to expand.
+  function appendProcess(h, text) {
+    if (!h.thinking || !text) return;
+    if (h._lastProc === text) return;          // skip consecutive duplicates
+    h._lastProc = text;
+    revealThinking(h);
+    const line = document.createElement("div");
+    line.className = "th-step";
+    line.textContent = text;
+    if (h._reasonEl) h.thinkBody.insertBefore(line, h._reasonEl);
+    else h.thinkBody.appendChild(line);
+    if (h.thinking.open) h.thinkBody.scrollTop = h.thinkBody.scrollHeight;
+    if (state.autoStick) scrollToBottom();
+  }
+
+  // The model's own hidden reasoning tokens (reasoning models that expose them).
+  function appendThinking(h, text) {
+    if (!h.thinking || !text) return;
+    revealThinking(h);
+    if (!h._reasonEl) {
+      h._reasonEl = document.createElement("div");
+      h._reasonEl.className = "th-reason";
+      h.thinkBody.appendChild(h._reasonEl);
     }
     h._thinkRaw = (h._thinkRaw || "") + text;
-    h.thinkBody.textContent = h._thinkRaw;
+    h._reasonEl.textContent = h._thinkRaw;
     if (h.thinking.open) h.thinkBody.scrollTop = h.thinkBody.scrollHeight;
     if (state.autoStick) scrollToBottom();
   }
 
   function finishThinking(h) {
-    if (!h || !h.thinking || !h._thinkRaw) return;
+    if (!h || !h.thinking || !h._thinkShown) return;
     h.thinking.classList.remove("live");
-    if (h.thinkLabel) h.thinkLabel.textContent = "Thought process";
+    if (h.thinkLabel) h.thinkLabel.textContent = "Thinking process";
   }
 
   function renderHistoryMessage(turn) {
@@ -980,6 +1007,7 @@
     switch (ev.type) {
       case "status":
         h.statusText.textContent = ev.message || "Working…";
+        appendProcess(h, ev.message || "");
         break;
       case "thinking":
         appendThinking(h, ev.text || "");
@@ -990,7 +1018,10 @@
         break;
       case "sources": {
         const n = (ev.sources || []).length;
-        if (n) h.statusText.textContent = `Found ${n} relevant source${n > 1 ? "s" : ""} — writing the answer…`;
+        if (n) {
+          h.statusText.textContent = `Found ${n} relevant source${n > 1 ? "s" : ""} — writing the answer…`;
+          appendProcess(h, `Found ${n} relevant source${n > 1 ? "s" : ""}.`);
+        }
         break;
       }
       case "token":

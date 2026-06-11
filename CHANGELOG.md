@@ -13,6 +13,12 @@ companion to the git history.
 
 ## 2026-06-11
 
+### Clickable "thinking process" for every model
+- The collapsible Thinking panel now fills with the agent's live process steps (searching,
+  reading, verifying, reviewing, writing) — so there's always a thinking process to expand,
+  even for models that don't emit hidden reasoning. The current step pulses while live; the
+  model's own reasoning (when it exposes it) shows below the steps.
+
 ### Premium model picker
 - Reworked the model selector into a premium captioned control: a small "MODEL" label above
   the value, an accent caption/chevron on hover/open, and a glass dropdown whose active row
