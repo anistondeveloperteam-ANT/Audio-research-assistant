@@ -13,6 +13,14 @@ companion to the git history.
 
 ## 2026-06-11
 
+### Fix chats disappearing across reopens
+- Chats were silently split between the signed-in user and the `local` fallback (the latter
+  created when auth was off / the session wasn't carrying the login), so reopening showed only
+  one set. Added `MemoryStore.reassign_sessions()` and, on login/signup (single-user
+  deployments only), fold any `local` chats into the account so nothing is lost across
+  login-state changes. Recommend `SESSION_MAX_AGE` (e.g. 30 days) so the login persists across
+  reopens/restarts. Recovered the existing orphaned conversations.
+
 ### GitHub search prefers famous/high-star repos
 - GitHub repo search now defaults to sorting by **stars** (was recency), and each repo source
   shows its **★ star count** in the title + snippet so popular/famous projects are surfaced and

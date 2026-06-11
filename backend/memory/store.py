@@ -372,6 +372,20 @@ class MemoryStore:
             ).fetchone()
             return row["user_id"] if row else None
 
+    def reassign_sessions(self, from_user: str, to_user: str) -> int:
+        """Move every conversation owned by `from_user` to `to_user`; returns the
+        count moved. Turns follow their session, so the whole chat moves with it.
+        Used to fold pre-auth ('local') chats into a signed-in account so nothing
+        disappears when login state changes."""
+        if not from_user or not to_user or from_user == to_user:
+            return 0
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE sessions SET user_id = ? WHERE user_id = ?",
+                (to_user, from_user),
+            )
+            return cur.rowcount
+
     def touch_session(self, session_id: str) -> None:
         with self._conn() as conn:
             conn.execute(

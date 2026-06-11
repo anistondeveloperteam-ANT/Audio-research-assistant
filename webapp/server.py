@@ -142,6 +142,17 @@ def whoami(request: Request):
     }
 
 
+def _adopt_local_sessions(uid: str) -> None:
+    """Single-user self-hosted: fold any pre-auth ('local') chats into the signed-in
+    account so conversations don't vanish across login-state changes. Gated on a
+    single registered user, so multi-user deployments are untouched."""
+    try:
+        if uid and uid != webauth.LOCAL_USER and count_users() == 1:
+            chat_logic.memory().reassign_sessions(webauth.LOCAL_USER, uid)
+    except Exception:
+        pass
+
+
 @app.post("/api/login")
 def api_login(request: Request, body: dict = Body(default={})):
     if not _rate_ok(request, "login", limit=10):
@@ -151,6 +162,7 @@ def api_login(request: Request, body: dict = Body(default={})):
     uid = resolve_user(identifier) or identifier   # accept email OR username
     if verify_user(uid, pw):
         request.session["user_id"] = uid
+        _adopt_local_sessions(uid)
         return {"ok": True, "user_id": uid}
     return JSONResponse({"ok": False, "error": "Invalid email/username or password."},
                         status_code=401)
@@ -178,6 +190,7 @@ def api_signup(request: Request, body: dict = Body(default={})):
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     request.session["user_id"] = uid
+    _adopt_local_sessions(uid)
     return {"ok": True, "user_id": uid}
 
 
@@ -277,6 +290,7 @@ def google_callback(request: Request, code: str = "", state: str = ""):
         except ValueError:
             return RedirectResponse("/login?error=google")
     request.session["user_id"] = uid
+    _adopt_local_sessions(uid)
     return RedirectResponse("/")
 
 

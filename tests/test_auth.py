@@ -72,3 +72,17 @@ def test_sessions_are_per_user(tmp_path):
     assert {s["id"] for s in mem.list_sessions()} == {a, b}
     assert mem.session_owner(a) == "alice"
     assert mem.session_owner("missing") is None
+
+
+def test_reassign_sessions_folds_local_into_user(tmp_path):
+    mem = MemoryStore(tmp_path / "mem.db")
+    s1 = mem.create_session(user_id="local")
+    s2 = mem.create_session(user_id="local")
+    keep = mem.create_session(user_id="anjan")
+    moved = mem.reassign_sessions("local", "anjan")
+    assert moved == 2
+    assert {s["id"] for s in mem.list_sessions(user_id="anjan")} == {s1, s2, keep}
+    assert mem.list_sessions(user_id="local") == []
+    # guards: nothing left under 'local', and same-user is a no-op
+    assert mem.reassign_sessions("local", "anjan") == 0
+    assert mem.reassign_sessions("anjan", "anjan") == 0
