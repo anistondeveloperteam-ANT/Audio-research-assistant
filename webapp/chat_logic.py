@@ -67,7 +67,9 @@ _memory: MemoryStore | None = None
 def memory() -> MemoryStore:
     global _memory
     if _memory is None:
-        _memory = MemoryStore(default_db_path(ROOT))
+        conv_env = os.getenv("CONVERSATIONS_DB_PATH")
+        conv_path = (ROOT / conv_env) if conv_env else None
+        _memory = MemoryStore(default_db_path(ROOT), conversations_path=conv_path)
     return _memory
 
 

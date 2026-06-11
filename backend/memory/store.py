@@ -320,23 +320,45 @@ class MemoryStore:
     may invoke methods on different threads (Streamlit, FastAPI, etc.).
     """
 
-    def __init__(self, db_path: Path):
-        self.db_path = Path(db_path)
-        # One-time migration. Opens its own connection.
-        conn = _open_conn(self.db_path)
+    def __init__(self, db_path: Path, conversations_path: Optional[Path] = None):
+        # Conversations (sessions/turns/facts) live in their own file so answer-cache
+        # churn never contends with the chat history. The cache (answer_cache) stays in
+        # the original db (db_path) and is ATTACHed as `cache` in every connection, so
+        # the existing cross-table SQL keeps working in one transaction.
+        self.cache_path = Path(db_path)
+        self.conv_path = (Path(conversations_path) if conversations_path
+                          else self.cache_path.parent / "conversations.db")
+        self.db_path = self.conv_path
+        self._split = self.conv_path != self.cache_path
+        # cache.db keeps answer_cache (+ legacy conversation tables as an untouched backup).
+        conn = _open_conn(self.cache_path)
         try:
             _migrate(conn)
         finally:
             conn.close()
+        if self._split:
+            # conversations.db holds sessions/turns/facts; it must NOT carry an answer_cache
+            # table, so that an unqualified `answer_cache` resolves to the ATTACHed cache db.
+            conn = _open_conn(self.conv_path)
+            try:
+                _migrate(conn)
+                conn.execute("DROP TABLE IF EXISTS answer_cache")
+                conn.commit()
+            finally:
+                conn.close()
+        self._migrate_conversations()
 
     @contextmanager
     def _conn(self):
-        """Open a fresh connection for the duration of one operation.
+        """A connection with conversations.db as main and memory.db ATTACHed as `cache`
+        (so unqualified `answer_cache` and cross-table SQL keep working in one transaction).
 
-        Auto-commits on clean exit; rolls back and re-raises on error;
-        always closes the connection."""
-        conn = _open_conn(self.db_path)
+        Auto-commits on clean exit; rolls back and re-raises on error; always closes."""
+        conn = _open_conn(self.conv_path)
         try:
+            if self._split:
+                conn.execute("ATTACH DATABASE ? AS cache", (str(self.cache_path),))
+            conn.execute("PRAGMA foreign_keys=ON;")
             yield conn
             conn.commit()
         except Exception:
@@ -350,6 +372,28 @@ class MemoryStore:
                 conn.close()
             except Exception:
                 pass
+
+    def _migrate_conversations(self) -> None:
+        """One-time, idempotent copy of legacy conversation rows (sessions/turns/facts)
+        from the old single db into conversations.db. Never deletes the source."""
+        if self.conv_path == self.cache_path:
+            return
+        with self._conn() as conn:
+            done = conn.execute(
+                "SELECT 1 FROM facts WHERE scope = 'global' "
+                "AND key = '_migrated_from_memory_db' LIMIT 1"
+            ).fetchone()
+            if done:
+                return
+            for table in ("sessions", "turns", "facts"):
+                try:
+                    conn.execute(f"INSERT OR IGNORE INTO {table} SELECT * FROM cache.{table}")
+                except Exception:
+                    pass
+            now = time.time()
+            conn.execute(
+                "INSERT OR IGNORE INTO facts (scope, session_id, key, value, created_at, updated_at) "
+                "VALUES ('global', NULL, '_migrated_from_memory_db', '1', ?, ?)", (now, now))
 
     # ------- Sessions ------------------------------------------------
     def create_session(self, title: str = "New conversation",
