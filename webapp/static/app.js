@@ -1248,14 +1248,11 @@
         if (o.model === cur.model) curLabel = o.label;
         const row = document.createElement("button");
         row.type = "button";
-        row.className = "mp-opt" + (o.model === cur.model ? " active" : "");
+        row.className = "mp-opt" + (o.model === cur.model ? " active" : "") + (o.available ? "" : " na");
         row.setAttribute("role", "option");
-        const pill = o.available ? (o.free ? '<span class="mp-pill free">Free</span>'
-                                           : '<span class="mp-pill paid">Paid</span>')
-                                 : '<span class="mp-pill needkey">Add key</span>';
         row.innerHTML =
           `<span class="mp-opt-main"><span class="mp-opt-name">${esc(o.name || o.model)}</span>` +
-          `<span class="mp-opt-vendor">${esc(o.vendor || "")}</span></span>` + pill +
+          `<span class="mp-opt-vendor">${esc(o.vendor || "")}</span></span>` +
           `<svg class="mp-opt-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`;
         row.addEventListener("click", () => selectModel(o, row));
         menu.appendChild(row);
@@ -1281,7 +1278,7 @@
 
   // ---------- Init ----------
   async function init() {
-    applyTheme(document.documentElement.getAttribute("data-theme") || "dark");
+    applyTheme(document.documentElement.getAttribute("data-theme") || "light");
     try { if (localStorage.getItem("ara-sidebar") === "collapsed" && window.innerWidth > 880) $("app").classList.add("collapsed"); } catch {}
     try { state.cfg = await api.config(); } catch {}
     // Auth: when login is enabled, show the signed-in user + a sign-out button.

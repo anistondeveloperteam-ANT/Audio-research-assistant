@@ -13,6 +13,12 @@ companion to the git history.
 
 ## 2026-06-11
 
+### Light mode by default + cleaner picker
+- The app now opens in **light mode** by default (still toggleable; choice remembered).
+- Model picker decluttered: removed the **Free/Paid/Add-key tags** and the **icon** next to the
+  model name. Rows are just name + vendor + a checkmark on the active one; models missing a key
+  are simply dimmed. Added hover-lift on the picker and a playful spin on the theme toggle.
+
 ### Trim models to 4 + clean the picker
 - Removed **Groq, Cerebras, and DeepSeek** completely — from the router (`PROVIDERS`/`CATALOG`),
   the dropdown, `.env`/`.env.example` keys, tests, and the README. The picker now offers

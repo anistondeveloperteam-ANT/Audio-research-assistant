@@ -183,16 +183,14 @@ body {
 /* Model switcher (bottom-left) */
 .model-pick {
   position: relative; display: flex; align-items: center; gap: 9px; height: 42px;
-  padding: 0 10px 0 12px; background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: 11px; transition: border-color .14s, box-shadow .14s;
+  padding: 0 12px; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 11px; transition: border-color .14s, box-shadow .14s, transform .14s ease, background .14s;
 }
-.model-pick:hover { border-color: var(--border-strong); background: var(--surface-3); }
+.model-pick:hover { border-color: var(--border-strong); background: var(--surface-3); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
 .model-pick.open { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
-.model-pick .mp-ic { flex: none; display: grid; place-items: center; color: var(--accent); }
-.model-pick .mp-ic svg { width: 17px; height: 17px; }
 .model-pick .mp-current {
   flex: 1; min-width: 0; height: 100%; text-align: left;
-  font: inherit; font-size: 13px; font-weight: 600; color: var(--text);
+  font: inherit; font-size: 13.5px; font-weight: 600; color: var(--text);
   background: none; border: none; cursor: pointer; padding: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -223,13 +221,9 @@ body {
 .mp-opt:hover { background: var(--surface-2); border-color: var(--border); transform: translateY(-1px);
   box-shadow: 0 8px 18px -10px rgba(0,0,0,.5); }
 .mp-opt-main { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
-.mp-opt-name { font-size: 13px; font-weight: 650; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-opt-name { font-size: 13.5px; font-weight: 650; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mp-opt-vendor { font-size: 10.5px; color: var(--muted); font-weight: 500; }
-.mp-pill { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
-  padding: 3px 7px; border-radius: 6px; }
-.mp-pill.free   { color: #16a34a; background: rgba(22,163,74,.14); }
-.mp-pill.paid   { color: var(--amber); background: color-mix(in srgb, var(--amber) 16%, transparent); }
-.mp-pill.needkey{ color: var(--muted); background: var(--surface-3); }
+.mp-opt.na { opacity: .5; }   /* model with no API key set yet */
 .mp-opt-tick { width: 16px; height: 16px; flex: none; color: var(--accent); opacity: 0; transition: opacity .12s; }
 .mp-opt.active { background: var(--accent-weak); border-color: var(--accent-border); }
 .mp-opt.active .mp-opt-name { color: var(--accent-600); }
@@ -294,9 +288,12 @@ body {
 .theme-toggle {
   width: 34px; height: 34px; border-radius: 9px; flex: none;
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text-soft);
+  transition: background .14s ease, border-color .14s ease, color .14s ease, transform .14s ease, box-shadow .14s ease;
 }
-.theme-toggle:hover { background: var(--surface-3); border-color: var(--border-strong); color: var(--text); }
-.theme-toggle svg { width: 17px; height: 17px; }
+.theme-toggle:hover { background: var(--surface-3); border-color: var(--border-strong); color: var(--text); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.theme-toggle svg { width: 17px; height: 17px; transition: transform .4s cubic-bezier(.2,.8,.2,1); }
+.theme-toggle:hover svg { transform: rotate(35deg) scale(1.12); }
+.theme-toggle:active svg { transform: rotate(180deg) scale(.95); }
 #modelSel { max-width: 210px; }
 .topbar { flex-wrap: wrap; row-gap: 8px; }
 
