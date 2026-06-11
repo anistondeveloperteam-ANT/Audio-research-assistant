@@ -13,6 +13,12 @@ companion to the git history.
 
 ## 2026-06-11
 
+### GitHub search prefers famous/high-star repos
+- GitHub repo search now defaults to sorting by **stars** (was recency), and each repo source
+  shows its **★ star count** in the title + snippet so popular/famous projects are surfaced and
+  citable. The source ranker still boosts recency when a query asks for the "latest", so you get
+  popular-and-current results.
+
 ### Fix "missing module numpy" — scientific sandbox image
 - The code sandbox ran on `python:3.11-slim` with `--network none`, so any generated
   simulation that imported numpy/scipy failed with "missing module 'numpy'" and could never

@@ -125,6 +125,8 @@ def test_github_search_parses_repos(monkeypatch):
         if "/search/repositories" in url:
             return {"items": [{"full_name": "foo/bar",
                                "html_url": "https://github.com/foo/bar",
+                               "stargazers_count": 12345,
+                               "pushed_at": "2026-05-01T00:00:00Z",
                                "license": {"spdx_id": "MIT"}}]}
         if url.endswith("/readme"):
             return {"path": "README.md",
@@ -146,6 +148,8 @@ def test_github_search_parses_repos(monkeypatch):
     assert "Algorithm explanation" in s.text
     assert s.license == "MIT"
     assert s.url.startswith("https://github.com/foo/bar")
+    assert "12,345★" in s.title            # popularity surfaced
+    assert s.published == "2026-05-01"     # recency surfaced
 
 
 # ----------------------------------------------------------------------

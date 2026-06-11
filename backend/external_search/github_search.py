@@ -58,9 +58,10 @@ def _excerpt(text: str) -> str:
     return "\n".join(lines[:EXCERPT_LINES])
 
 
-# Default to most-recently-updated so today's repos surface; override with
-# GITHUB_REPO_SORT=stars for popularity instead.
-_REPO_SORT = os.getenv("GITHUB_REPO_SORT", "updated")
+# Default to most-starred so famous/popular repos surface; the source ranker still
+# boosts recency when the query asks for the "latest". Override with
+# GITHUB_REPO_SORT=updated for pure recency.
+_REPO_SORT = os.getenv("GITHUB_REPO_SORT", "stars")
 
 
 def search_repositories(query: str, max_repos: int = MAX_REPOS) -> List[Dict[str, Any]]:
@@ -148,6 +149,11 @@ def github_search(query: str, max_repos: int = MAX_REPOS) -> List[ExternalSource
             readme.license = (repo.get("license") or {}).get("spdx_id") or fetch_license_name(full_name)
             # Surface recency: when the repo was last pushed/updated.
             readme.published = (repo.get("pushed_at") or repo.get("updated_at") or "")[:10] or None
+            # Surface popularity (★ stars) so famous repos are visible + citable.
+            stars = repo.get("stargazers_count")
+            if isinstance(stars, int):
+                readme.title = f"{full_name} — README ({stars:,}★)"
+                readme.snippet = f"★ {stars:,} stars · " + (readme.snippet or "")
             sources.append(readme)
     try:
         sources.extend(search_code(query))
