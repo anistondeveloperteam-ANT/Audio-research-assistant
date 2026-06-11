@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-11
 
+### Fix "missing module numpy" — scientific sandbox image
+- The code sandbox ran on `python:3.11-slim` with `--network none`, so any generated
+  simulation that imported numpy/scipy failed with "missing module 'numpy'" and could never
+  verify. Added a prebuilt sandbox image (`backend/agent/sandbox.Dockerfile`) with the
+  scientific stack baked in (numpy, scipy, pandas, matplotlib, scikit-learn, sympy, soundfile),
+  built once automatically on first run, then run network-off with the same CPU/mem/pids/timeout
+  caps and as a non-root user. Verified end-to-end: an 8-channel/48 kHz noise-suppression
+  script now runs and produces output. Pin your own image with `AGENT_DOCKER_IMAGE` if desired.
+
 ### Clickable "thinking process" for every model
 - The collapsible Thinking panel now fills with the agent's live process steps (searching,
   reading, verifying, reviewing, writing) — so there's always a thinking process to expand,

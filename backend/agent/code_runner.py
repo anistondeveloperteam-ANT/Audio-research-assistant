@@ -19,13 +19,21 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
+
+# Our sandbox image bakes in the scientific stack (numpy/scipy/...) so generated
+# simulations run under --network none. Built once on first use (see
+# ensure_sandbox_image). Override with AGENT_DOCKER_IMAGE to pin your own image.
+SANDBOX_TAG = "audio-research-sandbox:latest"
+_SANDBOX_DOCKERFILE = Path(__file__).resolve().parent / "sandbox.Dockerfile"
 
 # Tunable via .env (sensible, safe defaults).
-DEFAULT_IMAGE = os.getenv("AGENT_DOCKER_IMAGE", "python:3.11-slim")
+DEFAULT_IMAGE = os.getenv("AGENT_DOCKER_IMAGE", SANDBOX_TAG)
 RUN_TIMEOUT = int(os.getenv("AGENT_RUN_TIMEOUT", "30"))      # seconds the code may run
 MEM_LIMIT = os.getenv("AGENT_MEM_LIMIT", "512m")
 CPU_LIMIT = os.getenv("AGENT_CPUS", "1.0")
 PIDS_LIMIT = os.getenv("AGENT_PIDS_LIMIT", "128")
+BUILD_TIMEOUT = int(os.getenv("AGENT_BUILD_TIMEOUT", "1200"))  # first-run image build
 OUTPUT_CAP = 20_000   # chars of stdout/stderr kept
 
 
@@ -71,6 +79,48 @@ def _cap(text: str) -> str:
     return text or ""
 
 
+_image_ready: bool | None = None
+
+
+def ensure_sandbox_image() -> tuple[bool, str]:
+    """Make sure the scientific sandbox image exists, building it once if needed.
+
+    No-op when the user pinned their own AGENT_DOCKER_IMAGE (we trust it). The
+    build needs network, but the containers that run user code never do.
+    Returns (ready, error_message). Cached per process once ready.
+    """
+    global _image_ready
+    if _image_ready:
+        return True, ""
+    if os.getenv("AGENT_DOCKER_IMAGE"):          # user pinned an image — trust it
+        _image_ready = True
+        return True, ""
+    try:                                          # already built?
+        r = subprocess.run(["docker", "image", "inspect", SANDBOX_TAG],
+                           capture_output=True, text=True, timeout=20)
+        if r.returncode == 0:
+            _image_ready = True
+            return True, ""
+    except Exception:
+        pass
+    if not _SANDBOX_DOCKERFILE.exists():
+        return False, "sandbox Dockerfile is missing"
+    try:                                          # build it (one-time, then cached)
+        r = subprocess.run(
+            ["docker", "build", "-t", SANDBOX_TAG, "-f", str(_SANDBOX_DOCKERFILE),
+             str(_SANDBOX_DOCKERFILE.parent)],
+            capture_output=True, text=True, timeout=BUILD_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "building the sandbox image timed out (first run only)"
+    except Exception as exc:
+        return False, f"could not build the sandbox image: {exc}"
+    if r.returncode != 0:
+        return False, f"sandbox image build failed: {_cap(r.stderr)[-600:]}"
+    _image_ready = True
+    return True, ""
+
+
 def run_python(code: str, *, timeout: int = RUN_TIMEOUT, image: str = DEFAULT_IMAGE) -> RunResult:
     """Run `code` as a Python script inside a locked-down Docker container.
 
@@ -80,6 +130,11 @@ def run_python(code: str, *, timeout: int = RUN_TIMEOUT, image: str = DEFAULT_IM
     if not docker_available():
         return RunResult(False, -1, "", "", 0.0,
                          "Docker is not available. Start Docker Desktop and try again.")
+
+    if image == SANDBOX_TAG:   # ensure our scientific image is built (numpy/scipy/...)
+        ready, err = ensure_sandbox_image()
+        if not ready:
+            return RunResult(False, -1, "", "", 0.0, err)
 
     cmd = [
         "docker", "run", "--rm", "-i",
