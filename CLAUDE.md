@@ -1,68 +1,38 @@
-# CLAUDE.md - Research Assistant
+# CLAUDE.md — Audio Research Assistant
 
-Project instructions for Claude Code. Keep this file short and trust the code
-when docs and implementation disagree.
+## Project
+Python 3.11 RAG research assistant. FastAPI + Uvicorn web app (`webapp/`), backend logic in `backend/`, tests in `tests/`. Local PDF RAG (Oracle 23ai vectors), external search (web/arXiv/Semantic Scholar/Wikipedia/patents/GitHub), agentic answering with citations, code agent with Docker sandbox.
 
-## Project Shape
+## Key folders
+- `backend/agent/` — code-writing agent + Docker sandbox runner
+- `backend/answering/` — answer drafting, verification, reviewer logic
+- `backend/retrieval/` — hybrid local retrieval (vector + BM25 + RRF + rerank)
+- `backend/external_search/` — web, papers, patents, GitHub search
+- `backend/llm/` — LLM provider interface (`streaming_provider.py`)
+- `backend/ingestion/` — PDF parsing, chunking, embedding, indexing
 
-- Product: source-grounded research assistant for audio, speech enhancement,
-  DSP, papers, web sources, GitHub/code references, and local PDF libraries.
-- Runtime stack: Python 3.11, FastAPI, vanilla HTML/CSS/JS, OpenRouter/Ollama,
-  external search, optional Oracle local RAG, optional Memgraph GraphRAG.
-- Do not add a frontend build step or framework.
-- `.env` is local and secret-bearing. Never print it, commit it, or copy values
-  into docs/tests/logs.
+## Code quality rules (non-negotiable)
+1. Any code you write MUST run without errors before you finish. Run it. Do not present untested code.
+2. After every change, run: `python -m pytest -q`
+3. After every change, run: `pyflakes backend webapp`
+4. If tests or lint fail, FIX the failures and re-run until clean. Do not stop at the first attempt.
+5. Write or update a unit test for every new function you add.
+6. Prefer small, focused diffs. Do not refactor unrelated code.
+7. Match the existing code style of the file you are editing.
 
-## Current Entry Points
+## Commands
+- Run app: `python run.py` (serves at http://localhost:8600)
+- Build PDF index: `python pipeline.py` (incremental: `--incremental`)
+- Tests: `python -m pytest -q`
+- Lint: `pyflakes backend webapp`
 
-```powershell
-python run.py                           # local web app: http://localhost:8600
-python pipeline.py --status             # inspect local PDF index
-python pipeline.py                      # build local PDF index when Oracle is on
-python -m backend.graph_rag.build_graph # optional Memgraph graph build
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\pyflakes backend webapp tests
-```
+## Hard limits
+- NEVER read, print, edit, or commit `.env` or any API keys/secrets.
+- NEVER weaken the SSRF guard or sandbox limits (network-off, CPU/mem caps, timeout).
+- Generated Python for users must only run inside the Docker sandbox, never on the host.
+- Do not add new dependencies without asking first.
 
-## Product Contract
-
-- Answers must be grounded in retrieved evidence and cite sources.
-- Prefer local paper evidence for project-specific/local-library answers.
-- Use external web/research/GitHub sources for current or outside-library facts.
-- If evidence is missing or conflicting, say so plainly.
-- Never invent paper titles, URLs, metrics, line numbers, or citations.
-
-## Development Rules
-
-- Read the relevant files before editing.
-- Keep changes small and compatible with existing patterns.
-- Do not overwrite user changes in a dirty worktree.
-- Add/update tests for behavior changes.
-- Use the repo's `.venv` for verification on Windows.
-- For retrieval, GraphRAG, external search, auth, or prompt changes, run the
-  focused tests plus the full suite when practical.
-
-## Security Rules
-
-- Keep SSRF protections on by default.
-- Do not execute downloaded code.
-- Do not weaken auth, session, URL-safety, or secret-handling code.
-- Avoid broad shell permissions, destructive git commands, and local-network
-  exposure unless explicitly requested.
-
-## Useful Project Rules
-
-Claude Code should also load the focused project overlays in:
-
-- `.claude/rules/common.md`
-- `.claude/rules/python.md`
-
-Selected ECC reference rules are available in:
-
-- `.claude/rules/common/`
-- `.claude/rules/python/`
-
-Use the reviewer agents in `.claude/agents/` for non-trivial diffs, and the
-workflow skills in `.claude/skills/` when the task matches. These selected
-reference agents/rules/skills are imported from `affaan-m/ecc` under the MIT
-license copied at `.claude/ECC_LICENSE`.
+## When asked to build a feature
+1. Plan first: list the files you will touch and why. Wait for my approval on big changes.
+2. Implement → run tests → run lint → fix → re-run until everything passes.
+3. Show a summary of what changed and the passing test output.
