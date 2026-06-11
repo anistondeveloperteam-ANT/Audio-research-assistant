@@ -46,31 +46,32 @@
 
 /* ---------- Dark theme ---------- */
 [data-theme="dark"] {
-  --bg: #0e1220;
-  --surface: #161b2b;
-  --surface-2: #1c2235;
-  --surface-3: #283049;
-  --border: #262d42;
-  --border-strong: #354061;
-  --text: #e9edf6;
-  --text-soft: #c4ccdd;
-  --muted: #8c95ab;
-  --muted-2: #6b7488;
+  /* Premium neutral-charcoal (not navy) with clean elevation steps */
+  --bg: #0a0b0d;
+  --surface: #131519;
+  --surface-2: #1a1d22;
+  --surface-3: #24272e;
+  --border: #262931;
+  --border-strong: #3a3e48;
+  --text: #f4f5f7;
+  --text-soft: #c8ccd4;
+  --muted: #8a8f9a;
+  --muted-2: #5f636d;
 
-  --accent: #3b82f6;          /* brand blue (dark) */
-  --accent-600: #60a5fa;
-  --accent-weak: rgba(59, 130, 246, 0.16);
-  --accent-border: rgba(59, 130, 246, 0.34);
-  --accent-ring: rgba(59, 130, 246, 0.34);
-  --topbar-bg: rgba(13, 19, 34, 0.82);
-  --code-bg: #0a0d18;
-  --glow: rgba(59, 130, 246, 0.13);
-  --grad: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
-  --grad-soft: linear-gradient(135deg, rgba(59,130,246,0.16), rgba(96,165,250,0.16));
+  --accent: #6a8dff;          /* vivid periwinkle-blue — pops on charcoal */
+  --accent-600: #93acff;
+  --accent-weak: rgba(106, 141, 255, 0.15);
+  --accent-border: rgba(106, 141, 255, 0.32);
+  --accent-ring: rgba(106, 141, 255, 0.34);
+  --topbar-bg: rgba(10, 11, 13, 0.78);
+  --code-bg: #07080a;
+  --glow: rgba(106, 141, 255, 0.13);
+  --grad: linear-gradient(135deg, #6a8dff 0%, #9a86ff 100%);
+  --grad-soft: linear-gradient(135deg, rgba(106,141,255,0.16), rgba(154,134,255,0.16));
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow: 0 8px 26px rgba(0, 0, 0, 0.42);
-  --shadow-lg: 0 22px 60px rgba(0, 0, 0, 0.6);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow: 0 10px 32px rgba(0, 0, 0, 0.52);
+  --shadow-lg: 0 26px 64px rgba(0, 0, 0, 0.68);
 }
 
 * { box-sizing: border-box; }

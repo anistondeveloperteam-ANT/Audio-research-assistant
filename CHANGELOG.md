@@ -13,6 +13,11 @@ companion to the git history.
 
 ## 2026-06-11
 
+### Redesigned dark mode (neutral charcoal)
+- Replaced the flat navy-blue dark theme with a premium **neutral-charcoal** palette (clean
+  elevation steps, crisper text) and a vivid **periwinkle-blue** accent that pops against it,
+  plus deeper layered shadows. Drives the whole app via the shared CSS tokens.
+
 ### Capitalize username + remove scroll beam
 - The signed-in name now shows with a capital first letter (e.g. `anjan` → `Anjan`).
 - Removed the thin gradient scroll-progress line at the top of the chat (it read as a stray
