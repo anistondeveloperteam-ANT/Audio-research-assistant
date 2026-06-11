@@ -108,32 +108,11 @@ OPENAI_MODEL=qwen3:8b
 
 ---
 
-## The coding agent
+## Code, run, verify
 
-There are two levels of "let it write code," from safe to powerful:
+When a question needs a program, the assistant doesn't just print code and hope — it **runs** it. It writes Python, executes it in a throwaway Docker container, reads the output, and refines until it works. You watch each step (think → write → run → check) inline in the answer, and the whole thing is saved with the conversation.
 
-**1 — In‑answer code (always on).** When a question needs a program, the assistant writes Python and runs it in a throwaway Docker container — **no network, capped CPU/memory, hard timeout, non‑root**. Nothing it generates can touch your machine. The scientific stack (numpy, scipy, pandas, scikit‑learn, …) is baked into the sandbox image, so real work runs.
-
-**2 — Autonomous build (opt‑in).** A full *write → run → test → fix* loop built on the Claude Agent SDK: it edits files in the repo, runs your test suite and linter, and keeps going until everything is green. You drive it from a **Build** panel in the UI or the CLI.
-
-> [!WARNING]
-> The autonomous agent runs shell and file tools on the **host**, not the sandbox. It's an owner tool, so it ships **off by default** (`ENABLE_AUTO_AGENT`), **localhost‑only**, and **login‑required**.
-
-<details>
-<summary>Enable and run it</summary>
-
-```bash
-npm install -g @anthropic-ai/claude-code   # the SDK drives this CLI
-claude setup-token                         # log in (a Claude subscription works — no API key)
-```
-Set `ENABLE_AUTO_AGENT=true` in `.env`, restart, then either:
-
-```bash
-# Terminal
-python -m backend.agent.auto_agent "add a /healthz endpoint with a test"
-```
-…or click **Build** in the top bar and watch the steps stream live.
-</details>
+The container is locked down: **no network, capped CPU/memory, a hard timeout, non‑root, auto‑removed.** Nothing it generates can touch your machine or your project files. The scientific stack (numpy, scipy, pandas, scikit‑learn, …) is baked into the sandbox image, so real work runs out of the box.
 
 ---
 
@@ -148,7 +127,6 @@ The real `.env` is private and gitignored; **[.env.example](.env.example)** is t
 | `ENABLE_LOCAL_RAG` | Also search your uploaded PDFs |
 | `ENABLE_ANSWER_CACHE` | Reuse answers for repeat questions |
 | `ENABLE_AUTH` · `SESSION_MAX_AGE` | Login + how long a session lasts |
-| `ENABLE_AUTO_AGENT` | The autonomous build agent (off by default) |
 
 <details>
 <summary>Use your own PDF library</summary>

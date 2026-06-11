@@ -29,10 +29,7 @@ Python 3.11 RAG research assistant. FastAPI + Uvicorn web app (`webapp/`), backe
 ## Hard limits
 - NEVER read, print, edit, or commit `.env` or any API keys/secrets.
 - NEVER weaken the Docker sandbox limits (network-off, CPU/mem caps, timeout).
-- Generated Python from USER chats/tasks must only run inside the Docker sandbox, never on the
-  host. (Exception: the owner's autonomous agent at POST /agent/task runs Bash/Write/Edit on the
-  host by design — it is gated OFF by default via ENABLE_AUTO_AGENT, loopback-only, and
-  login-required. Keep those gates.)
+- Generated Python for users must only run inside the Docker sandbox, never on the host.
 - External search has NO SSRF/private-IP URL filter — this is intentional (the owner wants
   unrestricted fetching so search reaches anywhere). Do not re-add the guard unless asked.
 - Do not add new dependencies without asking first.

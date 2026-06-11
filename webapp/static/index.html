@@ -85,10 +85,6 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
         </button>
         <span class="spacer"></span>
-        <button class="ghost-btn build-btn" id="buildBtn" style="display:none" title="Run the autonomous coding agent">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
-          <span>Build</span>
-        </button>
         <button class="icon-btn theme-toggle" id="themeBtn" title="Toggle dark / light theme" aria-label="Toggle theme"></button>
       </header>
 
@@ -147,28 +143,6 @@
       </button>
     </div>
     <div class="pm-body" id="pmBody"></div>
-  </div>
-
-  <!-- ============ Autonomous build (agent) ============ -->
-  <div class="modal-scrim" id="agentScrim"></div>
-  <div class="agent-modal" id="agentModal" role="dialog" aria-label="Autonomous build">
-    <div class="pm-head">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
-      <h3>Autonomous build</h3>
-      <span style="flex:1"></span>
-      <button class="icon-btn" id="agentClose" aria-label="Close">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
-    </div>
-    <div class="agent-body">
-      <p class="agent-note">Describe a coding task. The agent writes code, runs it, runs your tests + lint, and fixes until everything passes — it edits files on this machine.</p>
-      <textarea id="agentTask" class="agent-task" rows="3" placeholder="e.g. add a GET /healthz endpoint to webapp/server.py with a test"></textarea>
-      <div class="agent-actions">
-        <button class="new-chat" id="agentRun" style="margin:0">Run agent</button>
-        <span class="agent-status" id="agentStatus"></span>
-      </div>
-      <div class="agent-log" id="agentLog" hidden></div>
-    </div>
   </div>
 
   <div class="cite-pop" id="citePop"></div>

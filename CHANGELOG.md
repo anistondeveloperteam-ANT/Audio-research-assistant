@@ -13,21 +13,6 @@ companion to the git history.
 
 ## 2026-06-11
 
-### Autonomous build UI (in-app agent panel)
-- Added a **"Build"** button in the top bar (shown only when `ENABLE_AUTO_AGENT` is on) that opens
-  a panel: type a task → the agent's steps **stream live** in the browser. Backed by a new
-  `stream_auto_agent()` generator + a `POST /agent/task/stream` (NDJSON) endpoint with the same
-  gates, and an `auto_agent` flag in `/api/me`. Tests mock the SDK (165 pass).
-
-### Autonomous coding agent (Claude Agent SDK) at POST /agent/task
-- Added `backend/agent/auto_agent.py` — a write→run→test→fix loop on the Claude Agent SDK
-  (`max_turns=20`, tools Read/Edit/Write/Bash/Glob/Grep) — and a `POST /agent/task` endpoint.
-- ⚠️ This runs shell/file tools on the HOST (not the Docker sandbox), so it is an owner dev
-  tool gated hard: **OFF by default** (`ENABLE_AUTO_AGENT`), **loopback-only**, **login-required**,
-  rate-limited. Needs the Claude Code CLI (`npm i -g @anthropic-ai/claude-code`); auth via a
-  Claude Pro/Max subscription (`claude setup-token`) OR `ANTHROPIC_API_KEY` — no key required.
-  Streams steps live. Tests mock the SDK so they pass offline; CLAUDE.md notes the host exception.
-
 ### Fix chats disappearing across reopens
 - Chats were silently split between the signed-in user and the `local` fallback (the latter
   created when auth was off / the session wasn't carrying the login), so reopening showed only

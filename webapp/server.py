@@ -36,7 +36,6 @@ from backend.auth.users import (
     create_reset_token, consume_reset_token, count_users,
 )
 from backend.auth import mailer, google_oauth
-from backend.agent import auto_agent
 from backend.llm.streaming_provider import get_provider
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -134,14 +133,12 @@ def reset_page():
 @app.get("/api/me")
 def whoami(request: Request):
     if not webauth.auth_enabled():
-        return {"auth": False, "user_id": webauth.LOCAL_USER,
-                "auto_agent": _auto_agent_enabled()}
+        return {"auth": False, "user_id": webauth.LOCAL_USER}
     return {
         "auth": True,
         "user_id": request.session.get("user_id"),
         "signup": webauth.signup_enabled(),
         "google": google_oauth.enabled(),
-        "auto_agent": _auto_agent_enabled(),
     }
 
 
@@ -372,68 +369,6 @@ def truncate_turns(session_id: str, turn_index: int, request: Request):
     _require_owner(request, session_id)
     deleted = chat_logic.memory().delete_turns_from(session_id, turn_index)
     return {"ok": True, "deleted": deleted}
-
-
-# ----------------------------------------------------------------------
-# Autonomous coding agent (Claude Agent SDK) — write -> run -> test -> fix.
-#
-# ⚠️  This runs the SDK with Bash/Write/Edit on the HOST (not the Docker sandbox).
-# It is an OWNER dev tool, so it is gated hard: OFF by default (ENABLE_AUTO_AGENT),
-# callable only from loopback, login-required (middleware), and rate-limited.
-# ----------------------------------------------------------------------
-def _auto_agent_enabled() -> bool:
-    return (os.getenv("ENABLE_AUTO_AGENT", "") or "").strip().lower() in ("1", "true", "yes", "on")
-
-
-@app.post("/agent/task")
-async def agent_task(request: Request, body: dict = Body(default={})):
-    if not _auto_agent_enabled():
-        return JSONResponse(
-            {"error": "The autonomous agent is disabled. Set ENABLE_AUTO_AGENT=true to enable it "
-                      "(it runs shell/file tools on the host — owner use only)."},
-            status_code=403)
-    if not _is_loopback(request):
-        return JSONResponse(
-            {"error": "The autonomous agent is only callable from localhost (127.0.0.1)."},
-            status_code=403)
-    if not _rate_ok(request, "agent", limit=5):
-        return _too_many()
-    task = (body.get("task") or "").strip()
-    if not task:
-        return JSONResponse({"error": "task is required"}, status_code=400)
-    try:
-        return await auto_agent.run_auto_agent(task)
-    except ValueError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    except RuntimeError as exc:                       # missing key / SDK / CLI
-        return JSONResponse({"error": str(exc)}, status_code=503)
-    except Exception as exc:                           # pragma: no cover - defensive
-        return JSONResponse({"error": f"agent run failed: {exc}"}, status_code=500)
-
-
-@app.post("/agent/task/stream")
-async def agent_task_stream(request: Request, body: dict = Body(default={})):
-    """Same as /agent/task but streams each step live as NDJSON (for the in-app UI)."""
-    if not _auto_agent_enabled():
-        return JSONResponse({"error": "The autonomous agent is disabled. Set ENABLE_AUTO_AGENT=true."},
-                            status_code=403)
-    if not _is_loopback(request):
-        return JSONResponse({"error": "The autonomous agent is only callable from localhost (127.0.0.1)."},
-                            status_code=403)
-    if not _rate_ok(request, "agent", limit=5):
-        return _too_many()
-    task = (body.get("task") or "").strip()
-    if not task:
-        return JSONResponse({"error": "task is required"}, status_code=400)
-
-    async def gen():
-        try:
-            async for ev in auto_agent.stream_auto_agent(task, str(ROOT)):
-                yield json.dumps(ev) + "\n"
-        except Exception as exc:                       # pragma: no cover - defensive
-            yield json.dumps({"type": "error", "message": f"agent run failed: {exc}"}) + "\n"
-
-    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
 # ----------------------------------------------------------------------
