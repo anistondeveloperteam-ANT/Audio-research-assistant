@@ -28,8 +28,10 @@ Python 3.11 RAG research assistant. FastAPI + Uvicorn web app (`webapp/`), backe
 
 ## Hard limits
 - NEVER read, print, edit, or commit `.env` or any API keys/secrets.
-- NEVER weaken the SSRF guard or sandbox limits (network-off, CPU/mem caps, timeout).
+- NEVER weaken the Docker sandbox limits (network-off, CPU/mem caps, timeout).
 - Generated Python for users must only run inside the Docker sandbox, never on the host.
+- External search has NO SSRF/private-IP URL filter — this is intentional (the owner wants
+  unrestricted fetching so search reaches anywhere). Do not re-add the guard unless asked.
 - Do not add new dependencies without asking first.
 
 ## When asked to build a feature
