@@ -264,6 +264,7 @@
       b.addEventListener("click", () => { $("input").value = k + " " + sub; autosize(); send(); });
       box.appendChild(b);
     });
+    initWelcomeParallax();
   }
 
   function addUserMessage(text, turnIndex) {
@@ -628,6 +629,49 @@
     if (window.innerWidth <= 880) $("sidebar").classList.remove("open");
   }
 
+  // ---------- Premium 3D scroll effects ----------
+  const _motionOK = !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  let _revObs = null;
+  function _ensureRevObs() {
+    if (_revObs || !_motionOK || !("IntersectionObserver" in window)) return;
+    _revObs = new IntersectionObserver((entries) => {
+      entries.forEach((e) => e.target.classList.toggle("sr-in", e.isIntersecting));
+    }, { root: $("transcript"), rootMargin: "0px 0px -7% 0px", threshold: 0.06 });
+  }
+  // Give already-rendered history messages the depth scroll-reveal (live ones use riseZ).
+  function applyScrollReveal() {
+    if (!_motionOK) return;
+    _ensureRevObs();
+    if (!_revObs) return;
+    inner().querySelectorAll(".msg").forEach((m) => {
+      if (m.classList.contains("sr")) return;
+      m.style.animation = "none";   // let .sr (scroll-reveal) own visibility, not the riseZ pop
+      m.classList.add("sr");
+      _revObs.observe(m);
+    });
+  }
+  // Scroll-progress beam + parallax on the welcome hero.
+  function updateScrollFx() {
+    const tr = $("transcript"), beam = $("scrollBeam");
+    if (!tr || !beam) return;
+    const max = tr.scrollHeight - tr.clientHeight;
+    const p = max > 8 ? Math.min(1, Math.max(0, tr.scrollTop / max)) : 0;
+    beam.style.width = (p * 100).toFixed(2) + "%";
+    beam.classList.toggle("on", max > 8);
+  }
+  function initWelcomeParallax() {
+    if (!_motionOK) return;
+    const tr = $("transcript");
+    tr.onmousemove = (e) => {
+      const w = inner().querySelector(".welcome");
+      if (!w) return;
+      const r = tr.getBoundingClientRect();
+      const px = (e.clientX - r.left) / r.width - 0.5, py = (e.clientY - r.top) / r.height - 0.5;
+      w.style.transform = `rotateY(${px * 7}deg) rotateX(${-py * 7}deg)`;
+    };
+    tr.onmouseleave = () => { const w = inner().querySelector(".welcome"); if (w) w.style.transform = ""; };
+  }
+
   // Render a full turn list into the transcript and track the next turn index
   // (so freshly-sent questions get the same index the server will assign them).
   function renderTurns(turns) {
@@ -642,7 +686,9 @@
     state.nextTurnIndex = turns.reduce((mx, t) => Math.max(mx, t.turn_index), -1) + 1;
     const lastAssist = [...turns].reverse().find((t) => t.role === "assistant" && t.sources);
     renderSources(lastAssist ? lastAssist.sources : []);
+    applyScrollReveal();
     scrollToBottom(true);
+    updateScrollFx();
   }
 
   async function reloadTurns() {
@@ -1275,7 +1321,7 @@
       if (state.streaming) { if (state.abort) state.abort.abort(); }
       else send();
     });
-    $("transcript").addEventListener("scroll", () => { state.autoStick = nearBottom(); updateToBottomBtn(); });
+    $("transcript").addEventListener("scroll", () => { state.autoStick = nearBottom(); updateToBottomBtn(); updateScrollFx(); });
     $("toBottom").addEventListener("click", () => scrollToBottom(true));
     $("menuBtn").addEventListener("click", () => {
       if (window.innerWidth > 880) {

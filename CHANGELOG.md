@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-11
 
+### Premium 3D scroll experience
+- The chat transcript now has real depth: messages **settle in from 3D** as they scroll into
+  view (IntersectionObserver depth-reveal), new replies pop in with a `riseZ` 3D entrance, a
+  thin **gradient scroll-progress beam** tracks position across the top, and the welcome hero
+  **tilts in 3D toward the cursor** with a floating mark and layered Z-depth on its cards.
+  All gated behind `prefers-reduced-motion`.
+
 ### Free LLM providers + premium 3D UI
 - Added several **free** OpenAI-compatible providers to the model picker (from
   tashfeenahmed/freellmapi — took the provider list/endpoints, not the Node app):
