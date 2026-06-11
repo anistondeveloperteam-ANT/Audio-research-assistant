@@ -52,7 +52,10 @@
       <div class="sidebar-foot">
         <!-- Model switcher (custom dropdown) -->
         <div class="model-pick" id="modelPick" title="Choose the language model">
-          <button class="mp-current" id="modelBtn" type="button" aria-haspopup="listbox" aria-expanded="false"><span id="modelLabel">Loading…</span></button>
+          <button class="mp-current" id="modelBtn" type="button" aria-haspopup="listbox" aria-expanded="false">
+            <span class="mp-cap">Model</span>
+            <span class="mp-val" id="modelLabel">Loading…</span>
+          </button>
           <svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
           <div class="mp-menu" id="modelMenu" role="listbox" aria-label="Models"></div>
         </div>

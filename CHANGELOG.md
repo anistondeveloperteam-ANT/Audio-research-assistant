@@ -13,6 +13,11 @@ companion to the git history.
 
 ## 2026-06-11
 
+### Premium model picker
+- Reworked the model selector into a premium captioned control: a small "MODEL" label above
+  the value, an accent caption/chevron on hover/open, and a glass dropdown whose active row
+  gets an accent left-bar + glow + checkmark. Clean and high-end — no badges/tags.
+
 ### Redesigned dark mode (neutral charcoal)
 - Replaced the flat navy-blue dark theme with a premium **neutral-charcoal** palette (clean
   elevation steps, crisper text) and a vivid **periwinkle-blue** accent that pops against it,
