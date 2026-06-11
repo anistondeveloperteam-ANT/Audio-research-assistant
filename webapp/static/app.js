@@ -650,15 +650,7 @@
       _revObs.observe(m);
     });
   }
-  // Scroll-progress beam + parallax on the welcome hero.
-  function updateScrollFx() {
-    const tr = $("transcript"), beam = $("scrollBeam");
-    if (!tr || !beam) return;
-    const max = tr.scrollHeight - tr.clientHeight;
-    const p = max > 8 ? Math.min(1, Math.max(0, tr.scrollTop / max)) : 0;
-    beam.style.width = (p * 100).toFixed(2) + "%";
-    beam.classList.toggle("on", max > 8);
-  }
+  // Subtle 3D parallax on the welcome hero (follows the cursor).
   function initWelcomeParallax() {
     if (!_motionOK) return;
     const tr = $("transcript");
@@ -688,7 +680,6 @@
     renderSources(lastAssist ? lastAssist.sources : []);
     applyScrollReveal();
     scrollToBottom(true);
-    updateScrollFx();
   }
 
   async function reloadTurns() {
@@ -1287,8 +1278,9 @@
       if (me && me.auth) {
         if (!me.user_id) { window.location.href = "/login"; return; }
         $("userChip").style.display = "";
-        $("userName").textContent = me.user_id;
-        $("userAvatar").textContent = (me.user_id || "?").trim().charAt(0).toUpperCase();
+        const uname = (me.user_id || "").trim();
+        $("userName").textContent = uname ? uname.charAt(0).toUpperCase() + uname.slice(1) : uname;
+        $("userAvatar").textContent = (uname || "?").charAt(0).toUpperCase();
         $("logoutBtn").addEventListener("click", async () => {
           try { await api.logout(); } catch {}
           window.location.href = "/login";
@@ -1316,7 +1308,7 @@
       if (state.streaming) { if (state.abort) state.abort.abort(); }
       else send();
     });
-    $("transcript").addEventListener("scroll", () => { state.autoStick = nearBottom(); updateToBottomBtn(); updateScrollFx(); });
+    $("transcript").addEventListener("scroll", () => { state.autoStick = nearBottom(); updateToBottomBtn(); });
     $("toBottom").addEventListener("click", () => scrollToBottom(true));
     $("menuBtn").addEventListener("click", () => {
       if (window.innerWidth > 880) {

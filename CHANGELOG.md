@@ -13,6 +13,11 @@ companion to the git history.
 
 ## 2026-06-11
 
+### Capitalize username + remove scroll beam
+- The signed-in name now shows with a capital first letter (e.g. `anjan` → `Anjan`).
+- Removed the thin gradient scroll-progress line at the top of the chat (it read as a stray
+  line). The 3D depth message reveal + welcome parallax stay.
+
 ### Light mode by default + cleaner picker
 - The app now opens in **light mode** by default (still toggleable; choice remembered).
 - Model picker decluttered: removed the **Free/Paid/Add-key tags** and the **icon** next to the

@@ -310,12 +310,6 @@ body {
   transition: opacity .55s cubic-bezier(.2,.75,.25,1), transform .68s cubic-bezier(.2,.75,.25,1); }
 .msg.sr.sr-in { opacity: 1; transform: none; }
 
-/* thin gradient scroll-progress beam across the top of the chat */
-.scroll-beam { position: absolute; top: 0; left: 0; height: 2px; width: 0; z-index: 7;
-  background: var(--grad); box-shadow: 0 0 12px 1px var(--accent-ring); border-radius: 0 2px 2px 0;
-  opacity: 0; transition: width .1s linear, opacity .25s ease; pointer-events: none; }
-.scroll-beam.on { opacity: .9; }
-
 @media (prefers-reduced-motion: reduce) {
   .msg.sr { opacity: 1 !important; transform: none !important; }
   .transcript { perspective: none; }
