@@ -7,11 +7,16 @@ this module only wires the proven pieces together for the new UI.
 """
 from __future__ import annotations
 
+import concurrent.futures
+import logging
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, List
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -525,24 +530,38 @@ def stream_chat_events(
     seen_warnings: set = set()
     for idx, query in enumerate(queries):
         tag = "your question" if idx == 0 else f"angle {idx}: {query[:64]}"
-        if local_on:
-            yield {"type": "status", "message": f"Searching your papers — {tag}..."}
-            local_items, local_warnings = _gather_local_items(query, mode)
-            _extend_unique(items, local_items)
-            for w in local_warnings:
+        # Local RAG and external search are independent and both blocking — run them
+        # concurrently so the stage takes max(local, external), not their sum.
+        t_stage = time.time()
+        futures: Dict[str, concurrent.futures.Future] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            if local_on:
+                yield {"type": "status", "message": f"Searching your papers — {tag}..."}
+                futures["local"] = ex.submit(_gather_local_items, query, mode)
+            if is_web_search_enabled():
+                yield {"type": "status", "message":
+                       f"Searching the web, research papers, patents & GitHub — {tag}..."}
+                k = EXTERNAL_TOP_K if idx == 0 else DEEP_SUBQUERY_TOP_K
+                futures["external"] = ex.submit(_gather_external_items, query, k)
+            results: Dict[str, Any] = {}
+            for name, fut in futures.items():
+                try:
+                    results[name] = fut.result()
+                except Exception as exc:
+                    logger.info("%s retrieval failed: %s", name, type(exc).__name__)
+                    results[name] = ([], [])
+        # Merge deterministically (local first) so ordering/citations stay stable.
+        for name in ("local", "external"):
+            if name not in results:
+                continue
+            got_items, got_warnings = results[name]
+            _extend_unique(items, got_items)
+            for w in got_warnings:
                 if w not in seen_warnings:
                     seen_warnings.add(w)
                     yield {"type": "warning", "message": w}
-        if is_web_search_enabled():
-            yield {"type": "status", "message":
-                   f"Searching the web, research papers, patents & GitHub — {tag}..."}
-            k = EXTERNAL_TOP_K if idx == 0 else DEEP_SUBQUERY_TOP_K
-            ext_items, ext_warnings = _gather_external_items(query, k)
-            _extend_unique(items, ext_items)
-            for w in ext_warnings:
-                if w not in seen_warnings:
-                    seen_warnings.add(w)
-                    yield {"type": "warning", "message": w}
+        logger.info("retrieval stage (%s): %d sources in %.1fs",
+                    tag, len(items), time.time() - t_stage)
 
     # --- Nothing available at all -> explain instead of guessing ---
     if not items:
