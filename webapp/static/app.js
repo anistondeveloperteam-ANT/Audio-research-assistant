@@ -1298,6 +1298,69 @@
     } catch { toast("Could not switch model.", "error"); }
   }
 
+  // ---------- Autonomous build (agent) panel ----------
+  let _agentBusy = false;
+  function initAgentUI() {
+    const btn = $("buildBtn"); if (!btn) return;
+    btn.style.display = "";
+    const open = () => { $("agentScrim").classList.add("show"); $("agentModal").classList.add("show"); $("agentTask").focus(); };
+    const close = () => { $("agentScrim").classList.remove("show"); $("agentModal").classList.remove("show"); };
+    btn.addEventListener("click", open);
+    $("agentClose").addEventListener("click", close);
+    $("agentScrim").addEventListener("click", close);
+    $("agentRun").addEventListener("click", runAgentTask);
+    $("agentTask").addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); runAgentTask(); }
+    });
+  }
+  async function runAgentTask() {
+    if (_agentBusy) return;
+    const task = ($("agentTask").value || "").trim();
+    if (!task) { $("agentTask").focus(); return; }
+    _agentBusy = true;
+    const log = $("agentLog"), status = $("agentStatus"), run = $("agentRun");
+    log.hidden = false; log.innerHTML = ""; status.textContent = "Working…"; run.disabled = true;
+    const add = (cls, text) => {
+      const d = document.createElement("div"); d.className = "alog-line " + cls; d.textContent = text;
+      log.appendChild(d); log.scrollTop = log.scrollHeight;
+    };
+    try {
+      const resp = await fetch("/agent/task/stream", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task }),
+      });
+      if (!resp.ok) {
+        const e = await resp.json().catch(() => ({}));
+        add("err", e.error || ("HTTP " + resp.status)); status.textContent = "Failed"; return;
+      }
+      const reader = resp.body.getReader(), dec = new TextDecoder();
+      let buf = "", finished = false;
+      while (true) {
+        const { done, value } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let ev; try { ev = JSON.parse(line); } catch { continue; }
+          if (ev.type === "step") {
+            add(ev.kind === "tool" ? "tool" : "text", (ev.name ? ev.name + ": " : "") + (ev.text || ev.input || ""));
+          } else if (ev.type === "result") {
+            add("ok", "Finished in " + (ev.num_turns != null ? ev.num_turns : "?") + " turns" + (ev.is_error ? " (with errors)" : ""));
+            if (ev.result) add("text", ev.result);
+            status.textContent = "Done"; finished = true;
+          } else if (ev.type === "error") {
+            add("err", ev.message || "error"); status.textContent = "Failed"; finished = true;
+          }
+        }
+      }
+      if (!finished) status.textContent = "Done";
+    } catch (err) {
+      add("err", "Connection error: " + err.message); status.textContent = "Failed";
+    } finally {
+      _agentBusy = false; run.disabled = false;
+    }
+  }
+
   // ---------- Init ----------
   async function init() {
     applyTheme(document.documentElement.getAttribute("data-theme") || "light");
@@ -1317,6 +1380,7 @@
           window.location.href = "/login";
         });
       }
+      if (me && me.auto_agent) initAgentUI();
     } catch {}
     // Web search is automatic (no toggle): the server falls back to web / research
     // papers / patents / GitHub whenever the local papers don't have the answer.

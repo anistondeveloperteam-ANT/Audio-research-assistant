@@ -97,3 +97,41 @@ def test_allowed_tools_and_turns_match_spec():
     from backend.agent import auto_agent
     assert auto_agent.ALLOWED_TOOLS == ["Read", "Edit", "Write", "Bash", "Glob", "Grep"]
     assert auto_agent.MAX_TURNS == 20
+
+
+# ---- streaming endpoint + /api/me flag ----
+def test_agent_stream_emits_ndjson(client, monkeypatch):
+    import json
+    import webapp.server as srv
+    monkeypatch.setenv("ENABLE_AUTO_AGENT", "true")
+
+    async def fake_stream(task, project_dir=None, **kw):
+        yield {"type": "step", "kind": "tool", "name": "Write", "input": "x"}
+        yield {"type": "result", "num_turns": 2, "is_error": False, "result": "ok"}
+
+    monkeypatch.setattr(srv.auto_agent, "stream_auto_agent", fake_stream)
+    r = client.post("/agent/task/stream", json={"task": "do x"})
+    assert r.status_code == 200
+    events = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+    assert events[0]["type"] == "step" and events[-1]["type"] == "result"
+
+
+def test_agent_stream_disabled_by_default(client, monkeypatch):
+    monkeypatch.delenv("ENABLE_AUTO_AGENT", raising=False)
+    r = client.post("/agent/task/stream", json={"task": "x"})
+    assert r.status_code == 403
+
+
+def test_api_me_exposes_auto_agent_flag(client, monkeypatch):
+    monkeypatch.setenv("ENABLE_AUTO_AGENT", "true")
+    assert client.get("/api/me").json().get("auto_agent") is True
+
+
+def test_stream_auto_agent_yields_error_event_on_empty_task():
+    from backend.agent import auto_agent
+
+    async def collect():
+        return [ev async for ev in auto_agent.stream_auto_agent("")]
+
+    events = asyncio.run(collect())
+    assert events == [{"type": "error", "message": "task is required"}]

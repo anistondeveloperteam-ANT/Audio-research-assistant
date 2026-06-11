@@ -13,6 +13,12 @@ companion to the git history.
 
 ## 2026-06-11
 
+### Autonomous build UI (in-app agent panel)
+- Added a **"Build"** button in the top bar (shown only when `ENABLE_AUTO_AGENT` is on) that opens
+  a panel: type a task → the agent's steps **stream live** in the browser. Backed by a new
+  `stream_auto_agent()` generator + a `POST /agent/task/stream` (NDJSON) endpoint with the same
+  gates, and an `auto_agent` flag in `/api/me`. Tests mock the SDK (165 pass).
+
 ### Autonomous coding agent (Claude Agent SDK) at POST /agent/task
 - Added `backend/agent/auto_agent.py` — a write→run→test→fix loop on the Claude Agent SDK
   (`max_turns=20`, tools Read/Edit/Write/Bash/Glob/Grep) — and a `POST /agent/task` endpoint.

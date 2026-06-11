@@ -818,6 +818,37 @@ button.foot-lib:hover { background: var(--surface-2); border-color: var(--border
 .paper-row .pr-del svg { width: 13px; height: 13px; }
 .paper-row .pr-del:disabled { opacity: .5; cursor: default; }
 
+/* ---------- Autonomous build (agent) modal ---------- */
+.build-btn { gap: 7px; font-weight: 600; }
+.build-btn svg { color: var(--accent); width: 15px; height: 15px; }
+.agent-modal {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -46%) scale(.97);
+  width: 640px; max-width: 92vw; max-height: 82vh; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  z-index: 71; opacity: 0; pointer-events: none; transition: opacity .22s ease, transform .22s ease;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.agent-modal.show { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+.agent-body { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.agent-note { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+.agent-task {
+  width: 100%; resize: vertical; min-height: 64px; font: inherit; font-size: 14px; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 11px 13px;
+}
+.agent-task:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+.agent-actions { display: flex; align-items: center; gap: 12px; }
+.agent-actions .new-chat { width: auto; padding: 9px 18px; }
+.agent-status { font-size: 12.5px; color: var(--muted); font-weight: 550; }
+.agent-log {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5;
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; max-height: 46vh; overflow-y: auto; color: var(--text-soft);
+}
+.alog-line { padding: 2px 0; white-space: pre-wrap; word-break: break-word; }
+.alog-line.tool { color: var(--accent-600); }
+.alog-line.ok { color: var(--ok); font-weight: 600; }
+.alog-line.err { color: var(--danger); }
+
 /* ---------- Ingest modal ---------- */
 .modal-scrim { position: fixed; inset: 0; background: rgba(15,20,32,.42); opacity: 0; pointer-events: none;
   transition: opacity .22s ease; z-index: 70; }

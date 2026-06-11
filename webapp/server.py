@@ -134,12 +134,14 @@ def reset_page():
 @app.get("/api/me")
 def whoami(request: Request):
     if not webauth.auth_enabled():
-        return {"auth": False, "user_id": webauth.LOCAL_USER}
+        return {"auth": False, "user_id": webauth.LOCAL_USER,
+                "auto_agent": _auto_agent_enabled()}
     return {
         "auth": True,
         "user_id": request.session.get("user_id"),
         "signup": webauth.signup_enabled(),
         "google": google_oauth.enabled(),
+        "auto_agent": _auto_agent_enabled(),
     }
 
 
@@ -407,6 +409,31 @@ async def agent_task(request: Request, body: dict = Body(default={})):
         return JSONResponse({"error": str(exc)}, status_code=503)
     except Exception as exc:                           # pragma: no cover - defensive
         return JSONResponse({"error": f"agent run failed: {exc}"}, status_code=500)
+
+
+@app.post("/agent/task/stream")
+async def agent_task_stream(request: Request, body: dict = Body(default={})):
+    """Same as /agent/task but streams each step live as NDJSON (for the in-app UI)."""
+    if not _auto_agent_enabled():
+        return JSONResponse({"error": "The autonomous agent is disabled. Set ENABLE_AUTO_AGENT=true."},
+                            status_code=403)
+    if not _is_loopback(request):
+        return JSONResponse({"error": "The autonomous agent is only callable from localhost (127.0.0.1)."},
+                            status_code=403)
+    if not _rate_ok(request, "agent", limit=5):
+        return _too_many()
+    task = (body.get("task") or "").strip()
+    if not task:
+        return JSONResponse({"error": "task is required"}, status_code=400)
+
+    async def gen():
+        try:
+            async for ev in auto_agent.stream_auto_agent(task, str(ROOT)):
+                yield json.dumps(ev) + "\n"
+        except Exception as exc:                       # pragma: no cover - defensive
+            yield json.dumps({"type": "error", "message": f"agent run failed: {exc}"}) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
 # ----------------------------------------------------------------------

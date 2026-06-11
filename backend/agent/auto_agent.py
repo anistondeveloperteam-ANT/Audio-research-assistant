@@ -39,36 +39,39 @@ def sdk_available() -> bool:
 
 
 def _summarize_blocks(content: Any) -> List[Dict[str, Any]]:
-    """Turn an AssistantMessage's content blocks into compact transcript steps."""
+    """Turn an AssistantMessage's content blocks into compact step dicts."""
     from claude_agent_sdk import TextBlock, ToolUseBlock  # local import; SDK may be absent in tests
     steps: List[Dict[str, Any]] = []
     for block in (content or []):
         if isinstance(block, TextBlock):
             text = (block.text or "").strip()
             if text:
-                steps.append({"type": "text", "text": text[:2000]})
+                steps.append({"kind": "text", "text": text[:2000]})
         elif isinstance(block, ToolUseBlock):
-            steps.append({"type": "tool", "name": block.name, "input": str(block.input)[:600]})
+            steps.append({"kind": "tool", "name": block.name, "input": str(block.input)[:600]})
     return steps
 
 
-async def run_auto_agent(task: str, project_dir: Optional[str] = None,
-                         *, max_turns: int = MAX_TURNS) -> Dict[str, Any]:
-    """Run the autonomous write -> run -> test -> fix loop; stream + return a transcript.
-
-    Auth is handled by the Claude Code CLI — either a Pro/Max subscription (run `claude`
-    once and log in) OR an ANTHROPIC_API_KEY. No key is required here. Raises ValueError on
-    bad input and RuntimeError (with a clear message) when the CLI is missing/unauthenticated.
+async def stream_auto_agent(task: str, project_dir: Optional[str] = None,
+                            *, max_turns: int = MAX_TURNS):
+    """Async generator yielding the agent's progress as it works. Each item is one of:
+       {"type": "step",   "kind": "text"|"tool", ...}
+       {"type": "result", "num_turns": ..., "is_error": ..., "result": ...}
+       {"type": "error",  "message": "..."}
+    It never raises — failures are emitted as an "error" event so they can be streamed.
+    Auth is the Claude CLI's (Pro/Max subscription via `claude setup-token`, or ANTHROPIC_API_KEY).
     """
     task = (task or "").strip()
     if not task:
-        raise ValueError("task is required")
+        yield {"type": "error", "message": "task is required"}
+        return
     try:
         from claude_agent_sdk import (
             query, ClaudeAgentOptions, AssistantMessage, ResultMessage, CLINotFoundError,
         )
     except Exception as exc:
-        raise RuntimeError(f"claude-agent-sdk is not installed: {exc}")
+        yield {"type": "error", "message": f"claude-agent-sdk is not installed: {exc}"}
+        return
 
     options = ClaudeAgentOptions(
         cwd=project_dir or str(ROOT),
@@ -77,35 +80,49 @@ async def run_auto_agent(task: str, project_dir: Optional[str] = None,
         system_prompt=SYSTEM_PROMPT,
         permission_mode="bypassPermissions",   # headless: no interactive permission prompts
     )
-
-    steps: List[Dict[str, Any]] = []
-    result: Optional[Dict[str, Any]] = None
     try:
         async for msg in query(prompt=task, options=options):
             if isinstance(msg, AssistantMessage):
                 for step in _summarize_blocks(msg.content):
-                    steps.append(step)
-                    label = step.get("name") or step["type"]
-                    print(f"  → {label}: {step.get('text') or step.get('input') or ''}"[:200], flush=True)
+                    yield {"type": "step", **step}
             elif isinstance(msg, ResultMessage):
-                result = {
+                yield {
+                    "type": "result",
                     "is_error": getattr(msg, "is_error", None),
                     "num_turns": getattr(msg, "num_turns", None),
                     "total_cost_usd": getattr(msg, "total_cost_usd", None),
                     "result": getattr(msg, "result", None),
                 }
-                print(f"  ✓ finished in {result.get('num_turns')} turns", flush=True)
     except CLINotFoundError as exc:
-        raise RuntimeError(
-            "The Claude Code CLI is not installed (the SDK drives it). Run "
-            "`npm install -g @anthropic-ai/claude-code`. Details: " + str(exc))
-    except Exception as exc:                                  # auth / process failures
-        raise RuntimeError(
-            "The agent could not run. Make sure the Claude CLI is authenticated — run `claude` "
-            "and log in with your Pro/Max subscription (or set ANTHROPIC_API_KEY). "
-            "Details: " + str(exc))
+        yield {"type": "error", "message":
+               "The Claude Code CLI is not installed (the SDK drives it). Run "
+               "`npm install -g @anthropic-ai/claude-code`. Details: " + str(exc)}
+    except Exception as exc:                                   # auth / process failures
+        yield {"type": "error", "message":
+               "The agent could not run. Authenticate the Claude CLI (`claude setup-token` with a "
+               "Pro/Max subscription, or set ANTHROPIC_API_KEY). Details: " + str(exc)}
 
-    return {"task": task, "max_turns": max_turns, "steps": steps, "result": result}
+
+async def run_auto_agent(task: str, project_dir: Optional[str] = None,
+                         *, max_turns: int = MAX_TURNS) -> Dict[str, Any]:
+    """Collecting wrapper around stream_auto_agent: run the loop, print steps, return the
+    transcript. Raises ValueError on empty input and RuntimeError on agent/auth failure."""
+    if not (task or "").strip():
+        raise ValueError("task is required")
+    steps: List[Dict[str, Any]] = []
+    result: Optional[Dict[str, Any]] = None
+    async for ev in stream_auto_agent(task, project_dir, max_turns=max_turns):
+        kind = ev.get("type")
+        if kind == "step":
+            steps.append(ev)
+            label = ev.get("name") or ev.get("kind")
+            print(f"  → {label}: {ev.get('text') or ev.get('input') or ''}"[:200], flush=True)
+        elif kind == "result":
+            result = ev
+            print(f"  ✓ finished in {ev.get('num_turns')} turns", flush=True)
+        elif kind == "error":
+            raise RuntimeError(ev["message"])
+    return {"task": (task or "").strip(), "max_turns": max_turns, "steps": steps, "result": result}
 
 
 def _cli() -> None:
