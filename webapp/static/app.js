@@ -668,12 +668,19 @@
     state.sessions = await api.sessions();
     if (!state.sessions.length) { await newChat(); return; }
     renderSessions();
-    await selectSession(selectId || state.sessions[0].id);
+    // On refresh, reopen the conversation that was active (persisted), not a new/first one.
+    let target = selectId;
+    if (!target) {
+      let saved = null; try { saved = localStorage.getItem("ara-session"); } catch {}
+      target = (saved && state.sessions.some((s) => s.id === saved)) ? saved : state.sessions[0].id;
+    }
+    await selectSession(target);
   }
 
   async function selectSession(id) {
     if (state.streaming) return;
     state.currentId = id;
+    try { localStorage.setItem("ara-session", id); } catch {}   // survive page refresh
     renderSessions();
     renderTurns(await api.turns(id));
     if (window.innerWidth <= 880) $("sidebar").classList.remove("open");
