@@ -1,9 +1,9 @@
 """
 Chat-model selection for the web UI.
 
-The picker is driven by `streaming_provider.CATALOG` — several FREE providers (Gemini,
-Groq, Cerebras, Mistral) plus DeepSeek and GPT-5.5, each an OpenAI-compatible endpoint
-routed by model name. Switching a model updates OPENAI_MODEL + OPENAI_BASE_URL +
+The picker is driven by `streaming_provider.CATALOG` — Gemini 2.5 Flash, Mistral Large,
+Mistral Codestral, and GPT-5.5, each an OpenAI-compatible endpoint routed by model
+name. Switching a model updates OPENAI_MODEL + OPENAI_BASE_URL +
 OPENAI_API_KEY in both the running process and the on-disk .env, so the whole connection
 switches — not just the model string.
 """

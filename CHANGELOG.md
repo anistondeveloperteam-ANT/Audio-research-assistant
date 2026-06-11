@@ -13,6 +13,13 @@ companion to the git history.
 
 ## 2026-06-11
 
+### Trim models to 4 + clean the picker
+- Removed **Groq, Cerebras, and DeepSeek** completely — from the router (`PROVIDERS`/`CATALOG`),
+  the dropdown, `.env`/`.env.example` keys, tests, and the README. The picker now offers
+  **Gemini 2.5 Flash, Mistral Large, Mistral Codestral, GPT-5.5**.
+- Removed the colored vendor "badge" tiles from each dropdown row (they read as gimmicky) —
+  rows are now a clean name + vendor + Free/Paid tag + checkmark.
+
 ### Premium 3D scroll experience
 - The chat transcript now has real depth: messages **settle in from 3D** as they scroll into
   view (IntersectionObserver depth-reveal), new replies pop in with a `riseZ` 3D entrance, a

@@ -66,30 +66,28 @@ def test_dropdown_lists_the_catalog(monkeypatch):
     data = settings.list_models()
     assert data["current"]["provider"] == "openai"   # one OpenAI-compatible client
     models = {o["model"] for o in data["options"]}
-    # free providers + paid options all present
-    assert {"gemini-2.5-flash", "llama-3.3-70b-versatile", "qwen-3-235b-a22b",
-            "mistral-large-latest", "gpt-5.5"} <= models
+    assert {"gemini-2.5-flash", "mistral-large-latest", "codestral-latest", "gpt-5.5"} <= models
+    # removed providers must be gone everywhere
+    assert not ({"llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen-3-235b-a22b",
+                 "llama-3.3-70b", "deepseek/deepseek-chat"} & models)
     by_id = {o["model"]: o for o in data["options"]}
-    assert by_id["llama-3.3-70b-versatile"]["vendor"] == "Groq" and by_id["llama-3.3-70b-versatile"]["free"]
+    assert by_id["codestral-latest"]["vendor"] == "Mistral" and by_id["codestral-latest"]["free"]
     assert by_id["gpt-5.5"]["free"] is False
 
 
 def test_route_model_resolves_each_provider(monkeypatch):
     from backend.llm.streaming_provider import route_model, GEMINI_BASE
-    for k in ("GEMINI_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY",
-              "MISTRAL_API_KEY", "OPENROUTER_API_KEY", "OPENAI_CLOUD_KEY"):
+    for k in ("GEMINI_API_KEY", "MISTRAL_API_KEY", "OPENAI_CLOUD_KEY"):
         monkeypatch.setenv(k, "k-" + k)
     assert route_model("gemini-2.5-flash") == (GEMINI_BASE, "k-GEMINI_API_KEY")
-    assert route_model("llama-3.3-70b-versatile")[0] == "https://api.groq.com/openai/v1"
-    assert route_model("qwen-3-235b-a22b")[0] == "https://api.cerebras.ai/v1"
+    assert route_model("mistral-large-latest")[0] == "https://api.mistral.ai/v1"
     assert route_model("codestral-latest")[0] == "https://api.mistral.ai/v1"
-    assert route_model("deepseek/deepseek-chat")[0] == "https://openrouter.ai/api/v1"
     assert route_model("gpt-5.5") == ("", "k-OPENAI_CLOUD_KEY")
 
 
 def test_dropdown_marks_missing_keys(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "g-key")
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     by_id = {o["model"]: o for o in settings.list_models()["options"]}
     assert by_id["gemini-2.5-flash"]["available"] is True
-    assert by_id["llama-3.3-70b-versatile"]["available"] is False   # no Groq key
+    assert by_id["codestral-latest"]["available"] is False   # no Mistral key

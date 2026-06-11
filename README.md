@@ -9,7 +9,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-web%20app-009688?logo=fastapi&logoColor=white)
 ![No build step](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
-![Models](https://img.shields.io/badge/models-Gemini%20·%20GPT--5.5-1E6FD9)
+![Models](https://img.shields.io/badge/models-Gemini%20·%20Mistral%20·%20GPT--5.5-1E6FD9)
 ![Tests](https://img.shields.io/badge/tests-145%20passing-2ea44f)
 ![License](https://img.shields.io/badge/license-MIT-444)
 
@@ -85,29 +85,27 @@ Open **http://localhost:8600**, create an account, and ask away. Web search work
 
 ## 🔑 Pick a model
 
-The chat client is **OpenAI‑compatible**, so any provider works by name — the in‑app dropdown ships with two:
+The chat client is **OpenAI‑compatible**, so each provider routes by model name — the in‑app dropdown ships with these:
 
 | Model | Cost | Get a key |
 |---|---|---|
-| 🔵 **Gemini 2.5 Flash** *(default)* | **Free** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → paste into `GEMINI_API_KEY` |
-| 🟢 **GPT‑5.5** | Paid | Your OpenAI key → paste into `OPENAI_CLOUD_KEY` |
+| **Gemini 2.5 Flash** *(default)* | **Free** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → `GEMINI_API_KEY` |
+| **Mistral Large · Codestral** | **Free** | [console.mistral.ai](https://console.mistral.ai) → `MISTRAL_API_KEY` |
+| **GPT‑5.5** | Paid | Your OpenAI key → `OPENAI_CLOUD_KEY` |
 
 > Switch live from the **model dropdown** in the bottom‑left. The endpoint + key route automatically by model name — no `.env` edits needed once the keys are set.
 
 <details>
-<summary><b>➕ Want more providers (Groq, DeepSeek, local Ollama)?</b></summary>
+<summary><b>➕ Add another OpenAI‑compatible provider</b></summary>
 
-The router resolves any OpenAI‑compatible model by name — just point `OPENAI_BASE_URL` / `OPENAI_MODEL` at it, or extend `CLOUD_MODELS` in `webapp/settings.py`. Examples:
+The router resolves any OpenAI‑compatible model by name. Add an entry to `PROVIDERS` + `CATALOG`
+in `backend/llm/streaming_provider.py`, or just point the active `OPENAI_*` lines at it:
 
 ```env
-# Local Ollama (free, offline):  ollama pull qwen3:8b
+# e.g. local Ollama (free, offline):  ollama pull qwen3:8b
 OPENAI_API_KEY=ollama
 OPENAI_BASE_URL=http://localhost:11434/v1
 OPENAI_MODEL=qwen3:8b
-
-# Groq (free, fast):
-OPENAI_BASE_URL=https://api.groq.com/openai/v1
-OPENAI_MODEL=llama-3.3-70b-versatile
 ```
 
 </details>

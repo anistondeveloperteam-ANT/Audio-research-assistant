@@ -29,27 +29,19 @@ DEFAULT_OPENAI_MODEL = "gemini-2.5-flash"
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 # Each provider is an OpenAI-compatible endpoint -> (base_url, api_key_env).
-# "" base = api.openai.com. Free providers from freellmapi (2026).
+# "" base = api.openai.com.
 PROVIDERS: Dict[str, tuple] = {
-    "gemini":     (GEMINI_BASE, "GEMINI_API_KEY"),
-    "groq":       ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
-    "cerebras":   ("https://api.cerebras.ai/v1", "CEREBRAS_API_KEY"),
-    "mistral":    ("https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
-    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
-    "openai":     ("", "OPENAI_CLOUD_KEY"),
+    "gemini":  (GEMINI_BASE, "GEMINI_API_KEY"),
+    "mistral": ("https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
+    "openai":  ("", "OPENAI_CLOUD_KEY"),
 }
 
 # Models offered in the picker: (model_id, provider, vendor, display_name, is_free).
 CATALOG = [
-    ("gemini-2.5-flash",        "gemini",     "Gemini",   "2.5 Flash",     True),
-    ("llama-3.3-70b-versatile", "groq",       "Groq",     "Llama 3.3 70B", True),
-    ("llama-3.1-8b-instant",    "groq",       "Groq",     "Llama 3.1 8B",  True),
-    ("qwen-3-235b-a22b",        "cerebras",   "Cerebras", "Qwen3 235B",    True),
-    ("llama-3.3-70b",           "cerebras",   "Cerebras", "Llama 3.3 70B", True),
-    ("mistral-large-latest",    "mistral",    "Mistral",  "Large",         True),
-    ("codestral-latest",        "mistral",    "Mistral",  "Codestral",     True),
-    ("deepseek/deepseek-chat",  "openrouter", "DeepSeek", "Chat",          False),
-    ("gpt-5.5",                 "openai",     "OpenAI",   "GPT-5.5",       False),
+    ("gemini-2.5-flash",     "gemini",  "Gemini",  "2.5 Flash", True),
+    ("mistral-large-latest", "mistral", "Mistral", "Large",     True),
+    ("codestral-latest",     "mistral", "Mistral", "Codestral", True),
+    ("gpt-5.5",              "openai",  "OpenAI",  "GPT-5.5",   False),
 ]
 _MODEL_PROVIDER = {mid: prov for mid, prov, *_ in CATALOG}
 
@@ -62,8 +54,7 @@ def route_model(model: str):
     m = (model or "").strip()
     prov = _MODEL_PROVIDER.get(m)
     if prov is None:                       # unlisted model: best-effort guess
-        ml = m.lower()
-        prov = "gemini" if ml.startswith("gemini") else ("openrouter" if "/" in m else "openai")
+        prov = "gemini" if m.lower().startswith("gemini") else "openai"
     base, key_env = PROVIDERS[prov]
     key = os.getenv(key_env, "")
     if prov == "gemini" and not key:
@@ -145,7 +136,7 @@ class OpenAIProvider(LLMProvider):
     def _request_variants(self, max_tokens: int, temperature: float) -> List[Dict[str, object]]:
         # Try the common shape first (max_tokens + temperature), then fall back to
         # max_completion_tokens / default temperature, so any OpenAI-compatible model
-        # (Groq, Gemini, DeepSeek, Ollama, o-series, …) just works.
+        # (Gemini, Mistral, OpenAI o-series, local Ollama, …) just works.
         return [
             {"max_tokens": max_tokens, "temperature": temperature},
             {"max_completion_tokens": max_tokens, "temperature": temperature},
