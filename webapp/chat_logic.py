@@ -35,7 +35,6 @@ from backend.answering.agentic_answer import (  # noqa: E402
     followup_query,
     max_verify_rounds,
     run_best_python_block,
-    verification_footer,
     verification_passed,
     verify_answer,
 )
@@ -434,14 +433,6 @@ def _public_sources(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return sources
 
 
-def _review_footer(rev: Dict[str, Any]) -> str:
-    """A compact one-line verdict from the automatic peer review."""
-    rec = rev.get("recommendation") or "reviewed"
-    scores = rev.get("scores") or {}
-    score_txt = " · ".join(f"{k} {v}" for k, v in scores.items()) if scores else ""
-    return f"\n\n**Auto-review:** {rec}" + (f" ({score_txt})" if score_txt else "") + "."
-
-
 def _deep_queries(question: str) -> List[str]:
     """The main question plus a few auto-planned sub-questions ('angles'), so every
     search is a mini deep-research sweep. Falls back to just the question."""
@@ -592,9 +583,7 @@ def stream_chat_events(
             provider_ok = True
             answer = ""
             run_info: Dict[str, Any] | None = None
-            rounds_done = 0
             for round_no in range(1, max_verify_rounds() + 1):
-                rounds_done = round_no
 
                 def _messages_for(ev: str) -> List[Dict[str, str]]:
                     if answer and verdict:
@@ -706,17 +695,19 @@ def stream_chat_events(
                 else:
                     yield {"type": "status", "message": "Verification requested a rewrite; refining answer..."}
 
-            # Automatic peer review (the "Review" step, run for you): critique the
-            # final answer, improve it once if it's weak, then show the verdict.
-            review_note = ""
+            # Automatic peer review (the "Review" step, run for you): critique the final
+            # answer (with topical relevance), improve it once if it's weak. Reviewer jargon
+            # (novelty/soundness numbers, recommendation) is never shown to the user.
+            review_offtopic = False
             if auto_review_enabled() and answer and answer.strip() and answer != "(no answer)":
                 yield {"type": "status", "message": "Reviewing the answer…"}
                 try:
-                    from backend.answering.reviewer import review as _peer_review
-                    rev = _peer_review(answer)
+                    from backend.answering.reviewer import review as _peer_review, is_relevant
+                    rev = _peer_review(answer, task=q)
                 except Exception:
                     rev = None
                 if rev and not rev.get("error"):
+                    review_offtopic = not is_relevant(rev)
                     if (rev.get("recommendation") or "").lower() in ("major revision", "reject"):
                         yield {"type": "status", "message": "Improving the answer after review…"}
                         fixes = "; ".join((rev.get("weaknesses") or []) + (rev.get("suggestions") or []))[:800]
@@ -733,7 +724,6 @@ def stream_chat_events(
                                 answer_rewritten = True
                         except Exception:
                             pass
-                    review_note = _review_footer(rev)
 
             clean_body = answer or ""
             if not (answer or "").strip():
@@ -747,13 +737,15 @@ def stream_chat_events(
                     "and `EVIDENCE_BUDGET_CHARS` in `.env`."
                 )
             else:
-                final_answer = answer + review_note + verification_footer(
-                    verdict=verdict,
-                    rounds=rounds_done,
-                    run_info=run_info,
-                )
+                final_answer = answer   # clean body; no internal verifier/review jargon
             answer_parts.append(final_answer)
             yield {"type": "token", "text": final_answer}
+            # Below the verification bar (or flagged off-topic) -> one clean styled warning,
+            # never raw "(40/100, 5 round(s))" or "minor revision (novelty 7 ...)".
+            if (answer or "").strip() and ((verdict and not verification_passed(verdict)) or review_offtopic):
+                yield {"type": "low_confidence", "message": (
+                    "This answer couldn't be fully verified against the available sources — "
+                    "treat the key claims with caution and double-check anything critical.")}
         else:
             provider_ok = True
             yield {"type": "status", "message": "Writing the answer..."}

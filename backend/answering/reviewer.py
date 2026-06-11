@@ -40,6 +40,37 @@ _SYSTEM = (
     ' "confidence": 1-5}'
 )
 
+# When a task/topic is supplied, the reviewer FIRST judges topical relevance so that
+# off-topic work (however clean) cannot be waved through as "verified".
+_SYSTEM_RELEVANCE = (
+    "You are a rigorous peer reviewer. You are given THE USER'S REQUEST / TOPIC and a piece of "
+    "work produced for it (an answer and/or a program). FIRST judge TOPICAL RELEVANCE: does the "
+    "work actually address that request and topic? Work that solves an UNRELATED problem must get "
+    "a low relevance score and recommendation 'reject', no matter how clean or correct it is. "
+    "Reply with ONLY a JSON object, no prose:\n"
+    '{"summary": "2-3 sentences", "strengths": ["..."], "weaknesses": ["..."],\n'
+    ' "suggestions": ["concrete, actionable improvements"],\n'
+    ' "scores": {"relevance": 1-10, "soundness": 1-10, "clarity": 1-10, "significance": 1-10},\n'
+    ' "recommendation": "accept" | "minor revision" | "major revision" | "reject", "confidence": 1-5}'
+)
+
+RELEVANCE_MIN = int(os.getenv("REVIEW_RELEVANCE_MIN", "6"))
+
+
+def is_relevant(rev: Dict[str, Any]) -> bool:
+    """False only when the reviewer clearly flagged the work as off-topic. A missing
+    relevance signal is treated as relevant (don't block when the gate can't judge)."""
+    if not rev or rev.get("error"):
+        return True
+    rel = (rev.get("scores") or {}).get("relevance")
+    if rel is not None:
+        try:
+            if int(rel) < RELEVANCE_MIN:
+                return False
+        except (TypeError, ValueError):
+            pass
+    return rev.get("recommendation") != "reject"
+
 
 def _parse_json(text: str) -> Dict[str, Any]:
     try:
@@ -55,8 +86,9 @@ def _parse_json(text: str) -> Dict[str, Any]:
     return {}
 
 
-def review(text: str) -> Dict[str, Any]:
-    """Return a structured peer review of `text` (empty dict on failure)."""
+def review(text: str, task: str = "") -> Dict[str, Any]:
+    """Return a structured peer review of `text` (empty dict on failure). When `task`
+    (the user's request/topic) is given, the review also scores topical relevance."""
     text = (text or "").strip()
     if not text:
         return {}
@@ -68,9 +100,12 @@ def review(text: str) -> Dict[str, Any]:
             lambda: "LLM not available - set the selected provider API key in .env.",
         )()
         return {"error": message}
-    user = f"Review the following work:\n\n{text[:MAX_CHARS]}"
+    task = (task or "").strip()
+    system = _SYSTEM_RELEVANCE if task else _SYSTEM
+    user = ((f"THE USER'S REQUEST / TOPIC:\n{task[:3000]}\n\n" if task else "")
+            + f"Review the following work:\n\n{text[:MAX_CHARS]}")
     raw = "".join(provider.stream_chat(
-        [{"role": "user", "content": user}], system=_SYSTEM,
+        [{"role": "user", "content": user}], system=system,
         max_tokens=REVIEW_MAX_TOKENS, temperature=0.2)).strip()
     out = _parse_json(raw)
     if not out:

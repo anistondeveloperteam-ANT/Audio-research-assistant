@@ -456,12 +456,37 @@ def chat(request: Request, body: dict = Body(...)):
 # ----------------------------------------------------------------------
 # Agent mode (write code -> run in Docker -> verify -> refine), streamed
 # ----------------------------------------------------------------------
+def _recent_conversation(request: Request, session_id: str,
+                         max_turns: int = 4, clip: int = 900) -> str:
+    """The last few turns of the owner's session, so a coding follow-up like
+    'give me code for this' keeps the topic. Returns '' on any problem / non-owner."""
+    session_id = (session_id or "").strip()
+    if not session_id:
+        return ""
+    try:
+        mem = chat_logic.memory()
+        owner = mem.session_owner(session_id)
+        if owner is not None and owner != webauth.current_user(request):
+            return ""
+        turns = mem.get_turns(session_id)
+    except Exception:
+        return ""
+    lines = []
+    for t in turns[-max_turns:]:
+        content = (t.get("content") or "").strip().replace("\n", " ")
+        if content:
+            role = "User" if t.get("role") == "user" else "Assistant"
+            lines.append(f"{role}: {content[:clip]}")
+    return "\n".join(lines)
+
+
 @app.post("/api/agent")
-def agent(body: dict = Body(...)):
+def agent(request: Request, body: dict = Body(...)):
     task = (body.get("question") or body.get("task") or "").strip()
     use_search = bool(body.get("use_search", False))   # off by default = faster
     if not task:
         return JSONResponse({"error": "task is required"}, status_code=400)
+    conversation = _recent_conversation(request, body.get("session_id") or "")
 
     import queue
     import threading
@@ -472,7 +497,7 @@ def agent(body: dict = Body(...)):
 
     def worker():
         try:
-            run_agent(task, use_search=use_search, on_event=q.put)
+            run_agent(task, use_search=use_search, conversation=conversation, on_event=q.put)
         except Exception as exc:
             q.put({"type": "error", "message": str(exc)})
         finally:

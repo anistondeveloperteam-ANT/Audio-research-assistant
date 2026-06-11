@@ -42,5 +42,23 @@ def test_verification_footer_reports_score_and_run():
     assert "OK in 0.2s" in footer
 
 
+def test_max_verify_rounds_respects_env_and_caps(monkeypatch):
+    monkeypatch.setenv("AGENTIC_MAX_VERIFY_ROUNDS", "3")
+    assert aa.max_verify_rounds() == 3
+    monkeypatch.setenv("AGENTIC_MAX_VERIFY_ROUNDS", "99")
+    assert aa.max_verify_rounds() == 5        # hard ceiling
+    monkeypatch.setenv("AGENTIC_MAX_VERIFY_ROUNDS", "0")
+    assert aa.max_verify_rounds() == 1        # floor
+    monkeypatch.setenv("AGENTIC_MAX_VERIFY_ROUNDS", "notanint")
+    assert aa.max_verify_rounds() == 3        # bad value -> default
+
+
+def test_verification_passed_requires_ok_and_threshold(monkeypatch):
+    monkeypatch.setenv("AGENTIC_MIN_VERIFY_SCORE", "80")
+    assert aa.verification_passed({"ok": True, "score": 85}) is True
+    assert aa.verification_passed({"ok": True, "score": 40}) is False   # below bar -> not verified
+    assert aa.verification_passed({"ok": False, "score": 99}) is False
+
+
 def test_run_best_python_block_skips_when_no_code():
     assert aa.run_best_python_block("No runnable code here.") is None

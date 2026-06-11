@@ -106,18 +106,25 @@
 
   // ---------- Markdown + math + citations ----------
   function renderMarkdown(el, text) {
-    // 1) Protect $…$ / $$…$$ math from the markdown parser (so underscores/backslashes
-    //    survive), 2) parse markdown, 3) restore the raw math, 4) render it with KaTeX.
+    // 1) Protect math from the markdown parser so backslashes/underscores survive —
+    //    $$…$$, \[…\], $…$, and \(…\) (the model emits all four). 2) parse markdown,
+    //    3) restore the raw math, 4) render it with KaTeX.
     const math = [];
-    const src = (text || "").replace(/\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g, (m) => {
-      math.push(m);
-      return "@@MATH" + (math.length - 1) + "@@";
-    });
+    const src = (text || "").replace(
+      /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\$([^$\n]+?)\$|\\\(([\s\S]+?)\\\)/g, (m) => {
+        math.push(m);
+        return "@@MATH" + (math.length - 1) + "@@";
+      });
     let html = marked.parse(src, { breaks: true, gfm: true });
     html = html.replace(/@@MATH(\d+)@@/g, (_, i) => esc(math[+i]));
+    // Flag model "[not in sources]" tags as ungrounded instead of shipping raw brackets.
+    html = html.replace(/\s*\[not in (?:the )?sources?\]/gi,
+      ' <sup class="ungrounded" title="Not supported by the retrieved sources">unverified</sup>');
     el.innerHTML = html;
-    stripCitations(el);        // drop ugly inline [n] markers (never inside code)
-    renderMath(el);            // KaTeX
+    stripEmptySourcesColumn(el);  // drop an always-empty "Sources" table column
+    cleanText(el);                // strip leftover emoji (keeps [n] + → ~ ≈ °)
+    linkifyCitations(el);         // turn [n] into clickable source chips
+    renderMath(el);               // KaTeX
     enhanceCodeBlocks(el);
   }
 
@@ -137,12 +144,12 @@
     } catch (e) {}
   }
 
-  // Remove inline bracketed citations ([2], [12], [3, 4]) from the rendered answer —
-  // they look noisy. Skips code/links so it never mangles things like arr[12].
-  // Remove noisy inline [n] citations AND emojis from the rendered answer (kept out
-  // of code blocks/links), for a clean, professional look.
-  const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}]/gu;
-  function stripCitations(root) {
+  // Strip leftover emoji from the rendered answer for a clean, professional look — but
+  // PRESERVE inline [n] citations (so they can be linked) and technical symbols. The old
+  // ranges swallowed arrows/technical symbols (→ ⇒ ⌀ …); these ranges are emoji-only so
+  // "16 antennas → 4 RF chains", "≈ 3 ms", "90°", and "~3 ms" survive intact.
+  const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]/gu;
+  function cleanText(root) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
         const p = n.parentElement;
@@ -152,11 +159,25 @@
     const nodes = [];
     while (walker.nextNode()) nodes.push(walker.currentNode);
     for (const node of nodes) {
-      node.nodeValue = node.nodeValue
-        .replace(/[ \t]*\[\d+(?:\s*,\s*\d+)*\]/g, "")
-        .replace(EMOJI_RE, "")
-        .replace(/[ \t]{2,}/g, " ");
+      node.nodeValue = node.nodeValue.replace(EMOJI_RE, "").replace(/[ \t]{2,}/g, " ");
     }
+  }
+
+  // Some models emit a markdown table with a trailing "Sources"/"Source" column that's
+  // always blank (citations belong inline as [n]). Drop such an empty column.
+  function stripEmptySourcesColumn(root) {
+    root.querySelectorAll("table").forEach((table) => {
+      const ths = Array.from(table.querySelectorAll("thead th"));
+      const bodyRows = Array.from(table.querySelectorAll("tbody tr"));
+      // right-to-left so earlier column indices stay valid as columns are removed
+      for (let col = ths.length - 1; col >= 0; col--) {
+        if (!/^sources?$/i.test((ths[col].textContent || "").trim())) continue;
+        const empty = bodyRows.every((tr) => !(((tr.children[col] || {}).textContent) || "").trim());
+        if (!empty) continue;
+        ths[col].remove();
+        bodyRows.forEach((tr) => { if (tr.children[col]) tr.children[col].remove(); });
+      }
+    });
   }
 
   function enhanceCodeBlocks(root) {
@@ -209,7 +230,6 @@
   }
   function hideCitePop() { $("citePop").classList.remove("show"); }
   function linkifyCitations(root) {
-    return;   // Sources panel removed — leave [n] markers as plain text.
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
         const p = n.parentElement;
@@ -469,6 +489,9 @@
   }
 
   function finalizeTools(h, sources, meta) {
+    // Attach sources to the message so inline [n] chips + the per-answer source drawer work.
+    h.el._sources = sources || [];
+    h.el._question = questionForAnswer(h.el);
     h.tools.style.display = "flex";
     h.tools.innerHTML = "";
     // Speed + model badge (live answers only) — makes the response feel measured, not dull.
@@ -875,7 +898,7 @@
     try {
       const resp = await fetch("/api/agent", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: text }), signal: controller.signal,
+        body: JSON.stringify({ question: text, session_id: state.currentId }), signal: controller.signal,
       });
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
@@ -964,7 +987,7 @@
           const r = document.createElement("div"); r.className = "agent-round";
           r.innerHTML = "<span>Attempt " + e.iteration + "</span>"; root.appendChild(r); break;
         }
-        case "code": { const c = step(A_ICON.code, "Wrote a program", "done"); codeInto(body(c, "", true), e.code); break; }
+        case "code": { const c = step(A_ICON.code, "Wrote a program (click to view)", "done"); codeInto(body(c, "", false), e.code); break; }
         case "run": { runCard = step(A_ICON.run, "Running in Docker sandbox", "running"); break; }
         case "run_result": {
           const c = runCard || step(A_ICON.run, "Ran in sandbox", "done");
@@ -1017,10 +1040,12 @@
         renderMarkdown(h.md, "⚠️ " + (ev.message || "Please rephrase your question."));
         break;
       case "sources": {
-        const n = (ev.sources || []).length;
-        if (n) {
-          h.statusText.textContent = `Found ${n} relevant source${n > 1 ? "s" : ""} — writing the answer…`;
-          appendProcess(h, `Found ${n} relevant source${n > 1 ? "s" : ""}.`);
+        const list = ev.sources || [];
+        state.currentSources = list;        // so inline [n] chips can resolve while streaming
+        h.el._sources = list;
+        if (list.length) {
+          h.statusText.textContent = `Found ${list.length} relevant source${list.length > 1 ? "s" : ""} — writing the answer…`;
+          appendProcess(h, `Found ${list.length} relevant source${list.length > 1 ? "s" : ""}.`);
         }
         break;
       }
@@ -1037,6 +1062,18 @@
         setAns(getAns() + "\n\n_" + (ev.message || "error") + "_");
         scheduleRender();
         break;
+      case "low_confidence": {
+        if (h._lowConf) break;
+        h._lowConf = true;
+        const w = document.createElement("div");
+        w.className = "low-conf";
+        w.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>';
+        const span = document.createElement("span");
+        span.textContent = ev.message || "Low confidence.";
+        w.appendChild(span);
+        h.md.insertAdjacentElement("afterend", w);
+        break;
+      }
       case "done":
         finishThinking(h);
         if (ev.cached) { h._cached = true; h._cachedPct = ev.similarity || 0; h._cachedKind = ev.match_kind || ""; }

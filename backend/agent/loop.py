@@ -99,14 +99,16 @@ _GEN_SYSTEM = (
 )
 
 _REFLECT_SYSTEM = (
-    "You are a strict reviewer. You are given a task, a candidate Python program, and "
-    "the ACTUAL result of running it in a sandbox. Judge whether it correctly and well "
-    "solves the task. Reply with ONLY a JSON object and nothing else:\n"
-    '{"success": true|false, "score": 0-100, "done": true|false, '
+    "You are a strict reviewer. You are given the task (and the conversation topic it came "
+    "from), a candidate Python program, and the ACTUAL result of running it in a sandbox. "
+    "Reply with ONLY a JSON object and nothing else:\n"
+    '{"relevant": true|false, "success": true|false, "score": 0-100, "done": true|false, '
     '"feedback": "concrete fix or improvement if not done", '
     '"answer": "the final answer/best algorithm in 1-2 sentences"}\n'
-    "success = it ran and is correct. done = true only if it is correct AND good enough "
-    "that further iteration would not meaningfully improve it."
+    "relevant = the program actually addresses THIS task/topic (not some unrelated problem). "
+    "If it is not relevant, set relevant=false, success=false, done=false regardless of whether "
+    "it ran. success = it ran and is correct. done = true only if it is correct, relevant, AND "
+    "good enough that further iteration would not meaningfully improve it."
 )
 
 
@@ -126,9 +128,12 @@ def _generate_code(provider, memory_context: str, last_code: str, directive: str
     return _extract_code(_complete(provider, _GEN_SYSTEM, "\n".join(parts), GEN_MAX_TOKENS))
 
 
-def _reflect(provider, task: str, code: str, result: RunResult) -> Dict[str, Any]:
+def _reflect(provider, task: str, code: str, result: RunResult,
+             conversation: str = "") -> Dict[str, Any]:
     user = (
-        f"TASK:\n{task}\n\n"
+        (f"CONVERSATION TOPIC (the real subject the code must address):\n{conversation}\n\n"
+         if conversation.strip() else "")
+        + f"TASK:\n{task}\n\n"
         f"PROGRAM:\n```python\n{code}\n```\n\n"
         f"RUN RESULT: {result.summary}\n"
         f"STDOUT:\n{result.stdout or '(none)'}\n\n"
@@ -137,6 +142,7 @@ def _reflect(provider, task: str, code: str, result: RunResult) -> Dict[str, Any
     )
     verdict = _parse_json(_complete(provider, _REFLECT_SYSTEM, user, REFLECT_MAX_TOKENS))
     # Defensive defaults if the model didn't return clean JSON.
+    verdict.setdefault("relevant", True)   # conservative: only block on an explicit false
     verdict.setdefault("success", bool(result.ok))
     verdict.setdefault("score", 55 if result.ok else 0)
     verdict.setdefault("done", False)
@@ -146,7 +152,9 @@ def _reflect(provider, task: str, code: str, result: RunResult) -> Dict[str, Any
 
 
 def _score(att: Attempt) -> int:
-    # A program that actually ran always beats one that didn't; then rank by review score.
+    # Off-topic attempts never win; then a program that ran beats one that didn't; then score.
+    if att.verdict.get("relevant") is False:
+        return -1
     base = 1000 if att.result.ok else 0
     try:
         return base + int(att.verdict.get("score", 0))
@@ -170,10 +178,14 @@ def _gather_context(task: str, on_event: OnEvent) -> str:
     return "\n".join(lines)
 
 
-def _build_brief(task: str, brief: str, context: str) -> str:
+def _build_brief(task: str, brief: str, context: str, conversation: str = "") -> str:
     """Tier-1 brief: the user's PROJECT_BRIEF if given, else a goal built from the task,
-    plus any research context. TwoTierMemory clips this to its cap."""
+    plus the prior conversation (so "give me code for this" stays on topic) and any
+    research context. TwoTierMemory clips this to its cap."""
     head = brief.strip() if brief.strip() else f"# Goal\n{task}"
+    if conversation.strip():
+        head = ("# Conversation so far (this is the topic the code must address)\n"
+                f"{conversation.strip()}\n\n") + head
     if context:
         head += f"\n\n# Relevant approaches (from research)\n{context}"
     return head
@@ -195,7 +207,7 @@ def _read_directive(path: Optional[str]) -> str:
 # ----------------------------------------------------------------------
 def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
               use_search: bool = True, directive_path: Optional[str] = None,
-              on_event: Optional[OnEvent] = None) -> AgentResult:
+              conversation: str = "", on_event: Optional[OnEvent] = None) -> AgentResult:
     emit: OnEvent = on_event or (lambda e: None)
     task = (task or "").strip()
     brief = (brief or "").strip()
@@ -227,7 +239,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         emit({"type": "context", "chars": len(context)})
 
     # Tier-1 brief (frozen) + Tier-2 log (auto-compacting) -> constant-size context.
-    memory = TwoTierMemory(brief=_build_brief(task, brief, context))
+    memory = TwoTierMemory(brief=_build_brief(task, brief, context, conversation))
     attempts: List[Attempt] = []
     best: Optional[Attempt] = None
     last_code = ""
@@ -251,8 +263,11 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         emit({"type": "run_result", "iteration": i, "ok": result.ok, "summary": result.summary,
               "stdout": result.stdout, "stderr": result.stderr, "error": result.error})
 
-        verdict = _reflect(provider, task, code, result)
+        verdict = _reflect(provider, task, code, result, conversation)
         emit({"type": "reflect", "iteration": i, "verdict": verdict})
+        if verdict.get("relevant") is False and i < max_iters:
+            emit({"type": "status",
+                  "message": "Off-topic — regenerating with the conversation context…"})
 
         att = Attempt(i, code, result, verdict)
         attempts.append(att)
@@ -263,23 +278,28 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         memory.append(f"Attempt {i}: {result.summary}. Review score={verdict.get('score')} "
                       f"done={verdict.get('done')}. {(verdict.get('feedback') or '')[:240]}")
         last_code = code
-        if result.ok and verdict.get("done"):
+        if result.ok and verdict.get("done") and verdict.get("relevant", True):
             break
 
     # Automatic peer review of the best result (the "Review" step, run for you):
     # critique the final code + answer and surface the verdict in the timeline.
     try:
         from backend.answering.agentic_answer import auto_review_enabled
-        from backend.answering.reviewer import review as _peer_review
+        from backend.answering.reviewer import review as _peer_review, is_relevant
         if best and auto_review_enabled():
             emit({"type": "status", "message": "Reviewing the best result…"})
             payload = ((best.verdict.get("answer") or "") + "\n\n```python\n"
                        + (best.code or "") + "\n```")
-            rev = _peer_review(payload)
+            intent = (conversation + "\n\n" + task).strip() if conversation.strip() else task
+            rev = _peer_review(payload, task=intent)
             if rev and not rev.get("error"):
                 rec = rev.get("recommendation", "")
+                relevant = is_relevant(rev)
+                if not relevant:
+                    best.verdict["relevant"] = False   # off-topic -> never "verified"
                 emit({"type": "reflect", "iteration": len(attempts), "verdict": {
-                    "done": rec in ("accept", "minor revision"),
+                    "done": relevant and rec in ("accept", "minor revision"),
+                    "relevant": relevant,
                     "score": (rev.get("scores") or {}).get("soundness"),
                     "feedback": f"Peer review: {rec}. " + "; ".join((rev.get("suggestions") or [])[:2]),
                 }})
@@ -288,7 +308,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
 
     res = AgentResult(
         task=task,
-        success=bool(best and best.result.ok and best.verdict.get("success")),
+        success=bool(best and best.result.ok and best.verdict.get("success")
+                     and best.verdict.get("relevant", True)),
         best_code=best.code if best else "",
         best_output=best.result.stdout if best else "",
         answer=(best.verdict.get("answer", "") if best else ""),
