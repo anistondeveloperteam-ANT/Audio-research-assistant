@@ -11,8 +11,19 @@ companion to the git history.
 
 ---
 
-## 2026-06-10
+## 2026-06-11
 
+### Free LLM providers + premium 3D UI
+- Added several **free** OpenAI-compatible providers to the model picker (from
+  tashfeenahmed/freellmapi — took the provider list/endpoints, not the Node app):
+  **Groq** (Llama 3.3 70B / 3.1 8B), **Cerebras** (Qwen3 235B, Llama 3.3 70B),
+  **Mistral** (Large, Codestral) — plus Gemini, DeepSeek, GPT-5.5. A single
+  `PROVIDERS` registry + `CATALOG` in `streaming_provider.py` drives both the
+  name→endpoint routing and the dropdown; keys per provider in `.env`.
+- **Premium 3D model dropdown**: a frosted-glass card that lifts in 3D (perspective +
+  rotateX), each model shown with a colored **vendor badge**, name/vendor, a **Free/Paid/
+  Add-key** pill, and an active checkmark. Sign-in card now **tilts toward the cursor**;
+  the New-chat + Send buttons got raised, glossy depth.
 ### Removed the SSRF guard (owner request) + refreshed README
 - Per the owner's explicit request, the SSRF URL guard is **removed**: `is_safe_url()` in
   `backend/external_search/base.py` now only validates scheme + host (no private/loopback/

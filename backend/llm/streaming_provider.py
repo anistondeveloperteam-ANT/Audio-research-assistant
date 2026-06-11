@@ -28,16 +28,47 @@ from typing import Dict, Iterator, List, Optional
 DEFAULT_OPENAI_MODEL = "gemini-2.5-flash"
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
+# Each provider is an OpenAI-compatible endpoint -> (base_url, api_key_env).
+# "" base = api.openai.com. Free providers from freellmapi (2026).
+PROVIDERS: Dict[str, tuple] = {
+    "gemini":     (GEMINI_BASE, "GEMINI_API_KEY"),
+    "groq":       ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+    "cerebras":   ("https://api.cerebras.ai/v1", "CEREBRAS_API_KEY"),
+    "mistral":    ("https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
+    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+    "openai":     ("", "OPENAI_CLOUD_KEY"),
+}
+
+# Models offered in the picker: (model_id, provider, vendor, display_name, is_free).
+CATALOG = [
+    ("gemini-2.5-flash",        "gemini",     "Gemini",   "2.5 Flash",     True),
+    ("llama-3.3-70b-versatile", "groq",       "Groq",     "Llama 3.3 70B", True),
+    ("llama-3.1-8b-instant",    "groq",       "Groq",     "Llama 3.1 8B",  True),
+    ("qwen-3-235b-a22b",        "cerebras",   "Cerebras", "Qwen3 235B",    True),
+    ("llama-3.3-70b",           "cerebras",   "Cerebras", "Llama 3.3 70B", True),
+    ("mistral-large-latest",    "mistral",    "Mistral",  "Large",         True),
+    ("codestral-latest",        "mistral",    "Mistral",  "Codestral",     True),
+    ("deepseek/deepseek-chat",  "openrouter", "DeepSeek", "Chat",          False),
+    ("gpt-5.5",                 "openai",     "OpenAI",   "GPT-5.5",       False),
+]
+_MODEL_PROVIDER = {mid: prov for mid, prov, *_ in CATALOG}
+
 _AFFORD_RE = re.compile(r"can only afford (\d+)")
 
 
 def route_model(model: str):
-    """(base_url, api_key) for a model name. Two providers only:
-       gemini-* -> Google Gemini (GEMINI_API_KEY);  anything else -> OpenAI (OPENAI_CLOUD_KEY).
-    """
-    if (model or "").strip().lower().startswith("gemini"):
-        return GEMINI_BASE, os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
-    return "", os.getenv("OPENAI_CLOUD_KEY", "")
+    """(base_url, api_key) for a model id — resolves the right OpenAI-compatible
+    endpoint + key by the model's provider in CATALOG (with a sensible fallback)."""
+    m = (model or "").strip()
+    prov = _MODEL_PROVIDER.get(m)
+    if prov is None:                       # unlisted model: best-effort guess
+        ml = m.lower()
+        prov = "gemini" if ml.startswith("gemini") else ("openrouter" if "/" in m else "openai")
+    base, key_env = PROVIDERS[prov]
+    key = os.getenv(key_env, "")
+    if prov == "gemini" and not key:
+        key = os.getenv("GOOGLE_API_KEY", "")
+    return base, key
 
 
 def _affordable_tokens(message: str) -> Optional[int]:

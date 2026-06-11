@@ -1204,8 +1204,15 @@
         row.type = "button";
         row.className = "mp-opt" + (o.model === cur.model ? " active" : "");
         row.setAttribute("role", "option");
-        row.innerHTML = `<span class="mp-opt-label">${esc(o.label)}</span>` +
-          `<svg class="mp-opt-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`;
+        const vendor = o.vendor || "?";
+        const pill = o.available ? (o.free ? '<span class="mp-pill free">Free</span>'
+                                           : '<span class="mp-pill paid">Paid</span>')
+                                 : '<span class="mp-pill needkey">Add key</span>';
+        row.innerHTML =
+          `<span class="mp-badge" data-v="${esc(vendor)}">${esc(vendor.slice(0, 2))}</span>` +
+          `<span class="mp-opt-main"><span class="mp-opt-name">${esc(o.name || o.model)}</span>` +
+          `<span class="mp-opt-vendor">${esc(vendor)}</span></span>` + pill +
+          `<svg class="mp-opt-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`;
         row.addEventListener("click", () => selectModel(o, row));
         menu.appendChild(row);
       });

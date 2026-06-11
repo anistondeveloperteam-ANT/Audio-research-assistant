@@ -1,13 +1,11 @@
 """
 Chat-model selection for the web UI.
 
-Two models only, routed by name:
-  - `gemini-2.5-flash` -> Google Gemini (GEMINI_API_KEY)
-  - `gpt-5.5`          -> OpenAI         (OPENAI_CLOUD_KEY)
-
-Switching a model updates OPENAI_MODEL + OPENAI_BASE_URL + OPENAI_API_KEY in both the
-running process and the on-disk .env, so the whole connection switches — not just the
-model string.
+The picker is driven by `streaming_provider.CATALOG` — several FREE providers (Gemini,
+Groq, Cerebras, Mistral) plus DeepSeek and GPT-5.5, each an OpenAI-compatible endpoint
+routed by model name. Switching a model updates OPENAI_MODEL + OPENAI_BASE_URL +
+OPENAI_API_KEY in both the running process and the on-disk .env, so the whole connection
+switches — not just the model string.
 """
 from __future__ import annotations
 
@@ -15,7 +13,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -33,22 +31,24 @@ except Exception:
 DEFAULT_OPENAI_MODEL = "gemini-2.5-flash"
 
 # Single source of truth for model -> (endpoint, key) routing, shared with the
-# provider factory so the dropdown and the code agent route models identically.
-from backend.llm.streaming_provider import route_model as _route  # noqa: E402
+# provider factory + the model catalog (single source of truth for routing + the picker).
+from backend.llm.streaming_provider import route_model as _route, CATALOG  # noqa: E402
 
-# The only two models offered. Gemini reuses GEMINI_API_KEY; GPT-5.5 needs OPENAI_CLOUD_KEY.
-CLOUD_MODELS = [
-    "gemini-2.5-flash",   # Gemini — free
-    "gpt-5.5",            # OpenAI — needs OPENAI_CLOUD_KEY
-]
+_META = {mid: (vendor, name, free) for mid, prov, vendor, name, free in CATALOG}
 
 
-def _provider_name(model: str) -> str:
-    return "Gemini" if (model or "").strip().lower().startswith("gemini") else "OpenAI"
+def _vendor(model: str) -> str:
+    m = (model or "").strip()
+    if m in _META:
+        return _META[m][0]
+    return "Gemini" if m.lower().startswith("gemini") else "Custom"
 
 
 def _label(model: str) -> str:
-    return f"{_provider_name(model)} · {model}"
+    if model in _META:
+        v, n, _ = _META[model]
+        return f"{v} · {n}"
+    return model
 
 
 def _available(model: str) -> bool:
@@ -63,15 +63,15 @@ def current() -> Dict[str, str]:
 
 def list_models() -> Dict[str, Any]:
     cur = current()
-    models: List[str] = list(CLOUD_MODELS)
-    if cur["model"] not in models:
-        models.insert(0, cur["model"])
+    rows = list(CATALOG)
+    if cur["model"] not in _META:                       # surface a custom active model too
+        rows = [(cur["model"], "openai", "Custom", cur["model"], False)] + rows
     options = []
-    for m in models:
-        label = _label(m)
-        if not _available(m):
-            label += "  (add key)"
-        options.append({"provider": "openai", "model": m, "label": label})
+    for mid, prov, vendor, name, free in rows:
+        options.append({
+            "provider": "openai", "model": mid, "label": f"{vendor} · {name}",
+            "vendor": vendor, "name": name, "free": bool(free), "available": _available(mid),
+        })
     return {"current": cur, "options": options}
 
 
