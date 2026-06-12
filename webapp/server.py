@@ -11,6 +11,7 @@ Members then sign in at /login; each member's conversations are private.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import secrets
@@ -83,7 +84,22 @@ def _reset_base(request: Request) -> str:
     return base.rstrip("/") if base else str(request.base_url).rstrip("/")
 
 
-app = FastAPI(title="Research Assistant", dependencies=[Depends(require_login)])
+@contextlib.asynccontextmanager
+async def _lifespan(_app: "FastAPI"):
+    # Pre-warm the GPU retrieval models (reranker + embeddings) in a background thread so the
+    # first chat doesn't pay model load + CUDA init. Only when local RAG is on; never blocks startup.
+    try:
+        from webapp import chat_logic
+        if chat_logic.local_rag_enabled():
+            import threading
+            from backend.retrieval.hybrid_retrieve import warmup
+            threading.Thread(target=warmup, daemon=True, name="retrieval-warmup").start()
+    except Exception:
+        pass
+    yield
+
+
+app = FastAPI(title="Research Assistant", dependencies=[Depends(require_login)], lifespan=_lifespan)
 # Signs the session cookie. By default the cookie is a *session* cookie (max_age=None):
 # it is cleared when the browser closes, so each new visit requires signing in again.
 # Set SESSION_MAX_AGE=<seconds> in .env to keep users logged in for that long instead.
@@ -92,21 +108,6 @@ app.add_middleware(
     same_site="lax", https_only=False, max_age=webauth.session_max_age(),
 )
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
-
-
-@app.on_event("startup")
-def _warmup_models() -> None:
-    """Pre-warm the GPU retrieval models (reranker + embeddings) in a background thread so the
-    first chat doesn't pay model load + CUDA init. Only when local RAG is on; never blocks startup."""
-    try:
-        from webapp import chat_logic
-        if not chat_logic.local_rag_enabled():
-            return
-        import threading
-        from backend.retrieval.hybrid_retrieve import warmup
-        threading.Thread(target=warmup, daemon=True, name="retrieval-warmup").start()
-    except Exception:
-        pass
 
 
 def _require_owner(request: Request, session_id: str) -> None:
