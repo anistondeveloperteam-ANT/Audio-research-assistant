@@ -593,7 +593,18 @@ def stream_chat_events(
             results: Dict[str, Any] = {}
             for name, fut in futures.items():
                 try:
-                    results[name] = fut.result()
+                    # Hard backstop on external search so a stalled channel can't block the
+                    # chat — local retrieval still returns a partial answer. (The orchestrator
+                    # already caps channels; this guards the gather+rerank tail too.) Local
+                    # retrieval has no timeout: it must finish for there to be a local answer.
+                    timeout = None
+                    if name == "external":
+                        timeout = float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0
+                    results[name] = fut.result(timeout=timeout)
+                except concurrent.futures.TimeoutError:
+                    logger.info("external search exceeded its timeout; partial local answer")
+                    yield {"type": "warning", "message": "External search timed out — answering from local sources."}
+                    results[name] = ([], [])
                 except Exception as exc:
                     logger.info("%s retrieval failed: %s", name, type(exc).__name__)
                     results[name] = ([], [])
