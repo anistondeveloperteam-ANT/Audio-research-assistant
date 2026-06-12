@@ -31,7 +31,7 @@ def test_channels_run_concurrently(monkeypatch):
 
 def test_one_slow_channel_does_not_block_the_gather(monkeypatch):
     monkeypatch.setattr(orch, "get_web_provider", lambda: None)
-    monkeypatch.setattr(orch, "EXTERNAL_GATHER_TIMEOUT", 0.3)
+    monkeypatch.setenv("EXTERNAL_GATHER_TIMEOUT", "0.3")   # read live via _gather_timeout()
 
     def fast(_q, *a, **k):
         return []

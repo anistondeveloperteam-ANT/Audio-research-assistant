@@ -53,7 +53,7 @@
     abort: null,
     autoStick: true,
     nextTurnIndex: 0,
-    mode: "Default",    // single optimized retrieval mode (no Fast/Balanced/Deep)
+    mode: "fast",       // "fast" = local-first + quick (default) | "deep" = full research sweep
     topk: 8,            // hint only; the server selects sources adaptively
   };
 
@@ -1414,6 +1414,21 @@
     $("pdfInput").addEventListener("change", onPdfChosen);
     $("imDone").addEventListener("click", closeIngestModal);
     $("themeBtn").addEventListener("click", toggleTheme);
+    const modeBtn = $("modeToggle");
+    if (modeBtn) {
+      try { if (localStorage.getItem("ara-mode") === "deep") state.mode = "deep"; } catch {}
+      const paintMode = () => {
+        const deep = state.mode === "deep";
+        modeBtn.classList.toggle("on", deep);
+        modeBtn.setAttribute("aria-checked", deep ? "true" : "false");
+      };
+      paintMode();
+      modeBtn.addEventListener("click", () => {
+        state.mode = state.mode === "deep" ? "fast" : "deep";
+        try { localStorage.setItem("ara-mode", state.mode); } catch {}
+        paintMode();
+      });
+    }
     $("modelBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleModelMenu(); });
     document.addEventListener("click", (e) => { if (!e.target.closest("#modelPick")) closeModelMenu(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModelMenu(); });

@@ -26,9 +26,18 @@ from backend.external_search.source_ranker import rerank_sources
 from backend.external_search.web_search import fetch_page_text, get_web_provider, web_search
 
 MAX_PDFS = int(os.getenv("EXTERNAL_MAX_PDFS", "3"))           # online PDFs from web results
-WEB_MAX = int(os.getenv("WEB_MAX_RESULTS", "8"))              # web pages per query
-ARXIV_READ_PDF_COUNT = int(os.getenv("ARXIV_READ_PDF_COUNT", "3"))  # read this many papers in full
-EXTERNAL_GATHER_TIMEOUT = float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30"))  # shared cap across channels
+
+# Read live (per request) so the run mode (fast/deep) controls web/arXiv depth + the timeout.
+def _web_max() -> int:
+    return int(os.getenv("WEB_MAX_RESULTS", "8"))             # web pages per query
+
+
+def _arxiv_read_count() -> int:
+    return int(os.getenv("ARXIV_READ_PDF_COUNT", "3"))       # read this many papers in full (0 = none)
+
+
+def _gather_timeout() -> float:
+    return float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30"))  # shared cap across channels
 
 
 def is_web_search_enabled() -> bool:
@@ -79,7 +88,7 @@ def gather_external_evidence(query: str, max_results: int = 20) -> Tuple[List[Ex
     # (all network-bound) so wall-clock is the slowest channel, not the sum of them.
     def _ch_web() -> Tuple[List[ExternalSource], List[str]]:
         w: List[str] = []
-        srcs, pdf_urls = _web_channel(sq, WEB_MAX, w)
+        srcs, pdf_urls = _web_channel(sq, _web_max(), w)
         for url in pdf_urls[:MAX_PDFS]:
             try:
                 srcs.extend(read_online_pdf(url))
@@ -93,7 +102,7 @@ def gather_external_evidence(query: str, max_results: int = 20) -> Tuple[List[Ex
         try:
             papers = arxiv_search(sq)
             out.extend(papers)
-            for p in papers[:ARXIV_READ_PDF_COUNT]:
+            for p in papers[:_arxiv_read_count()]:
                 if p.url and looks_like_pdf_url(p.url):
                     try:
                         out.extend(read_online_pdf(p.url))
@@ -152,7 +161,7 @@ def gather_external_evidence(query: str, max_results: int = 20) -> Tuple[List[Ex
     try:
         futures = [ex.submit(_timed, label, fn) for label, fn in channels]
         try:
-            for fut in concurrent.futures.as_completed(futures, timeout=EXTERNAL_GATHER_TIMEOUT):
+            for fut in concurrent.futures.as_completed(futures, timeout=_gather_timeout()):
                 label, srcs, w, secs = fut.result()
                 collected.extend(srcs)
                 warnings.extend(w)

@@ -105,7 +105,14 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11l5-5 5 5M12 6v13"/></svg>
           </button>
         </div>
-        <div class="composer-hint"><kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line · <kbd>Ctrl</kbd>+<kbd>K</kbd> new chat</div>
+        <div class="composer-hint">
+          <button class="mode-toggle" id="modeToggle" type="button" role="switch" aria-checked="false"
+                  title="Deep research: web + papers + multi-query + extra verification (slower, more thorough). Off = fast, local-first.">
+            <span class="mt-track"><span class="mt-thumb"></span></span> Deep research
+          </button>
+          <span class="mode-hint-sep">·</span>
+          <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Ctrl</kbd>+<kbd>K</kbd> new chat
+        </div>
       </div>
     </main>
   </div>

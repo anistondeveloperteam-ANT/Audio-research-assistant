@@ -59,22 +59,24 @@ def test_query_sanity_accepts_real_question():
 # ----------------------------------------------------------------------
 # Retrieval mode — single optimized "Default" (no Fast/Balanced/Deep)
 # ----------------------------------------------------------------------
-def test_normalize_mode_always_default():
-    # Any input — old mode names, invalid, or None — collapses to "Default".
-    assert normalize_mode(None) == "Default"
-    assert normalize_mode("Fast") == "Default"
-    assert normalize_mode("Deep") == "Default"
-    assert normalize_mode("Balanced") == "Default"
-    assert normalize_mode("not-a-mode") == "Default"
+def test_normalize_mode_fast_or_deep():
+    # Default (and any non-deep input) -> fast; deep variants -> deep.
+    assert normalize_mode(None) == "fast"
+    assert normalize_mode("Fast") == "fast"
+    assert normalize_mode("Balanced") == "fast"
+    assert normalize_mode("not-a-mode") == "fast"
+    assert normalize_mode("Deep") == "deep"
+    assert normalize_mode("Deep Research") == "deep"
 
 
-def test_get_mode_settings_returns_single_default():
-    settings = get_mode_settings()
-    assert isinstance(settings, dict)
-    assert settings["mode"] == "Default"
-    assert "max_query_routes" in settings
-    # The mode argument is ignored — always the same single config.
-    assert get_mode_settings("Fast") == get_mode_settings("Deep")
+def test_get_mode_settings_distinguishes_fast_and_deep():
+    fast = get_mode_settings("fast")
+    deep = get_mode_settings("deep")
+    assert isinstance(fast, dict) and "max_query_routes" in fast
+    assert fast["mode"] == "fast" and deep["mode"] == "deep"
+    # fast is cheaper than deep, but the accuracy bar is identical
+    assert fast["deep_search_subqueries"] < deep["deep_search_subqueries"]
+    assert fast["agentic_min_verify_score"] == deep["agentic_min_verify_score"] == 80
 
 
 def test_run_help_still_works():

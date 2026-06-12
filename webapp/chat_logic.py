@@ -142,7 +142,11 @@ EVIDENCE_CHARS_PER_SOURCE = int(os.getenv("EVIDENCE_CHARS_PER_SOURCE", "3500"))
 # Bound how much evidence is put in the prompt so deep search (many sources) stays
 # affordable and fits the model's context: at most this many sources / total chars.
 EVIDENCE_MAX_ITEMS = int(os.getenv("EVIDENCE_MAX_ITEMS", "16"))
-EVIDENCE_BUDGET_CHARS = int(os.getenv("EVIDENCE_BUDGET_CHARS", "28000"))
+
+
+def _evidence_budget() -> int:
+    """Total evidence chars allowed in the prompt — read live so the run mode applies."""
+    return int(os.getenv("EVIDENCE_BUDGET_CHARS", "28000"))
 
 _PROMPT_LIMIT_RE = re.compile(r"[Pp]rompt tokens limit exceeded:\s*(\d+)\s*>\s*(\d+)")
 
@@ -154,10 +158,12 @@ def _prompt_limit(message: str):
 
 
 def format_evidence(sources: List[Dict[str, Any]], max_chars: int = EVIDENCE_CHARS_PER_SOURCE,
-                    max_items: int = EVIDENCE_MAX_ITEMS, budget_chars: int = EVIDENCE_BUDGET_CHARS) -> str:
+                    max_items: int = EVIDENCE_MAX_ITEMS, budget_chars: int | None = None) -> str:
     """Format local and/or external evidence items into a numbered, cited block,
     bounded to `max_items` sources and `budget_chars` total so the prompt stays
     affordable. Works on raw local retrieval dicts and external dicts."""
+    if budget_chars is None:
+        budget_chars = _evidence_budget()
     if not sources:
         return "(no retrieved sources)"
     parts: List[str] = []
@@ -195,17 +201,26 @@ SOURCE_MIN_SCORE = float(os.getenv("SOURCE_MIN_SCORE", "0.30"))
 SOURCE_MIN = int(os.getenv("SOURCE_MIN", "3"))
 SOURCE_MAX = int(os.getenv("SOURCE_MAX", "12"))
 
-# How many external sources to keep (accuracy > brevity — keep more), and how many
-# tokens the answer may use (large enough for full code / simulations).
-EXTERNAL_TOP_K = int(os.getenv("EXTERNAL_TOP_K", "20"))
-ANSWER_MAX_TOKENS = int(os.getenv("ANSWER_MAX_TOKENS", "8000"))  # room for full code, no truncation
 AGENTIC_EXTRA_SEARCH_K = int(os.getenv("AGENTIC_EXTRA_SEARCH_K", "8"))
 
-# Deep research, always on: auto-decompose every question into a few "angles" and
-# search each across all sources, so the answer is built from broad evidence — not
-# just the literal query. Set DEEP_SEARCH_SUBQUERIES=0 to disable.
-DEEP_SEARCH_SUBQUERIES = int(os.getenv("DEEP_SEARCH_SUBQUERIES", "3"))
-DEEP_SUBQUERY_TOP_K = int(os.getenv("DEEP_SUBQUERY_TOP_K", "6"))
+
+# How many external sources to keep, answer token budget, and deep-search planning.
+# Read LIVE (not baked) so the run mode (fast/deep) applies per request.
+def _external_top_k() -> int:
+    return int(os.getenv("EXTERNAL_TOP_K", "20"))
+
+
+def _answer_max_tokens() -> int:
+    return int(os.getenv("ANSWER_MAX_TOKENS", "8000"))
+
+
+def _deep_subqueries() -> int:
+    """Number of extra "angle" sub-queries (0 in fast mode = just the literal query)."""
+    return int(os.getenv("DEEP_SEARCH_SUBQUERIES", "3"))
+
+
+def _deep_subquery_top_k() -> int:
+    return int(os.getenv("DEEP_SUBQUERY_TOP_K", "6"))
 
 # Saved-answer reuse: exact/similar questions can be answered from SQLite memory
 # without spending LLM or search tokens. Defaults are intentionally conservative.
@@ -445,7 +460,7 @@ def _public_sources(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _deep_queries(question: str) -> List[str]:
     """The main question plus a few auto-planned sub-questions ('angles'), so every
     search is a mini deep-research sweep. Falls back to just the question."""
-    if DEEP_SEARCH_SUBQUERIES <= 0:
+    if _deep_subqueries() <= 0:
         return [question]
     try:
         from backend.agent.research_agent import _plan
@@ -457,7 +472,7 @@ def _deep_queries(question: str) -> List[str]:
         return [question]
     ql = question.strip().lower()
     extras = [s for s in subs if s.strip() and s.strip().lower() != ql]
-    return [question] + extras[:DEEP_SEARCH_SUBQUERIES]
+    return [question] + extras[:_deep_subqueries()]
 
 
 # ----------------------------------------------------------------------
@@ -482,6 +497,16 @@ def stream_chat_events(
     if not sanity.ok:
         yield {"type": "sanity", "message": sanity.user_message or "Please rephrase your question."}
         return
+
+    # Apply the run profile (fast/deep) to the process env BEFORE planning/retrieval, so
+    # the live knobs (sub-queries, external top-k, verify rounds, auto-review, budgets) take
+    # effect for this request. Fast (default) is local-first + quick; deep does the full sweep.
+    from backend.answering.research_modes import apply_research_mode, normalize_mode
+    profile = apply_research_mode(mode)
+    mode = normalize_mode(mode)
+    logger.info("chat mode=%s (subqueries=%d, ext_top_k=%d, verify_rounds=%d, auto_review=%s)",
+                profile["mode"], profile["deep_search_subqueries"], profile["external_top_k"],
+                profile["agentic_max_verify_rounds"], profile["auto_review"])
 
     mem = memory()
     user_id = mem.session_owner(session_id) or "local"
@@ -563,7 +588,7 @@ def stream_chat_events(
             if is_web_search_enabled():
                 yield {"type": "status", "message":
                        f"Searching the web, research papers, patents & GitHub — {tag}..."}
-                k = EXTERNAL_TOP_K if idx == 0 else DEEP_SUBQUERY_TOP_K
+                k = _external_top_k() if idx == 0 else _deep_subquery_top_k()
                 futures["external"] = ex.submit(_traced, "external_search", _gather_external_items, query, k)
             results: Dict[str, Any] = {}
             for name, fut in futures.items():
@@ -647,7 +672,7 @@ def stream_chat_events(
                 # Draft, shrinking the evidence to fit if the model rejects the prompt
                 # as too large (e.g. a low-balance account) so the answer still gets written.
                 with trace.span("prompt_build", round=round_no) as _sp:
-                    budget = EVIDENCE_BUDGET_CHARS
+                    budget = _evidence_budget()
                     evidence = format_evidence(items, budget_chars=budget)
                     _sp.set(evidence_chars=len(evidence), n_sources=len(items))
                 answer = ""
@@ -658,7 +683,7 @@ def stream_chat_events(
                             parts = []
                             for piece in provider.stream_chat(
                                     _messages_for(evidence), system=SYSTEM_PROMPT,
-                                    max_tokens=ANSWER_MAX_TOKENS, temperature=0.3, yield_reasoning=True):
+                                    max_tokens=_answer_max_tokens(), temperature=0.3, yield_reasoning=True):
                                 if isinstance(piece, dict):
                                     yield {"type": "thinking", "text": piece.get("reasoning", "")}
                                 else:
@@ -777,7 +802,7 @@ def stream_chat_events(
                             try:
                                 improved = complete_text(
                                     provider, history + [{"role": "user", "content": rmsg}],
-                                    system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS, temperature=0.3)
+                                    system=SYSTEM_PROMPT, max_tokens=_answer_max_tokens(), temperature=0.3)
                                 if improved.strip():
                                     answer = improved
                                     answer_rewritten = True
@@ -815,7 +840,7 @@ def stream_chat_events(
             messages = history + [{"role": "user", "content": user_msg}]
             with trace.span("llm_stream") as _sp:
                 for chunk in provider.stream_chat(
-                    messages, system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS,
+                    messages, system=SYSTEM_PROMPT, max_tokens=_answer_max_tokens(),
                     temperature=0.3, yield_reasoning=True
                 ):
                     if isinstance(chunk, dict):
