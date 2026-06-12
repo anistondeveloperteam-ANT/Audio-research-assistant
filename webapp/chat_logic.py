@@ -46,6 +46,7 @@ from backend.answering.agentic_answer import (  # noqa: E402
 from backend.llm.streaming_provider import get_provider  # noqa: E402
 from backend.external_search import gather_external_evidence, is_web_search_enabled  # noqa: E402
 from backend.observability import tracing  # noqa: E402  (no-op unless LANGFUSE_ENABLED=true)
+from backend.answering.citations import repair_citations  # noqa: E402
 
 
 def local_rag_enabled() -> bool:
@@ -833,6 +834,10 @@ def stream_chat_events(
     answer = "".join(answer_parts).strip() or "(no answer)"
     with trace.span("memory_save") as _sp:
         sources = _public_sources(items)
+        # Citation guard: strip any [n] that references a source outside the returned list,
+        # so the saved/cached answer's citations always match the actual sources. (The
+        # frontend strips out-of-range [n] from the live display too.)
+        answer, removed_citations = repair_citations(answer, len(sources))
         mem.append_turn(session_id, "assistant", answer, sources=sources)
 
         # Save for reuse ONLY when the generation truly succeeded: provider worked, no
@@ -840,6 +845,7 @@ def stream_chat_events(
         # the answer wasn't rewritten post-verification. Cache the clean body (no footers).
         verified = (not agentic_loop_enabled()) or (verification_passed(verdict) and not loop_run_failed)
         body = (clean_body or "").strip() or _strip_answer_footers(answer)
+        body, _ = repair_citations(body, len(sources))
         did_cache = False
         if (cache_on and provider_ok and not gen_failed and verified
                 and not answer_rewritten and _cacheable_answer(q, body, sources)):
@@ -853,6 +859,10 @@ def stream_chat_events(
                 embedding_meta=query_meta,
             )
             did_cache = True
-        _sp.set(cached=did_cache)
+        _sp.set(cached=did_cache, citations_removed=len(removed_citations))
     trace.set(cached=did_cache, n_sources=len(sources)).end()
+    if removed_citations:
+        logger.info("citation guard: removed out-of-range %s (only %d sources)",
+                    removed_citations, len(sources))
+        yield {"type": "citation_warning", "removed": removed_citations, "n_sources": len(sources)}
     yield {"type": "done", "answer": answer}

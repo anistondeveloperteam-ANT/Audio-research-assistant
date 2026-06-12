@@ -244,14 +244,21 @@
       const frag = document.createDocumentFragment();
       let last = 0;
       const s = node.nodeValue;
+      const nSources = (state.currentSources || []).length;
       s.replace(/\[(\d+)\]/g, (m, n, idx) => {
         if (idx > last) frag.appendChild(document.createTextNode(s.slice(last, idx)));
-        const b = document.createElement("button");
-        b.className = "cite"; b.textContent = n; b.dataset.n = n;
-        b.addEventListener("click", () => focusSource(parseInt(n, 10), b));
-        b.addEventListener("mouseenter", () => showCitePop(b, n));
-        b.addEventListener("mouseleave", hideCitePop);
-        frag.appendChild(b);
+        const num = parseInt(n, 10);
+        if (num >= 1 && num <= nSources) {
+          const b = document.createElement("button");
+          b.className = "cite"; b.textContent = n; b.dataset.n = n;
+          b.addEventListener("click", () => focusSource(num, b));
+          b.addEventListener("mouseenter", () => showCitePop(b, n));
+          b.addEventListener("mouseleave", hideCitePop);
+          frag.appendChild(b);
+        } else if (nSources === 0) {
+          frag.appendChild(document.createTextNode(m));   // source count unknown -> leave as-is
+        }
+        // else: out-of-range citation with a known source count -> strip it from the display
         last = idx + m.length;
         return m;
       });
