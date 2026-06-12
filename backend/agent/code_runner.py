@@ -142,12 +142,20 @@ def run_python(code: str, *, timeout: int = RUN_TIMEOUT, image: str = DEFAULT_IM
         "--memory", MEM_LIMIT,
         "--cpus", str(CPU_LIMIT),
         "--pids-limit", str(PIDS_LIMIT),
+        # Force UTF-8 inside the container so code that uses Unicode (λ, ∇, π, …) can be read
+        # from stdin and printed to stdout regardless of the container's locale.
+        "-e", "PYTHONUTF8=1",
+        "-e", "PYTHONIOENCODING=utf-8",
         image, "python", "-",   # read the script from stdin
     ]
     start = time.time()
     try:
+        # encoding="utf-8" is REQUIRED: the generated code often contains Unicode math symbols,
+        # and without it Windows would encode stdin with cp1252 and crash ('charmap' codec can't
+        # encode character). errors="replace" keeps any odd output byte from killing the capture.
         proc = subprocess.run(
             cmd, input=code, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
             timeout=timeout + 20,   # grace for container startup/pull
         )
     except subprocess.TimeoutExpired as exc:

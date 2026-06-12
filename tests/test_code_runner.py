@@ -76,3 +76,27 @@ def test_run_python_blocks_when_docker_missing(monkeypatch):
     monkeypatch.setattr(cr, "docker_available", lambda: False)
     res = cr.run_python("print(1)")
     assert res.ok is False and "Docker is not available" in res.error
+
+
+def test_run_python_pipes_unicode_code_as_utf8(monkeypatch):
+    # Regression: AI code often contains Unicode math (λ, ∇, π). It must be piped to the
+    # container as UTF-8 — not Windows cp1252 — or the run crashes with
+    # "'charmap' codec can't encode character '\\u03bb'" and the code never runs.
+    monkeypatch.setattr(cr, "docker_available", lambda: True)
+    monkeypatch.setattr(cr, "ensure_sandbox_image", lambda: (True, ""))
+    captured = {}
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["kw"] = kw
+        return types.SimpleNamespace(returncode=0, stdout="λ = 1.0, ∇L = 0", stderr="")
+
+    monkeypatch.setattr(cr.subprocess, "run", fake_run)
+    code = "lam = 'λ'  # Lagrange multiplier λ, gradient ∇\nprint('λ =', 1.0)"
+    res = cr.run_python(code)
+
+    assert res.ok is True
+    assert captured["kw"].get("encoding") == "utf-8"     # the actual fix (host side)
+    assert captured["kw"].get("input") == code            # code piped through unchanged
+    assert "PYTHONUTF8=1" in captured["cmd"]              # container runs in UTF-8 too
+    assert "λ" in res.stdout and "∇" in res.stdout        # Unicode output survives the round-trip
