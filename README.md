@@ -10,7 +10,7 @@ Everything runs on your machine: a FastAPI backend, a dependency‑free HTML/JS 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-169%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-184%20passing-2ea44f)
 ![License](https://img.shields.io/badge/license-MIT-555)
 
 **[Quick start](#-quick-start-5-minutes) · [What you can ask](#-what-you-can-ask) · [Fast vs Deep](#-fast-vs-deep) · [Trust](#-why-you-can-trust-the-answers) · [Features](#-features) · [Config](#-configuration)**
@@ -87,7 +87,7 @@ flowchart LR
     V -- holds up --> A([Answer])
 ```
 
-- **Citations always match the sources.** Every claim is tagged `[1] [2]`; a citation that points to a source number that doesn't exist is **automatically removed** — the model can't cite `[15]` when only 8 sources were found.
+- **Citations always point to real sources.** Every claim is tagged `[1] [2]`; a citation that points to a source number that doesn't exist is **automatically removed** — the model can't cite `[15]` when only 8 sources were found.
 - **It checks its own work.** A *draft → verify → refine* loop compares the answer against the retrieved evidence and rewrites until it holds up.
 - **It admits gaps.** If the sources don't cover something, it says so plainly instead of guessing.
 
@@ -111,6 +111,40 @@ python pipeline.py --corpus-report     # papers, chunks, topic coverage, gaps, d
 python pipeline.py --inspect-chunks 3  # see exactly how a document was chunked
 ```
 See [docs/INGESTION_CHECKLIST.md](docs/INGESTION_CHECKLIST.md) for adding PDFs that *broaden* coverage instead of just inflating the count.
+</details>
+
+<details>
+<summary><b>🧠 Contextual Retrieval</b> — chunks that know where they came from</summary>
+
+**The problem:** when a PDF is split into chunks for search, each chunk loses its surroundings. A chunk that says *"The error dropped by 0.4 over the baseline"* never mentions echo cancellation — the *rest of the paper* did — so a search for "echo cancellation results" can't find it.
+
+**The fix** (a technique [published by Anthropic](https://www.anthropic.com/news/contextual-retrieval)): at indexing time, an LLM reads the document and writes **one context sentence** for every chunk. It's prepended to the chunk **only inside the app's document index**:
+
+```text
+BEFORE — what the document search sees:
+  "The error dropped by 0.4 over the baseline."
+   ← not found for "echo cancellation results"
+
+AFTER — what the document search sees:
+  "This chunk reports the echo-cancellation results of the
+   proposed neural network. The error dropped by 0.4 over
+   the baseline."
+   ← found for that search (context sentence written by the LLM)
+```
+
+What you read in citations is **always the original chunk** — the context sentence is stored separately and never shown.
+
+**Measured on this repo's own benchmark** — 3 papers, 64 chunks, 20 test questions; both runs identical except the added context sentence:
+
+| metric (what it means) | plain | contextual | change |
+|---|---|---|---|
+| recall@10 — *right chunk lands in the top 10* | 0.405 | **0.425** | +0.020 (**+4.9% rel.**) |
+| recall@5 — *right chunk lands in the top 5* | 0.355 | **0.365** | +0.010 (**+2.8% rel.**) |
+| ranking (MRR/nDCG) — *how high it ranks, max 1.0* | 0.81–0.82 | 0.82 | ~flat — already ~0.82 of a max 1.0 on 3 papers, little headroom |
+
+> 🟢 **The honest read:** a real but modest gain on a tiny 3‑paper library — and it should **grow with your library**. The more papers you add, the more chunks look alike, and the more this disambiguation pays off (on large corpora, Anthropic measured up to a **~35% reduction in retrieval failures** — a different metric than ours, but the same direction). No extra latency when you ask a question: the LLM work (one short call per chunk) happens once at indexing and is **cached on disk**.
+
+Robust by design: context‑sentence generation **falls back Gemini → Mistral** if one provider is rate‑limited, and if every LLM fails it falls back to plain chunks — indexing never breaks. Toggle with `CONTEXTUAL_CHUNKS=true|false`; `pipeline.py --incremental` detects the change and rebuilds automatically.
 </details>
 
 <details>
@@ -179,7 +213,7 @@ Keep `ENABLE_AUTH=true` so visitors must sign in.
 ## 🛠️ Development
 
 ```bash
-.venv\Scripts\python.exe -m pytest -q          # 169 passing, fully offline/mocked
+.venv\Scripts\python.exe -m pytest -q          # 184 passing, fully offline/mocked
 .venv\Scripts\pyflakes backend webapp          # lint
 python pipeline.py --status                    # what's indexed right now
 python pipeline.py --corpus-report             # coverage + gaps report

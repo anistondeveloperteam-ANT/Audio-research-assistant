@@ -13,6 +13,16 @@ companion to the git history.
 
 ## 2026-06-12
 
+### Contextual Retrieval (Anthropic-style) in ingestion
+- Each chunk now gets an LLM-written **situating sentence** (what the chunk is about, in the
+  document's context) prepended to what is **embedded + BM25-indexed** — stored separately
+  (`chunks.context_text`) so citations still show the original text. Disk-cached
+  (`data/extracted/contextual_cache.json`), retry/backoff, **multi-provider fallback**
+  (Gemini → Mistral Large, proven live during a Gemini 429), and fully fallback-safe (LLM down →
+  plain chunks). `CONTEXTUAL_CHUNKS=true` (default); toggling it makes `pipeline.py --incremental`
+  rebuild. Measured (same 64 chunks, 20 questions): **recall@10 +4.9%, recall@5 +2.8%**, MRR/nDCG
+  flat (already ~0.82 on the tiny corpus); benefit scales with library size. Tests 176 → 184.
+
 ### Coding-agent runs now persist across reopen
 - Previously a coding task routed to `/api/agent` and was **view-only** — the live "think → write
   → run → check" cards were never saved, so reopening the chat lost the whole coding turn. Now the

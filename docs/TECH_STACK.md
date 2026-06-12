@@ -90,6 +90,7 @@ Code: `backend/retrieval/hybrid_retrieve.py`, `backend/common/device.py`, `backe
 | Technique | What it is | Role here |
 |---|---|---|
 | 🟢 **Vector / semantic search** | Nearest‑neighbour over embeddings | Find PDF chunks by *meaning* |
+| 🟢 **Contextual Retrieval** (Anthropic‑style) | LLM‑written situating sentence per chunk, prepended for indexing only | Better recall for context‑poor chunks; original text kept for citations — `contextualizer.py` (`CONTEXTUAL_CHUNKS`) |
 | 🟢 **HyDE** (Hypothetical Document Embeddings) | Search with a generated hypothetical answer | A second recall angle (template‑based, no LLM call) — `hyde_generator.py` |
 | 🟢 **BM25** (field‑weighted) | Classic keyword relevance | Keyword matching, fused with vectors — `retrieval_fusion.py` |
 | 🟢 **RRF** (Reciprocal Rank Fusion) | Merge several ranked lists robustly | Combine vector + HyDE + BM25 |

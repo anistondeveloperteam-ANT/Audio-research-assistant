@@ -220,6 +220,7 @@ flowchart LR
 ```
 
 - **Chunking** is structure‑aware: canonical sections, sentence packing (`CHUNK_MAX_CHARS`, overlap), separate chunks for **figure captions** and **algorithm blocks**, plus `chunk_type` (`equation`/`algorithm`/`table`/`text`) and concept tags.
+- **Contextual Retrieval** (`contextualizer.py`, `CONTEXTUAL_CHUNKS=true`): an LLM writes one situating sentence per chunk (Gemini → Mistral fallback, disk‑cached, fail‑safe to plain chunks); it's prepended to what's **embedded + BM25‑indexed** while `chunk_text` stays original for citations. Toggling the flag makes `--incremental` rebuild.
 - **Incremental** (`--incremental`) re‑processes only changed PDFs.
 - Inspect/verify: `pipeline.py --status` · `--corpus-report` · `--inspect-chunks <id>`.
 - Upload from the UI (**＋ Add papers**) streams live progress via `webapp/ingest.py`.
