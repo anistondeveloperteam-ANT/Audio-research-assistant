@@ -243,7 +243,8 @@
     // Count THIS message's own sources (attached before render on history restore) so saved
     // answers chip their [n] correctly — not just the live answer in state.currentSources.
     const owner = root.closest && root.closest(".msg");
-    const nSources = ((owner && owner._sources) || state.currentSources || []).length;
+    const srcList = (owner && owner._sources) || state.currentSources || [];
+    const nSources = srcList.length;
     for (const node of targets) {
       const frag = document.createDocumentFragment();
       let last = 0;
@@ -252,8 +253,11 @@
         if (idx > last) frag.appendChild(document.createTextNode(s.slice(last, idx)));
         const num = parseInt(n, 10);
         if (num >= 1 && num <= nSources) {
+          const src = srcList[num - 1];
           const b = document.createElement("button");
-          b.className = "cite"; b.textContent = n; b.dataset.n = n;
+          // green = local paper (no external link); red = web/external (opens in a new tab)
+          b.className = "cite " + (src && src.source_type === "local_pdf" ? "local" : "web");
+          b.textContent = n; b.dataset.n = n;
           b.addEventListener("click", () => focusSource(num, b));
           b.addEventListener("mouseenter", () => showCitePop(b, n));
           b.addEventListener("mouseleave", hideCitePop);
@@ -594,13 +598,19 @@
       return;
     }
     body.innerHTML = "";
+    // Legend so the colour code is self-explanatory.
+    const legend = document.createElement("div");
+    legend.className = "src-legend";
+    legend.innerHTML = `<span class="lg lg-local">● Your papers</span>` +
+                       `<span class="lg lg-web">● Web — click to open ↗</span>`;
+    body.appendChild(legend);
     const TYPE = { local_pdf: "Paper", web: "Web", github_repo: "GitHub", github_code: "GitHub",
                    online_pdf: "PDF", research_paper: "Research", patent: "Patent" };
     state.currentSources.forEach((s) => {
       const st = s.source_type || "local_pdf";
       const titleInner = esc(prettyName(s.title));
       const titleEl = s.url
-        ? `<a class="sc-title" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${titleInner}</a>`
+        ? `<a class="sc-title" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${titleInner} <span class="sc-ext" aria-hidden="true">↗</span></a>`
         : `<span class="sc-title">${titleInner}</span>`;
       const pages = s.page_start ? `pp. ${s.page_start}${s.page_end && s.page_end !== s.page_start ? "–" + s.page_end : ""}` : "";
       let meta = "";
@@ -619,7 +629,8 @@
         if (s.license) meta += `<span class="chip">${esc(s.license)}</span>`;
       }
       const card = document.createElement("div");
-      card.className = "source-card";
+      // green = local paper (no external link); red = web/external (opens in a new tab)
+      card.className = "source-card " + (st === "local_pdf" ? "local" : "web");
       card.id = "src-card-" + s.n;
       card.innerHTML = `
         <div class="sc-head"><span class="sc-n">${s.n}</span>${titleEl}</div>
