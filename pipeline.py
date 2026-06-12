@@ -160,10 +160,24 @@ def main() -> int:
                         help="Only process PDFs that changed since the last run.")
     parser.add_argument("--status", action="store_true",
                         help="Show what is currently indexed and exit (no rebuild).")
+    parser.add_argument("--corpus-report", action="store_true",
+                        help="Write a corpus coverage report (papers, chunks, topics, gaps) and exit.")
+    parser.add_argument("--inspect-chunks", nargs="?", const="", metavar="PAPER_ID",
+                        help="List papers + chunk counts, or dump one paper's chunks. No rebuild.")
     args = parser.parse_args()
 
     if args.status:
         return show_status()
+
+    if args.corpus_report:
+        from backend.evaluation.corpus_report import run_report
+        run_report()
+        return 0
+
+    if args.inspect_chunks is not None:
+        from backend.evaluation.corpus_report import inspect
+        inspect(int(args.inspect_chunks) if str(args.inspect_chunks).strip() else None)
+        return 0
 
     if not preflight(args.incremental):
         return 1
