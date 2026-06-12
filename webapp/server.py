@@ -94,6 +94,21 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 
+@app.on_event("startup")
+def _warmup_models() -> None:
+    """Pre-warm the GPU retrieval models (reranker + embeddings) in a background thread so the
+    first chat doesn't pay model load + CUDA init. Only when local RAG is on; never blocks startup."""
+    try:
+        from webapp import chat_logic
+        if not chat_logic.local_rag_enabled():
+            return
+        import threading
+        from backend.retrieval.hybrid_retrieve import warmup
+        threading.Thread(target=warmup, daemon=True, name="retrieval-warmup").start()
+    except Exception:
+        pass
+
+
 def _require_owner(request: Request, session_id: str) -> None:
     """Ensure the current user owns this conversation (404 if missing, 403 if not theirs)."""
     owner = chat_logic.memory().session_owner(session_id)

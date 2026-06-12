@@ -103,6 +103,9 @@ def connect():
     )
 
 
+RERANKER_FP16 = os.getenv("RERANKER_FP16", "true").lower() == "true"
+
+
 def get_reranker():
     global _reranker
     if _reranker is None:
@@ -110,7 +113,35 @@ def get_reranker():
         device = resolve_device("RERANKER_DEVICE")
         debug_print("Loading reranker:", RERANKER_MODEL, "on", device)
         _reranker = CrossEncoder(RERANKER_MODEL, device=device)
+        # Half precision on CUDA: ~2x faster + half the VRAM (fits the 6 GB 3050 comfortably).
+        # Safe for reranking — it only changes relative ordering, not an indexed embedding.
+        if RERANKER_FP16 and str(device).startswith("cuda"):
+            try:
+                _reranker.model.half()
+                logger.info("reranker: %s on %s (fp16)", RERANKER_MODEL, device)
+            except Exception as exc:
+                logger.info("reranker: %s on %s (fp32; fp16 failed: %s)", RERANKER_MODEL, device, exc)
+        else:
+            logger.info("reranker: %s on %s", RERANKER_MODEL, device)
     return _reranker
+
+
+def warmup() -> None:
+    """Pre-load the reranker + embedding model (+ a tiny inference) so the FIRST real query
+    doesn't pay model load + CUDA init (~10-15s on the GPU). Best-effort; safe at startup."""
+    try:
+        from backend.common.device import resolve_device
+        t = time.time()
+        get_reranker().predict([("warmup query", "warmup document about speech and signals")])
+        try:
+            from backend.retrieval.vector_retriever import embed_query
+            embed_query("warmup")
+        except Exception:
+            pass
+        logger.info("retrieval warmup done in %.1fs (reranker device=%s, embed device=%s)",
+                    time.time() - t, resolve_device("RERANKER_DEVICE"), resolve_device("EMBEDDING_DEVICE"))
+    except Exception as exc:
+        logger.info("retrieval warmup skipped: %s", exc)
 
 
 def tokenize(text: str):
