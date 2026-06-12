@@ -35,9 +35,6 @@ oracledb==4.0.0
 # --- Optional compressed local vector accelerator (VECTOR_BACKEND=turbovec) ---
 turbovec==0.7.0
 
-# --- Optional Memgraph GraphRAG layer (Bolt client; only used when ENABLE_GRAPH_RAG=true) ---
-neo4j==6.2.0
-
 # --- PDF reading / parsing ---
 docling==2.93.0          # primary parser (best quality: layout, tables, structure)
 PyMuPDF==1.27.2.3        # fast fallback parser
@@ -46,34 +43,12 @@ pypdf==6.11.0
 # --- Chat model client (openai SDK powers OpenRouter; Ollama uses HTTP/requests) ---
 openai==1.109.1
 
-# --- Agent orchestration (optional: RESEARCH_ENGINE=langgraph) ---
-# Powers backend/agent/langgraph_research.py. The app falls back to the built-in
-# research loop if this isn't installed, so it's safe to omit for a minimal setup.
-langgraph==1.2.4
-
-# --- Distributed multi-agent execution (optional; all OFF by default) ---
-# graph.py checkpoints (SqliteSaver). celery+redis power the optional task queue
-# (QUEUE_ENABLED=true); without them the app runs the agent in-process. Worker:
-#   celery -A backend.agent.celery_app worker --pool=solo
-langgraph-checkpoint-sqlite==3.1.0
-celery==5.6.3
-redis==8.0.0
-
 # --- Google Gemini (embeddings: EMBEDDING_PROVIDER=google) ---
 google-genai==1.75.0
 
 # --- HTTP + external search (Ollama calls, web/GitHub/PDF retrieval) ---
 requests==2.34.1
-beautifulsoup4==4.14.3    # readable-text extraction for web pages (external search; also the
-                          # automatic fallback when Crawl4AI is off/missing — see below)
-
-# OPTIONAL: Crawl4AI page extraction (EXTERNAL_USE_CRAWL4AI=true). Renders JS in a headless
-# browser and returns BM25-filtered markdown keyed to the query. Install SEPARATELY (heavy):
-#   pip install crawl4ai==0.8.9  &&  python -m playwright install chromium   # or: crawl4ai-setup
-# NOTE: crawl4ai pulls a litellm fork that wants openai>=2.8; this project pins openai==1.109.1.
-# That conflict is benign here — we use only Crawl4AI's browser + BM25 markdown, never its LLM
-# features — so keep openai==1.109.1. If Crawl4AI is absent, fetch_page_text falls back to bs4.
-# crawl4ai==0.8.9
+beautifulsoup4==4.14.3    # readable-text extraction for web pages (external search)
 
 # --- Misc utilities ---
 tqdm==4.67.3

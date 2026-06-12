@@ -227,18 +227,6 @@ def research(
     if not question:
         return ResearchReport(question="", report="", error="No question given.")
 
-    # Optional: orchestrate the same pipeline with LangGraph (RESEARCH_ENGINE=langgraph).
-    if (os.getenv("RESEARCH_ENGINE", "").strip().lower() == "langgraph"):
-        try:
-            from backend.agent.langgraph_research import run as _lg_run, langgraph_available
-            if langgraph_available():
-                return _lg_run(question, max_rounds=max_rounds,
-                               per_query_results=per_query_results, on_event=on_event)
-            _emit(on_event, {"type": "warning",
-                             "message": "RESEARCH_ENGINE=langgraph but langgraph is not installed; using the built-in engine."})
-        except Exception as exc:  # never let the optional engine break research
-            _emit(on_event, {"type": "warning", "message": f"LangGraph engine unavailable ({exc}); using built-in."})
-
     provider = get_provider()
     if not provider.is_available:
         return ResearchReport(question=question, report="",

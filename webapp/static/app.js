@@ -914,17 +914,7 @@
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: text, session_id: state.currentId }), signal: controller.signal,
       });
-      // Queued mode returns JSON {task_id}; open its NDJSON stream. Otherwise the POST
-      // response IS the NDJSON stream (in-process fallback, unchanged from before).
-      let streamResp = resp;
-      if ((resp.headers.get("content-type") || "").includes("application/json")) {
-        const info = await resp.json().catch(() => ({}));
-        if (info.task_id) {
-          streamResp = await fetch(`/api/agent/${encodeURIComponent(info.task_id)}/stream`,
-            { signal: controller.signal });
-        }
-      }
-      const reader = streamResp.body.getReader();
+      const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
       while (true) {

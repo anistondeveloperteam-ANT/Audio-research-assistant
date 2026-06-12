@@ -11,6 +11,23 @@ companion to the git history.
 
 ---
 
+## 2026-06-12
+
+### Lean the stack — remove unused optional systems (production cleanup)
+- Compared every optional vs. working tool against the actual `.env` and kept only what's used
+  and best‑in‑class. **Removed completely** (code, deps, flags, tests, docs): **Crawl4AI** page
+  extraction (pulled a litellm fork that conflicted with the pinned `openai==1.109.1`; reverted
+  to the clean BeautifulSoup path), **Memgraph GraphRAG** (`backend/graph_rag/` + `neo4j`),
+  **`langgraph_research.py`** (duplicated the built‑in research loop), and **PHASE 3** — the
+  LangGraph multi‑agent graph + Celery/Redis queue (`graph.py`/`celery_app.py`/`task_channel.py`,
+  the `/api/agent/{id}/stream` endpoint, the two‑path frontend). The in‑process `loop.py` agent
+  is the single agent path again.
+- Dropped deps: `crawl4ai · neo4j · redis · celery · langgraph · langgraph-checkpoint-sqlite`
+  (+ orphans). **`pip check` is now clean** (the openai/litellm conflict is gone). Renumbered
+  `.env.example` to 14 contiguous sections. **Kept** the off‑by‑default, zero‑overhead production
+  assets: Langfuse tracing + DeepEval gates. Tests: 194 → **169 passing** (removed 6 obsolete
+  test files); `pyflakes` clean.
+
 ## 2026-06-11
 
 ### Fix chats disappearing across reopens

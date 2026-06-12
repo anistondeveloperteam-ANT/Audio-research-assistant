@@ -2,7 +2,7 @@
 
 The complete, deep reference for **what this project uses and how every piece fits together** —
 the tech stack, every module, and each pipeline (chat, retrieval, ingestion, the coding agent,
-external search, evaluation, observability, GPU, and the optional distributed layer).
+external search, evaluation, observability, and GPU).
 
 > Plain‑English overview: see the [README](../README.md). This doc is the engineering map.
 
@@ -16,7 +16,7 @@ flowchart TB
       B[index.html · app.js · styles.css]
     end
     subgraph API["webapp/ — FastAPI + Uvicorn"]
-      S[server.py<br/>routes · auth · SSE/NDJSON]
+      S[server.py<br/>routes · auth · NDJSON]
       CL[chat_logic.py<br/>chat orchestration]
     end
     subgraph CORE["backend/ — the engine"]
@@ -24,22 +24,21 @@ flowchart TB
       EXT[external_search/<br/>web · papers · GitHub]
       LLM[llm/<br/>OpenAI-compatible router]
       ANS[answering/<br/>verify · review · cite · modes]
-      AG[agent/<br/>code agent + LangGraph]
+      AG[agent/<br/>code agent + Docker sandbox]
       ING[ingestion/<br/>PDF → chunks → vectors]
       MEM[memory/<br/>sessions · cache]
       OBS[observability/<br/>Langfuse tracing]
     end
     subgraph DATA["Data & models"]
       ORA[(Oracle 23ai<br/>vectors)]
-      SQL[(SQLite<br/>cache · chats · auth · checkpoints)]
+      SQL[(SQLite<br/>cache · chats · auth)]
       TV[(turbovec<br/>compressed vectors)]
-      MG[(Memgraph<br/>GraphRAG · optional)]
-      GPU[/NVIDIA GPU<br/>reranker + embeddings/]
+      GPU[/NVIDIA GPU<br/>cross-encoder reranker/]
     end
     B <-->|HTTP + NDJSON stream| S --> CL
     CL --> RET & EXT & LLM & ANS & MEM & OBS
     AG --> LLM
-    RET --> ORA & TV & MG & GPU
+    RET --> ORA & TV & GPU
     ING --> ORA & TV
     MEM --> SQL
     EXT -->|cloud APIs| Web((Internet))
@@ -47,9 +46,9 @@ flowchart TB
 ```
 
 **Design principles**
-- **Reuse, don't rewrite.** Every optional/advanced layer wraps proven functions; the core paths are untouched when flags are off.
-- **Optional + fallback‑safe.** Oracle off → web‑only; Memgraph down → no graph hits; Redis down → in‑process; GPU absent → CPU; Crawl4AI absent → BeautifulSoup. Nothing hard‑fails.
-- **Flags default OFF** for all heavy/experimental infra (observability, queue, multi‑agent graph).
+- **Reuse, don't rewrite.** Optional layers wrap proven functions; core paths are untouched when flags are off.
+- **Optional + fallback‑safe.** Oracle off → web‑only; GPU absent → CPU; web search fails → local evidence still answers. Nothing hard‑fails.
+- **Lean dependency tree.** One vector path, one page extractor, one agent loop — no parallel "alternative" stacks. `pip check` is clean.
 
 ---
 
@@ -64,25 +63,20 @@ flowchart TB
 | **Frontend** | vanilla HTML / CSS / JS | — | **no build step, no framework**; NDJSON stream via `fetch` + `ReadableStream` |
 | | marked.js · highlight.js · KaTeX | CDN | markdown · code highlight · math |
 | **Numerics** | NumPy / SciPy / pandas | 2.3.5 / 1.17.1 / 3.0.3 | vectors, scoring, data |
-| **Embeddings / rerank** | sentence‑transformers | 5.5.0 | local embedder + cross‑encoder reranker |
+| **Reranker / embeddings** | sentence‑transformers | 5.5.0 | cross‑encoder reranker (+ local embedder option) |
 | | transformers | 4.57.6 | model backbone |
-| | **PyTorch (CUDA)** | 2.7.1+cu126 | **GPU inference** (reranker + embeddings, fp16) |
+| | **PyTorch (CUDA)** | 2.7.1+cu126 | **GPU inference** for the reranker (fp16) |
+| **Embeddings (default)** | google‑genai | 1.75.0 | Gemini query/doc embeddings (`EMBEDDING_PROVIDER=google`) |
 | **Vector DB** | Oracle 23ai (`oracledb`) | 4.0.0 | `VECTOR` columns + `VECTOR_DISTANCE` search |
-| | **turbovec** | 0.7.0 | optional compressed (4‑bit) local vector index |
-| **Graph (optional)** | Memgraph via `neo4j` Bolt | 6.2.0 | GraphRAG concept/section expansion |
+| | **turbovec** | 0.7.0 | compressed (4‑bit) local vector index (`VECTOR_BACKEND=turbovec`) |
 | **PDF parsing** | docling · PyMuPDF · pypdf | 2.93 / 1.27 / 6.11 | layout/table‑aware parse + fast fallback |
 | **LLM client** | openai SDK | 1.109.1 | OpenAI‑compatible streaming (Gemini/Mistral/GPT/Ollama) |
-| **Embeddings (cloud)** | google‑genai | 1.75.0 | optional Gemini embeddings |
-| **Agent graphs** | LangGraph | 1.2.4 | research + multi‑agent code `StateGraph` |
-| | langgraph‑checkpoint‑sqlite | 3.1.0 | persistent graph checkpoints (resume) |
 | **Sandbox** | Docker | host | network‑isolated code execution |
 | **HTTP / scraping** | requests · beautifulsoup4 | 2.34 / 4.14 | external fetch + readable‑text extraction |
-| | **Crawl4AI** (optional) | 0.8.9 | JS‑rendered, BM25‑filtered markdown |
-| **Memory** | SQLite (stdlib) | — | answer cache · chats · auth · checkpoints (WAL) |
+| **Memory** | SQLite (stdlib) | — | answer cache · chats · auth (WAL) |
 | **Observability** (optional) | Langfuse (OpenTelemetry) | 4.7.1 | per‑stage traces; `protobuf` pinned 5.29.5 |
 | **Eval** (dev/test) | DeepEval · Ragas‑style metrics | 4.0.6 | faithfulness / relevancy / citation validity |
-| **Queue** (optional) | Celery + Redis | 5.6.3 / 8.0.0 | distributed agent execution |
-| **Tests / lint** | pytest · pyflakes · vulture | 9.0 / 3.4 / 2.16 | 194 tests, offline/mocked |
+| **Tests / lint** | pytest · pyflakes · vulture | 9.0 / 3.4 / 2.16 | 169 tests, offline/mocked |
 
 ---
 
@@ -92,13 +86,12 @@ flowchart TB
 backend/
 ├── llm/            streaming_provider.py    → OpenAI-compatible router (PROVIDERS + CATALOG)
 ├── retrieval/      hybrid_retrieve.py       → the retrieval pipeline (orchestrator)
-│                   vector_retriever.py      → Oracle VECTOR_DISTANCE + local/Gemini embed (GPU)
+│                   vector_retriever.py      → Oracle VECTOR_DISTANCE + Gemini/local embed
 │                   retrieval_fusion.py      → field-weighted BM25 · RRF · MMR
 │                   hyde_generator.py        → HyDE query expansion (template-based, no LLM)
 │                   turbovec_index.py        → compressed 4-bit vector backend
 ├── external_search/ orchestrator.py         → parallel channels + shared timeout + rerank
-│                   web_search.py            → providers (DuckDuckGo/Tavily/Brave/SerpAPI) + page text
-│                   crawl.py                 → Crawl4AI adapter (optional, fallback-safe)
+│                   web_search.py            → providers (DuckDuckGo/Tavily/Brave/SerpAPI) + page text (bs4)
 │                   scholar_search.py        → arXiv · Semantic Scholar · Wikipedia · patents
 │                   github_search.py         → repos + code (stars-first)
 │                   pdf_reader.py            → read online PDFs
@@ -106,38 +99,33 @@ backend/
 │                   base.py                  → safe_get · is_safe_url · cached · timeouts/caps
 ├── answering/      agentic_answer.py        → draft → verify → refine loop + sandbox sim
 │                   reviewer.py              → automatic peer review + relevance gate
-│                   citations.py             → [n] validation/repair  (NEW)
-│                   research_modes.py        → fast/deep run profiles   (NEW)
+│                   citations.py             → [n] validation/repair
+│                   research_modes.py        → fast/deep run profiles
 │                   query_sanity.py          → reject junk queries
 ├── agent/          loop.py                  → code agent: THINK → EXECUTE → REFLECT
 │                   code_runner.py           → Docker sandbox runner (network-off, capped)
 │                   hooks.py                 → pre-run audit/allow-block gate
 │                   memory.py                → two-tier constant-size agent memory
-│                   graph.py                 → LangGraph multi-agent pipeline  (NEW, optional)
-│                   celery_app.py            → distributed queue task          (NEW, optional)
-│                   task_channel.py          → Redis/in-proc event bus         (NEW, optional)
-│                   research_agent.py        → deep-research loop
-│                   langgraph_research.py    → research as a LangGraph StateGraph
+│                   research_agent.py        → deep-research loop (plan → search → reflect → report)
 ├── ingestion/      ingest_papers.py         → PDF → parse → chunk → DB
 │                   pdf_parser.py            → docling/PyMuPDF parse + tables/equations
 │                   document_chunker.py      → section/sentence/figure/algorithm chunking
-│                   embed_chunks.py          → embed chunks (GPU/Gemini)
+│                   embed_chunks.py          → embed chunks (Gemini/local)
 │                   incremental_index.py     → only changed PDFs
 │                   ocr_fallback.py          → OCR for image-only PDFs
 ├── database/       create_schema.py · vector_migration.py · db_status.py · reset_*.py
-├── graph_rag/      build_graph.py · retrieve_graph.py · fusion.py · memgraph_client.py
 ├── memory/         store.py                 → SQLite: sessions/turns/facts + answer_cache (WAL)
-├── common/         embeddings.py            → provider dispatch (local bge / Gemini)
+├── common/         embeddings.py            → provider dispatch (Gemini / local bge)
 │                   device.py                → resolve_device (cuda/cpu/auto)
-├── observability/  tracing.py               → Langfuse adapter (no-op when off)  (NEW)
+├── observability/  tracing.py               → Langfuse adapter (no-op when off)
 ├── evaluation/     evaluate_retrieval.py    → recall/latency report (json+md)
 │                   evaluate_llm.py          → coverage · citation validity · judge
-│                   corpus_report.py         → coverage/gaps report               (NEW)
+│                   corpus_report.py         → coverage/gaps report
 ├── auth/           users.py · google_oauth.py · mailer.py
 └── config.py
 
 webapp/
-├── server.py       FastAPI app · routes · auth gate · SSE/NDJSON · GPU warmup (lifespan)
+├── server.py       FastAPI app · routes · auth gate · NDJSON · GPU warmup (lifespan)
 ├── chat_logic.py   chat orchestration (the 10-stage pipeline)
 ├── settings.py     model catalog + selection
 ├── auth.py         session/login glue
@@ -205,20 +193,18 @@ flowchart LR
 flowchart LR
     Q[query] --> P
     subgraph P["CONCURRENT (thread pool)"]
-      VO[vector: original<br/>Oracle VECTOR_DISTANCE]
+      VO[vector: original<br/>VECTOR_DISTANCE]
       VH[vector: HyDE-expanded]
       BM[field-weighted BM25]
     end
-    P --> RRF[Reciprocal Rank Fusion<br/>k=60] --> G{Memgraph<br/>expansion?}
-    G --> RR[cross-encoder rerank<br/>bge-reranker-v2-m3 · GPU fp16] --> CB[chunk-type boost] --> MMR[MMR diversify<br/>λ=0.7 · per-paper cap] --> R[top-k]
+    P --> RRF[Reciprocal Rank Fusion<br/>k=60] --> RR[cross-encoder rerank<br/>bge-reranker-v2-m3 · GPU fp16] --> CB[chunk-type boost] --> MMR[MMR diversify<br/>λ=0.7 · per-paper cap] --> R[top-k]
 ```
 
 - **3 independent rankings run concurrently** (thread‑safe embed lock), then **RRF** fuses them — fusion order preserved, so results are identical to sequential; only wall‑clock improves.
 - **HyDE** (`hyde_generator.py`) expands the query into a hypothetical passage *without an LLM* (template + lexicon), then embeds it — a second recall angle.
 - **Cross‑encoder rerank** (`BAAI/bge-reranker-v2-m3`) on **GPU in fp16** (`RERANKER_FP16`) — ~0.5s vs 5–37s on CPU. Pre‑warmed at startup (`hybrid_retrieve.warmup`).
 - **MMR** diversifies + caps sources per paper; **chunk‑type boost** nudges equations/algorithms for matching intents.
-- **Vector backend** is Oracle by default; `VECTOR_BACKEND=turbovec` uses a compressed 4‑bit local index (`turbovec_index.py`) with overfetch + exact re‑rank.
-- **GraphRAG** (optional, `ENABLE_GRAPH_RAG`): seed the fused IDs into Memgraph and pull concept/section‑adjacent chunks (`graph_rag/`).
+- **Vector backend:** `VECTOR_BACKEND=turbovec` uses a compressed 4‑bit local index (`turbovec_index.py`) with overfetch + exact re‑rank; `oracle` uses Oracle's `VECTOR_DISTANCE` directly.
 
 ---
 
@@ -228,9 +214,9 @@ flowchart LR
 flowchart LR
     PDF[data/papers/*.pdf] --> PARSE[pdf_parser<br/>docling → PyMuPDF → OCR fallback]
     PARSE --> CHUNK[document_chunker<br/>section · sentence · figure · algorithm]
-    CHUNK --> EMB[embed_chunks<br/>local bge / Gemini · GPU]
+    CHUNK --> EMB[embed_chunks<br/>Gemini / local]
     EMB --> ORA[(Oracle: papers + chunks + VECTOR)]
-    ORA --> TVB[turbovec build<br/>optional compressed index]
+    ORA --> TVB[turbovec build<br/>compressed index]
 ```
 
 - **Chunking** is structure‑aware: canonical sections, sentence packing (`CHUNK_MAX_CHARS`, overlap), separate chunks for **figure captions** and **algorithm blocks**, plus `chunk_type` (`equation`/`algorithm`/`table`/`text`) and concept tags.
@@ -242,7 +228,7 @@ flowchart LR
 
 ## 7. External search — `backend/external_search/orchestrator.py`
 
-Seven channels fetched **in parallel** with a **shared timeout**; slow channels return partial results (never block the gather), then everything is de‑duped and cross‑encoder re‑ranked.
+Channels fetched **in parallel** with a **shared timeout**; slow channels return partial results (never block the gather), then everything is de‑duped and cross‑encoder re‑ranked.
 
 | Channel | Source | Key/free |
 |---|---|---|
@@ -252,8 +238,8 @@ Seven channels fetched **in parallel** with a **shared timeout**; slow channels 
 | GitHub | repos + code (stars‑first) | free (token raises limits) |
 | online PDFs | read PDFs surfaced by web/arXiv | free |
 
-- **Page extraction:** Crawl4AI (JS‑rendered, BM25‑filtered **markdown** keyed to the query) when `EXTERNAL_USE_CRAWL4AI=true` and installed; **automatic BeautifulSoup fallback** otherwise.
-- **Safety:** `base.py` enforces timeouts (`EXTERNAL_HTTP_TIMEOUT`), a 3 MB cap, retries, and disk caching. `is_safe_url` validates scheme/host (SSRF guard intentionally permissive by owner choice).
+- **Page extraction:** `fetch_page_text` downloads the page and extracts the main readable text with **BeautifulSoup** (boilerplate stripped).
+- **Safety:** `base.py` enforces timeouts (`EXTERNAL_HTTP_TIMEOUT`), a 3 MB cap, retries, and disk caching. `safe_get`/`is_safe_url` validate scheme/host (SSRF guard intentionally permissive by owner choice).
 
 ---
 
@@ -272,11 +258,10 @@ A single **OpenAI‑compatible** router. `PROVIDERS` + `CATALOG` map model names
 
 ---
 
-## 9. The coding agent
+## 9. The coding agent — `backend/agent/loop.py`
 
-**Two implementations**, both wrapping the same sandbox + reviewer:
+When a question needs a program, the agent **runs** it (it doesn't just print code):
 
-**A. Hand‑rolled loop — `backend/agent/loop.py`** (default for `/api/agent`)
 ```mermaid
 flowchart LR
     T[THINK<br/>_generate_code] --> H{pre_run<br/>policy gate} --> X[EXECUTE<br/>run_python in Docker] --> RF[REFLECT<br/>_reflect: relevant? correct? done?]
@@ -284,19 +269,10 @@ flowchart LR
     RF -- done / max iters --> BEST[best attempt → peer review → final]
 ```
 
-**B. LangGraph multi‑agent — `backend/agent/graph.py`** (opt‑in `AGENT_GRAPH_ENABLED`)
-```
-planner → {fetcher_local ‖ fetcher_external} → coder → sandbox_runner
-        → verifier (relevance ‖ citation ‖ code-run, concurrent) → grader
-grader: score<MIN & round<MAX → back to planner ; else END
-```
-- Persistent **SqliteSaver** checkpoints (`data/agent_checkpoints.db`, WAL) → resumable; `CHECKPOINT_BACKEND` switch.
-- Per‑task **budgets**: `AGENTIC_MAX_VERIFY_ROUNDS`, `MAX_TOKENS_PER_TASK`, per‑node timeout.
-- Falls back to loop.py if LangGraph is unavailable.
-
-**The Docker sandbox — `backend/agent/code_runner.py`** (never weakened): `--network none`, capped `--memory`/`--cpus`/`--pids-limit`, hard timeout, non‑root, auto‑removed; a scientific image (numpy/scipy/pandas/sklearn/sympy/…) is built on first run.
-
-**Distributed (optional, `QUEUE_ENABLED`):** `/api/agent` enqueues to a **Celery/Redis** worker and returns a `task_id`; `/api/agent/{id}/stream` drains events from a Redis list (`task_channel.py`). If Redis is down → automatic in‑process streaming. Worker: `celery -A backend.agent.celery_app worker --pool=solo`.
+- **Streamed** to the UI as think → write → run → check cards; saved with the chat.
+- **Constant‑size memory** (`memory.py`): a two‑tier scheme keeps the prompt bounded across iterations.
+- **The Docker sandbox** (`code_runner.py`, never weakened): `--network none`, capped `--memory`/`--cpus`/`--pids-limit`, hard timeout, non‑root, auto‑removed; a scientific image (numpy/scipy/pandas/sklearn/sympy/…) is built on first run.
+- `/api/agent` streams the run in‑process (NDJSON); `/api/research` runs the deep‑research loop (`research_agent.py`: plan → search everywhere → reflect → report).
 
 ---
 
@@ -305,12 +281,10 @@ grader: score<MIN & round<MAX → back to planner ; else END
 | Store | Tech | Holds |
 |---|---|---|
 | **Oracle 23ai** (`FREEPDB1`) | `oracledb` | `papers`, `chunks` (+ `VECTOR` column) — the searchable corpus |
-| **turbovec** | `data/vector_cache/chunks.tvim` | optional compressed (4‑bit) vector index |
+| **turbovec** | `data/vector_cache/chunks.tvim` | compressed (4‑bit) vector index (default backend) |
 | **conversations.db** | SQLite WAL | sessions · turns · facts (chat history) |
 | **memory.db** | SQLite WAL | `answer_cache` (lexical + semantic reuse) |
 | **auth store** | SQLite | users / sessions (login) |
-| **agent_checkpoints.db** | SQLite WAL | LangGraph checkpoints |
-| **Memgraph** (optional) | Bolt / `neo4j` | GraphRAG concept graph |
 | **data/external_cache/** | disk | external fetch cache (`EXTERNAL_CACHE_TTL`) |
 
 `backend/memory/store.py` is the single SQLite interface; conversations are split from the cache via an ATTACH‑based one‑time migration (never deletes the old file).
@@ -328,8 +302,8 @@ grader: score<MIN & round<MAX → back to planner ; else END
 
 ## 12. GPU acceleration
 
-- `backend/common/device.py :: resolve_device` → `cuda` when available (`DEVICE`/`EMBEDDING_DEVICE`/`RERANKER_DEVICE=auto`).
-- **Reranker** (`bge-reranker-v2-m3`) and **local embedder** (`bge-base-en-v1.5`) load on the GPU; reranker runs **fp16** (`RERANKER_FP16`) — ~2× faster, half VRAM (~1.5 GB total, fits a 6 GB card).
+- `backend/common/device.py :: resolve_device` → `cuda` when available (`DEVICE`/`RERANKER_DEVICE`/`EMBEDDING_DEVICE=auto`).
+- **Reranker** (`bge-reranker-v2-m3`) loads on the GPU in **fp16** (`RERANKER_FP16`) — ~2× faster, half VRAM (~1.5 GB, fits a 6 GB card). Embeddings are **Gemini** by default (API); set `EMBEDDING_PROVIDER=local` to run a local `bge` embedder on the GPU too (requires a matching re‑index).
 - **Startup pre‑warm** (`hybrid_retrieve.warmup`, FastAPI `lifespan`, background thread) pays the ~14 s model load + CUDA init **once**, so the first user query is fast.
 - Measured: retrieval **p50 ~10 s → ~3.2 s**, **p95 ~19.5 s → ~4.1 s** (the CPU reranker's 5–37 s variance is gone). CPU fallback is automatic.
 
@@ -337,7 +311,7 @@ grader: score<MIN & round<MAX → back to planner ; else END
 
 ## 13. Observability & evaluation
 
-- **Langfuse tracing** (`observability/tracing.py`, off by default): one trace per chat + per agent run; spans for every stage with duration, success, counts, scores, verify rounds, and token‑cost estimate. **No‑op + zero overhead** when `LANGFUSE_ENABLED=false`; never blocks the chat. (`docs/OBSERVABILITY.md`.)
+- **Langfuse tracing** (`observability/tracing.py`, off by default): one trace per chat + per agent run; spans for every stage with duration, success, counts, scores, verify rounds, and a token‑cost estimate. **No‑op + zero overhead** when `LANGFUSE_ENABLED=false`; never blocks the chat. (`docs/OBSERVABILITY.md`.)
 - **Evaluation** (`backend/evaluation/`):
   - `evaluate_retrieval` → term‑recall, recall@k, MRR, nDCG, latency (p50/p95) → JSON **+ markdown** report.
   - `evaluate_llm` → answer coverage, **citation validity**, optional LLM‑judge.
@@ -352,7 +326,7 @@ grader: score<MIN & round<MAX → back to planner ; else END
 
 ---
 
-## 15. Configuration map (`.env.example`, 16 sections)
+## 15. Configuration map (`.env.example`, 14 sections)
 
 | § | Area | Notable flags |
 |---|---|---|
@@ -363,15 +337,13 @@ grader: score<MIN & round<MAX → back to planner ; else END
 | 05 | Embeddings / rerank | `EMBEDDING_PROVIDER` · `EMBEDDING_MODEL` · `RERANKER_MODEL` |
 | 06 | External search | `ENABLE_WEB_SEARCH` · `WEB_SEARCH_PROVIDER` · keys |
 | 07 | Answer quality | `AGENTIC_MAX_VERIFY_ROUNDS` · `AGENTIC_MIN_VERIFY_SCORE` · `AUTO_REVIEW` · cache |
-| 08 | Search limits | `EXTERNAL_HTTP_TIMEOUT` · `EXTERNAL_USE_CRAWL4AI` · per‑channel caps |
+| 08 | Search limits | `EXTERNAL_HTTP_TIMEOUT` · per‑channel caps |
 | 09 | Code agent | `AGENT_MAX_ITERS` · sandbox `AGENT_MEM_LIMIT`/`CPUS`/`RUN_TIMEOUT` |
-| 10 | GraphRAG | `ENABLE_GRAPH_RAG` · `MEMGRAPH_*` |
-| 11 | Device / GPU | `DEVICE` · `EMBEDDING_DEVICE` · `RERANKER_DEVICE` · `RERANKER_FP16` |
-| 12 | Ingestion | `ENABLE_OCR` · `CHUNK_MAX_CHARS` |
-| 13 | Retrieval knobs | `RRF_K` · `MMR_LAMBDA` · `ENABLE_HYDE` |
-| 14 | Sharing | `CLOUDFLARE_TUNNEL_*` |
-| 15 | Observability/eval | `LANGFUSE_ENABLED` · `DEEPEVAL_ENABLED` |
-| 16 | Distributed | `AGENT_GRAPH_ENABLED` · `QUEUE_ENABLED` · `REDIS_URL` · `CHECKPOINT_BACKEND` |
+| 10 | Device / GPU | `DEVICE` · `EMBEDDING_DEVICE` · `RERANKER_DEVICE` · `RERANKER_FP16` |
+| 11 | Ingestion | `ENABLE_OCR` · `CHUNK_MAX_CHARS` |
+| 12 | Retrieval knobs | `RRF_K` · `MMR_LAMBDA` · `ENABLE_HYDE` |
+| 13 | Sharing | `CLOUDFLARE_TUNNEL_*` |
+| 14 | Observability/eval | `LANGFUSE_ENABLED` · `DEEPEVAL_ENABLED` |
 
 > **Run modes override** §07/§08 knobs per request (fast/deep); the values in `.env` are the fallback defaults for CLI/eval entry points.
 
@@ -382,14 +354,10 @@ grader: score<MIN & round<MAX → back to planner ; else END
 | Optional system | Flag | Default | Fallback when off/unavailable |
 |---|---|---|---|
 | Local PDF RAG | `ENABLE_LOCAL_RAG` | off | web‑only |
-| turbovec | `VECTOR_BACKEND=turbovec` | Oracle | Oracle vectors |
-| GraphRAG | `ENABLE_GRAPH_RAG` | off | no graph hits |
-| Crawl4AI | `EXTERNAL_USE_CRAWL4AI` | on* | BeautifulSoup (*if installed) |
+| turbovec | `VECTOR_BACKEND` | `turbovec` | Oracle vectors |
 | GPU | `DEVICE=auto` | auto | CPU |
 | Langfuse | `LANGFUSE_ENABLED` | off | no‑op |
 | DeepEval gates | `DEEPEVAL_ENABLED` | off | tests skip |
-| Multi‑agent graph | `AGENT_GRAPH_ENABLED` | off | hand‑rolled loop |
-| Distributed queue | `QUEUE_ENABLED` | off | in‑process streaming |
 | OCR | `ENABLE_OCR` | on | digital‑text parse only |
 
 ---
@@ -399,7 +367,7 @@ grader: score<MIN & round<MAX → back to planner ; else END
 1. `POST /api/chat` `{question, mode:"deep", …}` → auth gate → `stream_chat_events`.
 2. `apply_research_mode("deep")` sets live knobs; `query_sanity` checks the question.
 3. `cache_check`: semantic/lexical reuse — if hit, stream and stop.
-4. `_deep_queries` plans 3 angles; per angle, `local_rag` ‖ `external_search` run concurrently (Oracle+GPU rerank ‖ 7 web channels, capped).
+4. `_deep_queries` plans 3 angles; per angle, `local_rag` ‖ `external_search` run concurrently (turbovec + GPU rerank ‖ web channels, capped).
 5. `source_selection` numbers sources; `prompt_build` builds the bounded, cited evidence block.
 6. `llm_stream` drafts a grounded answer; `code_simulation` runs any Python in Docker.
 7. `agentic_verify` scores it vs the evidence; below `MIN` → search more + refine (≤ rounds).

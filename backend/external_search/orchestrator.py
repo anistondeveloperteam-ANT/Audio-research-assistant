@@ -64,7 +64,7 @@ def _web_channel(query: str, max_results: int, warnings: List[str]) -> Tuple[Lis
             continue
         if not (s.text or "").strip():
             try:
-                page = fetch_page_text(s.url, query=query)
+                page = fetch_page_text(s.url)
                 if page:
                     s.text = page
             except Exception:

@@ -10,7 +10,7 @@ Everything runs on your machine: a FastAPI backend, a dependency‑free HTML/JS 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-194%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-169%20passing-2ea44f)
 ![License](https://img.shields.io/badge/license-MIT-555)
 
 **[Quick start](#-quick-start-5-minutes) · [What you can ask](#-what-you-can-ask) · [Fast vs Deep](#-fast-vs-deep) · [Trust](#-why-you-can-trust-the-answers) · [Features](#-features) · [Config](#-configuration)**
@@ -98,7 +98,7 @@ flowchart LR
 <details>
 <summary><b>⚙️ GPU accelerated</b> — fast, consistent retrieval</summary>
 
-If you have an NVIDIA GPU (CUDA), the reranker and local embedding model run on it automatically (`DEVICE=auto`), in **fp16** for ~2× speed at half the VRAM — comfortable even on a 6 GB laptop card. Models are **pre‑warmed at startup**, so the first question isn't slow. No GPU? It falls back to CPU. On a GPU, retrieval is **~3× faster** with none of the CPU reranker's latency spikes.
+If you have an NVIDIA GPU (CUDA), the cross‑encoder reranker runs on it automatically (`DEVICE=auto`) in **fp16** for ~2× speed at half the VRAM — comfortable even on a 6 GB laptop card. It's **pre‑warmed at startup**, so the first question isn't slow. No GPU? It falls back to CPU. On a GPU, retrieval is **~3× faster** with none of the CPU reranker's latency spikes. (Embeddings use Gemini by default; set `EMBEDDING_PROVIDER=local` to run a local embedder on the GPU too.)
 </details>
 
 <details>
@@ -125,15 +125,6 @@ The container is locked down: **no network, capped CPU/memory, a hard timeout, n
 <summary><b>🔭 Observability &amp; quality gates</b> (optional)</summary>
 
 Turn on [Langfuse](https://langfuse.com) tracing to see latency, token cost, retrieval quality, and verification rounds per request (`LANGFUSE_ENABLED=true` — see [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)). Run the DeepEval quality gates (faithfulness / answer‑relevancy / context) with `DEEPEVAL_ENABLED=true`. Both are **off by default and zero‑overhead** when off.
-</details>
-
-<details>
-<summary><b>🕸️ Optional power‑ups</b> — multi‑agent graph, task queue, JS‑rendered web</summary>
-
-All flag‑gated and **off by default** (the app behaves exactly the same without them):
-- **Multi‑agent graph** — run the coding agent as an explicit LangGraph pipeline (`AGENT_GRAPH_ENABLED=true`) with persistent checkpoints.
-- **Distributed queue** — offload agent runs to a Celery/Redis worker (`QUEUE_ENABLED=true`); falls back to in‑process automatically if Redis is down.
-- **Crawl4AI extraction** — JS‑rendered, query‑filtered **markdown** for web pages (`EXTERNAL_USE_CRAWL4AI=true`); falls back to BeautifulSoup if absent.
 </details>
 
 ---
@@ -188,7 +179,7 @@ Keep `ENABLE_AUTH=true` so visitors must sign in.
 ## 🛠️ Development
 
 ```bash
-.venv\Scripts\python.exe -m pytest -q          # 194 passing, fully offline/mocked
+.venv\Scripts\python.exe -m pytest -q          # 169 passing, fully offline/mocked
 .venv\Scripts\pyflakes backend webapp          # lint
 python pipeline.py --status                    # what's indexed right now
 python pipeline.py --corpus-report             # coverage + gaps report
