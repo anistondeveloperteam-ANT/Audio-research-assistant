@@ -48,7 +48,7 @@ def main():
     # Pull metadata alongside the text so document embeddings can be enriched
     # (title / section / audio concepts) — improves retrieval matching.
     cur.execute("""
-        SELECT c.id, c.chunk_text, c.section_name, c.audio_concepts, p.title
+        SELECT c.id, c.chunk_text, c.context_text, c.section_name, c.audio_concepts, p.title
         FROM chunks c
         JOIN papers p ON p.id = c.paper_id
         WHERE c.embedding IS NULL
@@ -78,18 +78,22 @@ def main():
         texts = []
         for row in batch:
             text = _read(row[1])
+            context = _read(row[2]).strip()
+            # Contextual Retrieval: prepend the situating sentence to what we EMBED (better recall).
+            # The stored chunk_text shown to users is unchanged.
+            body = (context + "\n" + text) if context else text
             if enrich:
-                section = _read(row[2])
-                concepts_raw = _read(row[3])
+                section = _read(row[3])
+                concepts_raw = _read(row[4])
                 try:
                     concepts = json.loads(concepts_raw) if concepts_raw else None
                 except Exception:
                     concepts = concepts_raw or None
-                title = row[4]
+                title = row[5]
                 texts.append(format_retrieval_document(
-                    title=title, section=section, concepts=concepts, text=text))
+                    title=title, section=section, concepts=concepts, text=body))
             else:
-                texts.append(text)
+                texts.append(body)
 
         embeddings = embed_documents(texts)
 

@@ -98,6 +98,16 @@ def run_cmd(args: List[str], timeout: int = 7200) -> Tuple[bool, str]:
     return result.returncode == 0, output
 
 
+def contextual_flag() -> bool:
+    return os.getenv("CONTEXTUAL_CHUNKS", "true").strip().lower() == "true"
+
+
+def clear_index() -> Tuple[bool, str]:
+    """Wipe indexed papers/chunks so the next full ingest reprocesses every PDF. Used when the
+    Contextual Retrieval flag changes, since re-contextualizing requires re-parsing the PDFs."""
+    return run_cmd([sys.executable, "-m", "backend.database.reset_index", "--yes"])
+
+
 def run_full_pipeline() -> Tuple[bool, str, str | None]:
     logs: List[str] = []
     steps = [
@@ -131,6 +141,12 @@ def main() -> None:
     diff = diff_library(old_manifest, current)
     sig = library_signature(current)
 
+    # Contextual Retrieval: a toggle of CONTEXTUAL_CHUNKS forces a full rebuild (re-contextualize
+    # + re-embed). On the first run with no recorded flag we just record it (no surprise rebuild).
+    current_flag = contextual_flag()
+    recorded_flag = old_manifest.get("contextual_chunks")
+    flag_changed = recorded_flag is not None and bool(recorded_flag) != current_flag
+
     if args.status:
         print("PDF count:", len(current))
         print("Added:", diff["added"])
@@ -147,6 +163,7 @@ def main() -> None:
         f"Changed: {diff['changed']}",
         f"Deleted: {diff['deleted']}",
         f"Force: {args.force}",
+        f"Contextual flag: recorded={recorded_flag} current={current_flag} changed={flag_changed}",
     ]
 
     if not current:
@@ -164,11 +181,11 @@ def main() -> None:
         print("No PDFs found in data/papers.")
         raise SystemExit(1)
 
-    has_changes = bool(diff["added"] or diff["changed"] or diff["deleted"])
+    has_changes = bool(diff["added"] or diff["changed"] or diff["deleted"]) or flag_changed
 
     if not has_changes and not args.force:
         logs.append("")
-        logs.append("No new/changed/deleted PDFs detected. Skipping parse/embed/vector update.")
+        logs.append("No new/changed/deleted PDFs and no flag change. Skipping parse/embed/vector update.")
         logs.append("Fast path complete.")
         state = {
             "last_index_time": old_manifest.get("last_index_time") or now_iso(),
@@ -186,10 +203,22 @@ def main() -> None:
         }
         write_json(INDEX_STATE_FILE, state)
         LAST_INDEX_LOG.write_text("\n".join(logs), encoding="utf-8")
+        # Record the current contextual flag so a future toggle is detected next run.
+        write_json(MANIFEST_FILE, {
+            "last_index_time": old_manifest.get("last_index_time") or now_iso(),
+            "library_signature": sig, "files": current, "contextual_chunks": current_flag,
+        })
         print("FAST PATH: no PDF changes. Index already up to date.")
         print("PDF count:", len(current))
         print("Time:", state["seconds"], "sec")
         return
+
+    if flag_changed:
+        logs.append("")
+        logs.append(f"CONTEXTUAL_CHUNKS changed ({recorded_flag} -> {current_flag}); "
+                    "clearing the index for a full re-contextualize + re-embed.")
+        _, clear_log = clear_index()
+        logs.append(clear_log)
 
     ok, pipeline_log, failed_step = run_full_pipeline()
     logs.append("")
@@ -211,7 +240,8 @@ def main() -> None:
     }
 
     if ok:
-        manifest = {"last_index_time": now_iso(), "library_signature": sig, "files": current}
+        manifest = {"last_index_time": now_iso(), "library_signature": sig,
+                    "files": current, "contextual_chunks": current_flag}
         write_json(MANIFEST_FILE, manifest)
 
     write_json(INDEX_STATE_FILE, state)

@@ -17,7 +17,8 @@ def run(sql, name):
         cur.execute(sql)
         print(f"OK: {name}")
     except Exception as e:
-        if "ORA-00955" in str(e):
+        # ORA-00955: name already used (table/index) · ORA-01430: column already in table.
+        if "ORA-00955" in str(e) or "ORA-01430" in str(e):
             print(f"Already exists: {name}")
         else:
             print(f"FAILED: {name}")
@@ -48,6 +49,7 @@ CREATE TABLE chunks (
     section_name VARCHAR2(500),
     chunk_index NUMBER,
     chunk_text CLOB,
+    context_text CLOB,
     chunk_type VARCHAR2(100),
     page_start NUMBER,
     page_end NUMBER,
@@ -60,6 +62,9 @@ CREATE TABLE chunks (
     CONSTRAINT fk_chunks_paper FOREIGN KEY (paper_id) REFERENCES papers(id)
 )
 """, "chunks")
+
+# Upgrade existing databases created before Contextual Retrieval: add context_text.
+run("ALTER TABLE chunks ADD (context_text CLOB)", "chunks.context_text")
 
 run("""
 CREATE TABLE concepts (

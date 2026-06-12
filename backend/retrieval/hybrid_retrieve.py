@@ -162,7 +162,8 @@ def load_chunks():
             c.chunk_type,
             c.page_start,
             c.page_end,
-            c.audio_concepts
+            c.audio_concepts,
+            c.context_text
         FROM chunks c
         JOIN papers p ON p.id = c.paper_id
         ORDER BY c.id
@@ -171,19 +172,21 @@ def load_chunks():
     chunks = []
     for row in cur.fetchall():
         (chunk_id, title, section, text, chunk_type,
-         page_start, page_end, concepts) = row
+         page_start, page_end, concepts, context) = row
 
         title = read_lob(title)
         section = read_lob(section)
         text = read_lob(text)
         chunk_type = read_lob(chunk_type)
         concepts = read_lob(concepts)
+        context = read_lob(context)
 
         chunks.append({
             "id": int(chunk_id),
             "title": str(title or ""),
             "section": str(section or ""),
-            "text": str(text or ""),
+            "text": str(text or ""),               # ORIGINAL chunk text (shown in citations)
+            "context": str(context or ""),          # Contextual Retrieval: situating sentence (BM25 only)
             "chunk_type": str(chunk_type or ""),
             "page_start": int(page_start) if page_start is not None else None,
             "page_end": int(page_end) if page_end is not None else None,
@@ -212,6 +215,7 @@ def build_bm25_index():
             chunk.get("title") or "",
             chunk.get("section") or "",
             chunk.get("concepts") or "",
+            chunk.get("context") or "",
             chunk.get("text") or "",
         ])
         toks = tokenize(full_text)

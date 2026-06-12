@@ -8,10 +8,18 @@ from tqdm import tqdm
 
 from backend.ingestion.pdf_parser import parse_pdf
 from backend.ingestion.document_chunker import chunk_parsed_document
+from backend.ingestion.contextualizer import contextualize_chunks
 
 load_dotenv()
 
 PAPERS_DIR = Path("data/papers")
+
+
+def full_document_text(parsed: dict) -> str:
+    """The parsed document's text, used as context for the situating sentence."""
+    if parsed.get("raw_markdown"):
+        return parsed["raw_markdown"]
+    return "\n".join(p.get("text", "") for p in parsed.get("pages", []))
 
 
 def connect():
@@ -64,16 +72,16 @@ def insert_paper(cur, title, file_path, file_name, file_hash, page_count):
     return int(out_id.getvalue()[0])
 
 
-def insert_chunk(cur, paper_id, chunk_index, chunk):
+def insert_chunk(cur, paper_id, chunk_index, chunk, context_text=""):
     cur.execute(
         """
         INSERT INTO chunks (
-            paper_id, section_name, chunk_index, chunk_text, chunk_type,
+            paper_id, section_name, chunk_index, chunk_text, context_text, chunk_type,
             page_start, page_end, has_equation, has_algorithm,
             has_table, audio_concepts
         )
         VALUES (
-            :paper_id, :section_name, :chunk_index, :chunk_text, :chunk_type,
+            :paper_id, :section_name, :chunk_index, :chunk_text, :context_text, :chunk_type,
             :page_start, :page_end, :has_equation, :has_algorithm,
             :has_table, :audio_concepts
         )
@@ -83,6 +91,7 @@ def insert_chunk(cur, paper_id, chunk_index, chunk):
             "section_name": chunk["section"],
             "chunk_index": chunk_index,
             "chunk_text": chunk["text"],
+            "context_text": context_text or "",
             "chunk_type": chunk["chunk_type"],
             "page_start": chunk["page_start"],
             "page_end": chunk["page_end"],
@@ -121,6 +130,9 @@ def main():
         parsed = parse_pdf(pdf_path)
         chunks = chunk_parsed_document(parsed)
 
+        # Contextual Retrieval: one situating sentence per chunk (cached; "" if disabled/LLM fails).
+        contexts = contextualize_chunks(full_document_text(parsed), chunks)
+
         paper_id = insert_paper(
             cur=cur,
             title=title,
@@ -130,8 +142,8 @@ def main():
             page_count=parsed.get("page_count", 0),
         )
 
-        for i, chunk in enumerate(chunks, start=1):
-            insert_chunk(cur, paper_id, i, chunk)
+        for i, (chunk, context_text) in enumerate(zip(chunks, contexts), start=1):
+            insert_chunk(cur, paper_id, i, chunk, context_text)
 
         conn.commit()
 

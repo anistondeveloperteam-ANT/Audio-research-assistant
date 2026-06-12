@@ -50,6 +50,7 @@ FIELD_WEIGHTS: Dict[str, float] = {
     "concepts": 2.5,
     "section":  2.0,
     "text":     1.0,
+    "context":  1.0,   # Contextual Retrieval: the LLM situating sentence (body-level signal)
 }
 
 

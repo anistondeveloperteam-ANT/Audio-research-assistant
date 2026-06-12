@@ -118,6 +118,16 @@ def test_bm25_title_weighted_higher_than_body():
     assert in_title >= in_body
 
 
+def test_bm25_scores_contextual_situating_sentence():
+    # Contextual Retrieval: a query term present ONLY in the LLM situating context (not in the
+    # original chunk text) must still contribute to the BM25 score.
+    df, N, avgdl = {"dereverberation": 1}, 10, 5.0
+    chunk = {"title": "", "concepts": "", "section": "",
+             "text": "The proposed method runs in real time.",
+             "context": "This chunk is about dereverberation in reverberant rooms."}
+    assert field_weighted_bm25(["dereverberation"], chunk, df, N, avgdl) > 0
+
+
 # ----------------------------------------------------------------------
 # Reciprocal Rank Fusion
 # ----------------------------------------------------------------------
