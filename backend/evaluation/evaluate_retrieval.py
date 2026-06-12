@@ -541,10 +541,37 @@ def print_summary(report: Dict[str, Any]) -> None:
     print("=" * 100)
 
 
+def _report_markdown(report: Dict[str, Any]) -> str:
+    avg = report.get("averages", {})
+    tim = report.get("timing", {})
+    L = ["# Retrieval Eval Report", "",
+         f"_{report.get('label', 'default')} · top_k={report.get('top_k')} · "
+         f"{report.get('question_count')} questions_", "",
+         "## Recall / ranking", "", "| metric | value |", "|---|---|"]
+    for k in ("term_recall", "recall_at_5", "recall_at_10", "mrr", "ndcg_at_5", "paper_diversity"):
+        if k in avg:
+            L.append(f"| {k} | {avg[k]:.3f} |")
+    L += ["", "## Latency (seconds)", "", "| metric | value |", "|---|---|"]
+    for k in ("mean_seconds", "p50_seconds", "p95_seconds", "max_seconds", "total_seconds"):
+        if k in tim:
+            L.append(f"| {k} | {tim[k]:.2f} |")
+    failures = report.get("failures") or []
+    if failures:
+        L += ["", f"## Weak questions ({len(failures)})", ""]
+        for f in failures:
+            miss = ", ".join((f.get("misses") or [])[:5])
+            L.append(f"- r={f.get('term_recall', 0):.2f} — {f.get('question', '')[:80]}"
+                     + (f"  _(missing: {miss})_" if miss else ""))
+    return "\n".join(L) + "\n"
+
+
 def save_report(report: Dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    md_path = path.with_suffix(".md")
+    md_path.write_text(_report_markdown(report), encoding="utf-8")
     print(f"Report saved: {path}")
+    print(f"Markdown:     {md_path}")
 
 
 # ----------------------------------------------------------------------

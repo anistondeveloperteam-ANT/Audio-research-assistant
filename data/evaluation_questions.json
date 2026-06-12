@@ -1,82 +1,43 @@
 [
-  {
-    "question": "What are the latest methods for DOA estimation?",
-    "expected_terms": [
-      "DOA",
-      "direction of arrival",
-      "microphone array",
-      "beamforming",
-      "source localization"
-    ]
-  },
-  {
-    "question": "What are the best algorithms for noise suppression?",
-    "expected_terms": [
-      "noise suppression",
-      "denoising",
-      "speech enhancement",
-      "SNR",
-      "PESQ"
-    ]
-  },
-  {
-    "question": "Which methods are suitable for real-time speech enhancement?",
-    "expected_terms": [
-      "real-time",
-      "speech enhancement",
-      "latency",
-      "low complexity",
-      "RNN"
-    ]
-  },
-  {
-    "question": "Compare MVDR, LCMV and GSC beamforming.",
-    "expected_terms": [
-      "MVDR",
-      "LCMV",
-      "GSC",
-      "beamforming",
-      "steering vector"
-    ]
-  },
-  {
-    "question": "What are the limitations of deep-learning based speech enhancement?",
-    "expected_terms": [
-      "limitations",
-      "robustness",
-      "complexity",
-      "generalization",
-      "noise"
-    ]
-  },
-  {
-    "question": "What metrics are used to evaluate speech enhancement?",
-    "expected_terms": [
-      "PESQ",
-      "STOI",
-      "SNR",
-      "SDR",
-      "MOS"
-    ]
-  },
-  {
-    "question": "What are the main methods for dereverberation?",
-    "expected_terms": [
-      "dereverberation",
-      "reverberation",
-      "WPE",
-      "speech enhancement",
-      "room"
-    ]
-  },
-  {
-    "question": "How do microphone arrays help speech enhancement?",
-    "expected_terms": [
-      "microphone array",
-      "beamforming",
-      "DOA",
-      "spatial",
-      "speech enhancement"
-    ]
-  }
+  { "question": "What are the latest methods for DOA estimation?",
+    "expected_terms": ["DOA", "direction of arrival", "microphone array", "beamforming", "source localization"] },
+  { "question": "What are the best algorithms for noise suppression?",
+    "expected_terms": ["noise suppression", "denoising", "speech enhancement", "SNR", "PESQ"] },
+  { "question": "Which methods are suitable for real-time speech enhancement?",
+    "expected_terms": ["real-time", "speech enhancement", "latency", "low complexity", "RNN"] },
+  { "question": "Compare MVDR, LCMV and GSC beamforming.",
+    "expected_terms": ["MVDR", "LCMV", "GSC", "beamforming", "steering vector"] },
+  { "question": "What are the limitations of deep-learning based speech enhancement?",
+    "expected_terms": ["limitations", "robustness", "complexity", "generalization", "noise"] },
+  { "question": "What metrics are used to evaluate speech enhancement?",
+    "expected_terms": ["PESQ", "STOI", "SNR", "SDR", "MOS"] },
+  { "question": "What are the main methods for dereverberation?",
+    "expected_terms": ["dereverberation", "reverberation", "WPE", "speech enhancement", "room"] },
+  { "question": "How do microphone arrays help speech enhancement?",
+    "expected_terms": ["microphone array", "beamforming", "DOA", "spatial", "speech enhancement"] },
+
+  { "question": "What architectures are used for end-to-end automatic speech recognition?",
+    "expected_terms": ["speech recognition", "ASR", "end-to-end", "CTC", "attention", "encoder"] },
+  { "question": "How does deep learning approach blind source separation?",
+    "expected_terms": ["source separation", "blind", "permutation invariant", "mask", "separation"] },
+  { "question": "What methods are used for speaker verification and diarization?",
+    "expected_terms": ["speaker", "verification", "diarization", "embedding", "x-vector"] },
+  { "question": "How do neural vocoders synthesize speech waveforms?",
+    "expected_terms": ["vocoder", "synthesis", "waveform", "WaveNet", "text-to-speech"] },
+  { "question": "Which datasets are commonly used to train speech models?",
+    "expected_terms": ["dataset", "corpus", "training data", "LibriSpeech", "noise"] },
+  { "question": "How are transformers and attention used in audio models?",
+    "expected_terms": ["transformer", "attention", "self-attention", "encoder", "sequence"] },
+  { "question": "What is self-supervised learning for speech representations?",
+    "expected_terms": ["self-supervised", "representation", "pretraining", "wav2vec", "contrastive"] },
+  { "question": "What time-frequency features are used as input to audio models?",
+    "expected_terms": ["STFT", "spectrogram", "mel", "MFCC", "filter bank"] },
+  { "question": "What loss functions are used to train speech enhancement networks?",
+    "expected_terms": ["loss", "SI-SDR", "objective", "training", "magnitude"] },
+  { "question": "How are convolutional and recurrent networks applied to audio?",
+    "expected_terms": ["convolutional", "CNN", "recurrent", "RNN", "LSTM"] },
+  { "question": "How is the quality and intelligibility of enhanced speech measured?",
+    "expected_terms": ["quality", "intelligibility", "PESQ", "STOI", "MOS"] },
+  { "question": "What techniques reduce the computational cost of audio models?",
+    "expected_terms": ["efficiency", "complexity", "real-time", "latency", "lightweight"] }
 ]

@@ -164,14 +164,18 @@ def evaluate_model(spec: Optional[str], questions: List[Dict[str, Any]],
                          "cited": False, "judge": None, "seconds": 0.0})
             continue
         coverage, cited, missed = score_answer(answer, key_points)
+        from backend.answering.citations import validate_citations
+        _, invalid_cites = validate_citations(answer, len(sources))
         jscore = judge_answer(judge, question, key_points, answer) if judge else None
         rows.append({
             "question": question, "coverage": round(coverage, 3), "cited": cited,
+            "citations_valid": not invalid_cites, "invalid_citations": sorted(invalid_cites),
             "judge": jscore, "seconds": round(secs, 1), "n_sources": len(sources),
             "missed_key_points": missed, "answer": answer,
         })
         jtxt = f"  judge {jscore:>3}" if jscore is not None else ""
-        print(f"  Q{i}: coverage {coverage * 100:5.0f}%  cited {'Y' if cited else 'n'}"
+        cflag = f"INVALID{sorted(invalid_cites)}" if invalid_cites else ("Y" if cited else "n")
+        print(f"  Q{i}: coverage {coverage * 100:5.0f}%  cite {cflag}"
               f"{jtxt}  ({secs:.1f}s)  {question[:48]}")
 
     scored = [r for r in rows if "error" not in r]
@@ -182,6 +186,7 @@ def evaluate_model(spec: Optional[str], questions: List[Dict[str, Any]],
         "questions": len(rows),
         "avg_coverage": round(sum(r["coverage"] for r in scored) / n, 3),
         "citation_rate": round(sum(1 for r in scored if r["cited"]) / n, 3),
+        "citation_validity_rate": round(sum(1 for r in scored if r.get("citations_valid", True)) / n, 3),
         "avg_seconds": round(sum(r["seconds"] for r in scored) / n, 1),
         "errors": sum(1 for r in rows if "error" in r),
         "results": rows,
