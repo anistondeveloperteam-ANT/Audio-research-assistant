@@ -77,62 +77,103 @@ def _save_cache(cache: Dict[str, str]) -> None:
         pass
 
 
-def generate_context(doc_text: str, chunk_text: str, provider=None) -> str:
-    """One situating sentence for `chunk_text`. Returns "" on any failure (caller falls back to the
-    plain chunk). Retries with backoff on transient rate‑limit/quota/5xx errors. `provider` is
-    injectable for tests; otherwise the configured chat model is used."""
-    chunk_text = (chunk_text or "").strip()
-    if not chunk_text:
-        return ""
+def _provider_chain():
+    """Chat providers to try, in order: the configured model (e.g. Gemini), then the fallback
+    models (e.g. Mistral Large) — so contextualization keeps working if the first model is
+    rate-limited/quota-exhausted. Only available providers (key present) are included; deduped."""
+    from backend.llm.streaming_provider import get_provider
+    out, seen = [], set()
+    names = [None] + [m.strip() for m in
+                      os.getenv("CONTEXTUAL_FALLBACK_MODELS", "mistral-large-latest").split(",")]
+    for name in names:
+        if name is not None and not name:
+            continue
+        try:
+            p = get_provider(name) if name else get_provider()
+        except Exception:
+            continue
+        mid = getattr(p, "model", name)
+        if mid in seen or not getattr(p, "is_available", False):
+            continue
+        seen.add(mid)
+        out.append(p)
+    return out
+
+
+def _complete(provider, prompt: str) -> str:
+    """One situating-sentence call against a single provider. Returns "" on error/empty/unavailable
+    (never raises). Skips reasoning dicts; keeps answer text only."""
     try:
-        if provider is None:
-            from backend.llm.streaming_provider import get_provider
-            provider = get_provider()
+        if not getattr(provider, "is_available", False):
+            return ""
+        parts: List[str] = []
+        for piece in provider.stream_chat(
+            [{"role": "user", "content": prompt}],
+            system=_SYSTEM, max_tokens=_max_tokens(), temperature=0.0,
+        ):
+            if isinstance(piece, str):
+                parts.append(piece)
+        return " ".join("".join(parts).split()).strip()
     except Exception:
         return ""
-    if not getattr(provider, "is_available", False):
+
+
+def _run_chain(chain: list, prompt: str) -> str:
+    """Try each provider in order; on success promote the winner so later chunks skip dead models.
+    Retries the whole chain with backoff for transient rate-limit / empty replies."""
+    if not chain:
         return ""
-    prompt = _PROMPT.format(doc=(doc_text or "")[: _doc_chars()], chunk=chunk_text[:4000])
-    retries = _retries()
-    for attempt in range(retries):
-        try:
-            parts: List[str] = []
-            for piece in provider.stream_chat(
-                [{"role": "user", "content": prompt}],
-                system=_SYSTEM, max_tokens=_max_tokens(), temperature=0.0,
-            ):
-                if isinstance(piece, str):      # skip any reasoning dicts; keep answer text only
-                    parts.append(piece)
-            out = " ".join("".join(parts).split()).strip()
+    for attempt in range(_retries()):
+        for i, prov in enumerate(list(chain)):
+            out = _complete(prov, prompt)
             if out:
+                if i > 0:
+                    chain.insert(0, chain.pop(i))   # prefer the working model next time
                 return out
-        except Exception as exc:
-            msg = str(exc).lower()
-            transient = any(k in msg for k in
-                            ("429", "rate", "quota", "timeout", "unavailable", "503", "500"))
-            if not transient:
-                return ""                       # hard error (bad key/request) -> don't hammer
-        if attempt < retries - 1:
-            time.sleep(min(2 ** attempt, 20))   # backoff before retrying a rate-limit / empty reply
+        if attempt < _retries() - 1:
+            time.sleep(min(2 ** attempt, 20))
     return ""
 
 
+def generate_context(doc_text: str, chunk_text: str, provider=None) -> str:
+    """One situating sentence for `chunk_text`. Returns "" on any failure (caller falls back to the
+    plain chunk). With no `provider`, tries the configured model then the fallback model(s).
+    `provider` is injectable for tests (single provider, single attempt)."""
+    chunk_text = (chunk_text or "").strip()
+    if not chunk_text:
+        return ""
+    prompt = _PROMPT.format(doc=(doc_text or "")[: _doc_chars()], chunk=chunk_text[:4000])
+    if provider is not None:
+        return _complete(provider, prompt)
+    try:
+        chain = _provider_chain()
+    except Exception:
+        return ""
+    return _run_chain(chain, prompt)
+
+
 def contextualize_chunks(doc_text: str, chunks: List[dict], provider=None) -> List[str]:
-    """Return one context string per chunk (same order). Uses the on-disk cache and only calls the
-    LLM for cache misses. Returns ['']*len(chunks) when disabled. Never raises."""
+    """Return one context string per chunk (same order). Builds the provider chain once, uses the
+    on-disk cache, and only calls the LLM for cache misses. Returns ['']*len when disabled. Never
+    raises."""
     n = len(chunks)
     if not contextual_enabled() or n == 0:
         return [""] * n
+    chain = [provider] if provider is not None else _provider_chain()
     cache = _load_cache()
     out: List[str] = []
     dirty = False
     for ch in chunks:
         ctext = (ch.get("text") or "").strip()
+        if not ctext:
+            out.append("")
+            continue
         key = _cache_key(doc_text, ctext)
         if key in cache:
             out.append(cache[key])
             continue
-        ctx = generate_context(doc_text, ctext, provider=provider)
+        prompt = _PROMPT.format(doc=(doc_text or "")[: _doc_chars()], chunk=ctext[:4000])
+        ctx = _run_chain(chain, prompt)
         cache[key] = ctx
         dirty = True
         out.append(ctx)
