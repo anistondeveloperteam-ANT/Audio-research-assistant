@@ -480,6 +480,10 @@ def _recent_conversation(request: Request, session_id: str,
     return "\n".join(lines)
 
 
+def _agent_graph_enabled() -> bool:
+    return os.getenv("AGENT_GRAPH_ENABLED", "false").strip().lower() == "true"
+
+
 @app.post("/api/agent")
 def agent(request: Request, body: dict = Body(...)):
     task = (body.get("question") or body.get("task") or "").strip()
@@ -488,16 +492,35 @@ def agent(request: Request, body: dict = Body(...)):
         return JSONResponse({"error": "task is required"}, status_code=400)
     conversation = _recent_conversation(request, body.get("session_id") or "")
 
+    # Distributed path (optional): enqueue to Celery, return a task_id immediately; the client
+    # then opens /api/agent/{task_id}/stream. Falls through to in-process streaming if the
+    # queue is off OR Redis is unreachable, so the app never breaks without Redis.
+    from backend.agent.task_channel import get_redis, queue_enabled
+    if queue_enabled() and get_redis() is not None:
+        import uuid
+        try:
+            from backend.agent.celery_app import run_agent_graph_task
+            task_id = uuid.uuid4().hex
+            run_agent_graph_task.delay(task_id, task, "", conversation)
+            return JSONResponse({"task_id": task_id, "queued": True})
+        except Exception:
+            pass   # broker hiccup -> in-process fallback below
+
     import queue
     import threading
-    from backend.agent.loop import run_agent
 
     q: "queue.Queue" = queue.Queue()
     DONE = object()
+    use_graph = _agent_graph_enabled()
 
     def worker():
         try:
-            run_agent(task, use_search=use_search, conversation=conversation, on_event=q.put)
+            if use_graph:
+                from backend.agent.graph import run_agent_graph
+                run_agent_graph(task, conversation=conversation, on_event=q.put)
+            else:
+                from backend.agent.loop import run_agent
+                run_agent(task, use_search=use_search, conversation=conversation, on_event=q.put)
         except Exception as exc:
             q.put({"type": "error", "message": str(exc)})
         finally:
@@ -510,6 +533,21 @@ def agent(request: Request, body: dict = Body(...)):
             event = q.get()
             if event is DONE:
                 break
+            yield json.dumps(event) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+@app.get("/api/agent/{task_id}/stream")
+def agent_stream(task_id: str):
+    """Stream a queued agent run's events (NDJSON) from Redis. Used only in queued mode."""
+    from backend.agent.task_channel import get_redis, stream_events
+    client = get_redis()
+    if client is None:
+        return JSONResponse({"error": "queue not enabled or Redis unreachable"}, status_code=503)
+
+    def gen():
+        for event in stream_events(client, task_id):
             yield json.dumps(event) + "\n"
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
