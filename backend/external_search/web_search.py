@@ -14,7 +14,10 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
-from backend.external_search.base import ExternalSource, cached, logger, safe_get
+from backend.external_search.base import (
+    DEFAULT_TIMEOUT, ExternalSource, cached, is_safe_url, logger, safe_get,
+)
+from backend.external_search.crawl import crawl_markdown
 
 _BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -49,9 +52,20 @@ def extract_readable_text(html: str, max_chars: int = 8000) -> str:
     return out.strip()[:max_chars]
 
 
-def fetch_page_text(url: str, max_chars: int = 8000) -> Optional[str]:
-    """Safely download a page (SSRF-guarded, cached) and extract readable text."""
+def fetch_page_text(url: str, query: str = "", max_chars: int = 8000) -> Optional[str]:
+    """Readable page text (SSRF-guarded, cached). Prefers Crawl4AI — JS-rendered, BM25
+    markdown keyed to the query — and automatically falls back to the requests+BeautifulSoup
+    path if Crawl4AI is disabled, missing, or fails. Timeouts, size caps, caching, and
+    is_safe_url behavior are unchanged."""
     def _produce():
+        # SSRF gate up front so Crawl4AI's browser never fetches an unsafe URL (the fallback
+        # safe_get runs the same is_safe_url check itself).
+        ok, _reason = is_safe_url(url)
+        if not ok:
+            return None
+        md = crawl_markdown(url, query, timeout=DEFAULT_TIMEOUT, max_chars=max_chars)
+        if md:
+            return md
         html = safe_get(url, expect="text")
         return extract_readable_text(html, max_chars=max_chars) if html else None
     return cached(f"page::{url}", _produce)
