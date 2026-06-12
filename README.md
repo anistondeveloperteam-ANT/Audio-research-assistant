@@ -197,9 +197,12 @@ python pipeline.py --corpus-report             # coverage + gaps report
 ```
 backend/   retrieval · external search · LLM router · agents · memory · evaluation · observability
 webapp/    FastAPI server + chat orchestration + static UI (no build step)
-docs/      deeper notes (observability, ingestion checklist, …)
+docs/      ARCHITECTURE.md (full pipeline + tech) · OBSERVABILITY.md · INGESTION_CHECKLIST.md
 run.py     launch the app  (--share / --lan)
 ```
+
+> 🧭 **Want the full engineering map** — every tool, module, and pipeline in detail? See
+> **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
