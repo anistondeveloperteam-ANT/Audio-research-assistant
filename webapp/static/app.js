@@ -254,14 +254,21 @@
         const num = parseInt(n, 10);
         if (num >= 1 && num <= nSources) {
           const src = srcList[num - 1];
-          const b = document.createElement("button");
-          // green = local paper (no external link); red = web/external (opens in a new tab)
-          b.className = "cite " + (src && src.source_type === "local_pdf" ? "local" : "web");
-          b.textContent = n; b.dataset.n = n;
-          b.addEventListener("click", () => focusSource(num, b));
-          b.addEventListener("mouseenter", () => showCitePop(b, n));
-          b.addEventListener("mouseleave", hideCitePop);
-          frag.appendChild(b);
+          // green = local paper (no link → opens the drawer to read its text);
+          // red = web/external (a REAL link → reliably opens the source in a new tab).
+          const cls = "cite " + (src && src.source_type === "local_pdf" ? "local" : "web");
+          let el;
+          if (src && src.url) {
+            el = document.createElement("a");
+            el.href = src.url; el.target = "_blank"; el.rel = "noopener noreferrer";
+          } else {
+            el = document.createElement("button");
+            el.addEventListener("click", () => focusSource(num, el));
+          }
+          el.className = cls; el.textContent = n; el.dataset.n = n;
+          el.addEventListener("mouseenter", () => showCitePop(el, n));
+          el.addEventListener("mouseleave", hideCitePop);
+          frag.appendChild(el);
         } else if (nSources === 0) {
           frag.appendChild(document.createTextNode(m));   // source count unknown -> leave as-is
         }

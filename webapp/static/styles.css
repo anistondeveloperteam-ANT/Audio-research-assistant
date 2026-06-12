@@ -431,7 +431,7 @@ body {
   display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px;
   margin: 0 1px; vertical-align: 1px; font-size: 11px; font-weight: 700; line-height: 1;
   color: var(--accent-600); background: var(--accent-weak); border: 1px solid var(--accent-border);
-  border-radius: 6px; cursor: pointer; transition: background .12s ease, transform .12s ease;
+  border-radius: 6px; cursor: pointer; text-decoration: none; transition: background .12s ease, transform .12s ease;
 }
 .cite:hover { background: var(--accent-border); transform: translateY(-1px); }
 /* Source colour code — GREEN = local paper (your docs, no external link);
