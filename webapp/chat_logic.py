@@ -45,6 +45,7 @@ from backend.answering.agentic_answer import (  # noqa: E402
 )
 from backend.llm.streaming_provider import get_provider  # noqa: E402
 from backend.external_search import gather_external_evidence, is_web_search_enabled  # noqa: E402
+from backend.observability import tracing  # noqa: E402  (no-op unless LANGFUSE_ENABLED=true)
 
 
 def local_rag_enabled() -> bool:
@@ -485,35 +486,44 @@ def stream_chat_events(
     user_id = mem.session_owner(session_id) or "local"
     mem.append_turn(session_id, "user", q)
 
+    # One trace per chat request (no-op unless LANGFUSE_ENABLED=true). Carries only
+    # coarse settings — never the question text.
+    trace = tracing.start_trace("chat_request", mode=mode, top_k=top_k,
+                                web_search=bool(web_search))
+
     # Embed the question ONCE (if semantic reuse is on); reused for lookup AND save.
     query_emb, query_meta = (None, None)
     cache_on = answer_cache_enabled() and not _freshness_sensitive(q)
-    if cache_on:
-        query_emb, query_meta = _query_embedding(q)
-        cached = mem.find_cached_answer(
-            user_id=user_id,
-            question=q,
-            min_similarity=answer_cache_min_similarity(),
-            query_embedding=query_emb,
-            query_meta=query_meta,
-            min_semantic=answer_cache_min_semantic(),
-            max_age_seconds=answer_cache_max_age_seconds(),
-            limit=answer_cache_limit(),
-        )
-        if cached:
-            sources = cached.get("sources") or []
-            answer = cached.get("answer") or ""
-            pct = int(float(cached.get("similarity", 0.0)) * 100)
-            kind = cached.get("match_kind", "lexical")
-            mem.record_answer_cache_hit(int(cached["id"]))
-            mem.append_turn(session_id, "assistant", answer, sources=sources)
-            yield {"type": "status", "message":
-                   f"Reusing a saved answer from memory ({pct}% {kind} match)."}
-            yield {"type": "sources", "sources": sources}
-            yield {"type": "token", "text": answer}
-            yield {"type": "done", "answer": answer, "cached": True,
-                   "similarity": pct, "match_kind": kind}
-            return
+    cached = None
+    with trace.span("cache_check", enabled=cache_on) as _sp:
+        if cache_on:
+            query_emb, query_meta = _query_embedding(q)
+            cached = mem.find_cached_answer(
+                user_id=user_id,
+                question=q,
+                min_similarity=answer_cache_min_similarity(),
+                query_embedding=query_emb,
+                query_meta=query_meta,
+                min_semantic=answer_cache_min_semantic(),
+                max_age_seconds=answer_cache_max_age_seconds(),
+                limit=answer_cache_limit(),
+            )
+            _sp.set(hit=bool(cached))
+    if cached:
+        sources = cached.get("sources") or []
+        answer = cached.get("answer") or ""
+        pct = int(float(cached.get("similarity", 0.0)) * 100)
+        kind = cached.get("match_kind", "lexical")
+        mem.record_answer_cache_hit(int(cached["id"]))
+        mem.append_turn(session_id, "assistant", answer, sources=sources)
+        trace.set(cached=True).end()
+        yield {"type": "status", "message":
+               f"Reusing a saved answer from memory ({pct}% {kind} match)."}
+        yield {"type": "sources", "sources": sources}
+        yield {"type": "token", "text": answer}
+        yield {"type": "done", "answer": answer, "cached": True,
+               "similarity": pct, "match_kind": kind}
+        return
 
     items: List[Dict[str, Any]] = []
     local_on = local_rag_enabled()
@@ -527,6 +537,17 @@ def stream_chat_events(
         yield {"type": "status", "message":
                f"Planning the research — exploring {len(queries)} angles..."}
 
+    # Records its own span (count metadata) from inside the worker thread; the trace
+    # handle is captured explicitly so nesting is correct despite the thread hop.
+    def _traced(span_name, fn, *fn_args):
+        with trace.span(span_name) as sp:
+            result = fn(*fn_args)
+            try:
+                sp.set(count=len(result[0]))
+            except Exception:
+                pass
+            return result
+
     seen_warnings: set = set()
     for idx, query in enumerate(queries):
         tag = "your question" if idx == 0 else f"angle {idx}: {query[:64]}"
@@ -537,12 +558,12 @@ def stream_chat_events(
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
             if local_on:
                 yield {"type": "status", "message": f"Searching your papers — {tag}..."}
-                futures["local"] = ex.submit(_gather_local_items, query, mode)
+                futures["local"] = ex.submit(_traced, "local_rag", _gather_local_items, query, mode)
             if is_web_search_enabled():
                 yield {"type": "status", "message":
                        f"Searching the web, research papers, patents & GitHub — {tag}..."}
                 k = EXTERNAL_TOP_K if idx == 0 else DEEP_SUBQUERY_TOP_K
-                futures["external"] = ex.submit(_gather_external_items, query, k)
+                futures["external"] = ex.submit(_traced, "external_search", _gather_external_items, query, k)
             results: Dict[str, Any] = {}
             for name, fut in futures.items():
                 try:
@@ -574,10 +595,13 @@ def stream_chat_events(
         yield {"type": "sources", "sources": []}
         yield {"type": "token", "text": msg}
         mem.append_turn(session_id, "assistant", msg, sources=[])
+        trace.set(n_sources=0).end()
         yield {"type": "done", "answer": msg}
         return
 
-    sources = _public_sources(items)
+    with trace.span("source_selection") as _sp:
+        sources = _public_sources(items)
+        _sp.set(n_sources=len(sources))
     yield {"type": "sources", "sources": sources}
 
     recent = mem.get_recent_turns(session_id, n_messages=6)
@@ -621,41 +645,50 @@ def stream_chat_events(
 
                 # Draft, shrinking the evidence to fit if the model rejects the prompt
                 # as too large (e.g. a low-balance account) so the answer still gets written.
-                budget = EVIDENCE_BUDGET_CHARS
-                evidence = format_evidence(items, budget_chars=budget)
+                with trace.span("prompt_build", round=round_no) as _sp:
+                    budget = EVIDENCE_BUDGET_CHARS
+                    evidence = format_evidence(items, budget_chars=budget)
+                    _sp.set(evidence_chars=len(evidence), n_sources=len(items))
                 answer = ""
-                for _shrink in range(5):
-                    err = None
-                    try:
-                        parts = []
-                        for piece in provider.stream_chat(
-                                _messages_for(evidence), system=SYSTEM_PROMPT,
-                                max_tokens=ANSWER_MAX_TOKENS, temperature=0.3, yield_reasoning=True):
-                            if isinstance(piece, dict):
-                                yield {"type": "thinking", "text": piece.get("reasoning", "")}
-                            else:
-                                parts.append(piece)
-                        answer = "".join(parts).strip()
-                    except Exception as exc:
-                        err = exc
-                    # Shrink the evidence and retry if the prompt was rejected as too
-                    # large, or the reply came back empty (a tiny budget starved it).
-                    too_big = err is not None and bool(
-                        _prompt_limit(str(err)) or "402" in str(err) or "afford" in str(err).lower())
-                    starved = err is None and len(answer.strip()) < 40
-                    if (too_big or starved) and budget > 5000:
-                        lim = _prompt_limit(str(err)) if err else None
-                        budget = max(4000, int(budget * (lim[1] / lim[0] if lim else 0.55)))
-                        yield {"type": "status",
-                               "message": "Trimming evidence to fit the model's token budget..."}
-                        evidence = format_evidence(items, budget_chars=budget)
-                        continue
-                    if err is not None:
-                        raise err
-                    break
+                with trace.span("llm_stream", round=round_no) as _sp:
+                    for _shrink in range(5):
+                        err = None
+                        try:
+                            parts = []
+                            for piece in provider.stream_chat(
+                                    _messages_for(evidence), system=SYSTEM_PROMPT,
+                                    max_tokens=ANSWER_MAX_TOKENS, temperature=0.3, yield_reasoning=True):
+                                if isinstance(piece, dict):
+                                    yield {"type": "thinking", "text": piece.get("reasoning", "")}
+                                else:
+                                    parts.append(piece)
+                            answer = "".join(parts).strip()
+                        except Exception as exc:
+                            err = exc
+                        # Shrink the evidence and retry if the prompt was rejected as too
+                        # large, or the reply came back empty (a tiny budget starved it).
+                        too_big = err is not None and bool(
+                            _prompt_limit(str(err)) or "402" in str(err) or "afford" in str(err).lower())
+                        starved = err is None and len(answer.strip()) < 40
+                        if (too_big or starved) and budget > 5000:
+                            lim = _prompt_limit(str(err)) if err else None
+                            budget = max(4000, int(budget * (lim[1] / lim[0] if lim else 0.55)))
+                            yield {"type": "status",
+                                   "message": "Trimming evidence to fit the model's token budget..."}
+                            evidence = format_evidence(items, budget_chars=budget)
+                            continue
+                        if err is not None:
+                            raise err
+                        break
+                    _sp.set(model=getattr(provider, "model", None), output_len=len(answer))
 
                 yield {"type": "status", "message": "Checking for runnable Python simulation..."}
-                run_info = run_best_python_block(answer)
+                with trace.span("code_simulation") as _sp:
+                    run_info = run_best_python_block(answer)
+                    if run_info:
+                        _sp.set(attempted=bool(run_info.get("attempted")),
+                                ok=bool(run_info.get("ok")),
+                                summary=run_info.get("summary"))
                 if run_info:
                     if run_info.get("attempted"):
                         yield {"type": "status", "message": f"Sandbox result: {run_info.get('summary')}"}
@@ -664,13 +697,15 @@ def stream_chat_events(
 
                 yield {"type": "status", "message": "Verifying answer against the retrieved evidence..."}
                 try:
-                    verdict = verify_answer(
-                        provider,
-                        question=q,
-                        evidence=evidence,
-                        answer=answer,
-                        run_info=run_info,
-                    )
+                    with trace.span("agentic_verify", round=round_no) as _sp:
+                        verdict = verify_answer(
+                            provider,
+                            question=q,
+                            evidence=evidence,
+                            answer=answer,
+                            run_info=run_info,
+                        )
+                        _sp.set(score=int(verdict.get("score", 0)), ok=bool(verdict.get("ok")))
                 except Exception as exc:
                     verdict = {
                         "ok": False,
@@ -722,29 +757,31 @@ def stream_chat_events(
             review_offtopic = False
             if auto_review_enabled() and answer and answer.strip() and answer != "(no answer)":
                 yield {"type": "status", "message": "Reviewing the answer…"}
-                try:
-                    from backend.answering.reviewer import review as _peer_review, is_relevant
-                    rev = _peer_review(answer, task=q)
-                except Exception:
-                    rev = None
-                if rev and not rev.get("error"):
-                    review_offtopic = not is_relevant(rev)
-                    if (rev.get("recommendation") or "").lower() in ("major revision", "reject"):
-                        yield {"type": "status", "message": "Improving the answer after review…"}
-                        fixes = "; ".join((rev.get("weaknesses") or []) + (rev.get("suggestions") or []))[:800]
-                        rmsg = build_revision_message(
-                            question=q, evidence=evidence, previous_answer=answer,
-                            verdict={"feedback": fixes, "missing_evidence": [], "citation_issues": []},
-                            run_info=run_info)
-                        try:
-                            improved = complete_text(
-                                provider, history + [{"role": "user", "content": rmsg}],
-                                system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS, temperature=0.3)
-                            if improved.strip():
-                                answer = improved
-                                answer_rewritten = True
-                        except Exception:
-                            pass
+                with trace.span("auto_review") as _sp:
+                    try:
+                        from backend.answering.reviewer import review as _peer_review, is_relevant
+                        rev = _peer_review(answer, task=q)
+                    except Exception:
+                        rev = None
+                    if rev and not rev.get("error"):
+                        review_offtopic = not is_relevant(rev)
+                        _sp.set(recommendation=rev.get("recommendation"), relevant=not review_offtopic)
+                        if (rev.get("recommendation") or "").lower() in ("major revision", "reject"):
+                            yield {"type": "status", "message": "Improving the answer after review…"}
+                            fixes = "; ".join((rev.get("weaknesses") or []) + (rev.get("suggestions") or []))[:800]
+                            rmsg = build_revision_message(
+                                question=q, evidence=evidence, previous_answer=answer,
+                                verdict={"feedback": fixes, "missing_evidence": [], "citation_issues": []},
+                                run_info=run_info)
+                            try:
+                                improved = complete_text(
+                                    provider, history + [{"role": "user", "content": rmsg}],
+                                    system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS, temperature=0.3)
+                                if improved.strip():
+                                    answer = improved
+                                    answer_rewritten = True
+                            except Exception:
+                                pass
 
             clean_body = answer or ""
             if not (answer or "").strip():
@@ -770,19 +807,23 @@ def stream_chat_events(
         else:
             provider_ok = True
             yield {"type": "status", "message": "Writing the answer..."}
-            evidence = format_evidence(items)
-            user_msg = build_user_message(q, evidence)
+            with trace.span("prompt_build") as _sp:
+                evidence = format_evidence(items)
+                user_msg = build_user_message(q, evidence)
+                _sp.set(evidence_chars=len(evidence), n_sources=len(items))
             messages = history + [{"role": "user", "content": user_msg}]
-            for chunk in provider.stream_chat(
-                messages, system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS,
-                temperature=0.3, yield_reasoning=True
-            ):
-                if isinstance(chunk, dict):
-                    yield {"type": "thinking", "text": chunk.get("reasoning", "")}
-                else:
-                    answer_parts.append(chunk)
-                    yield {"type": "token", "text": chunk}
-            clean_body = "".join(answer_parts)
+            with trace.span("llm_stream") as _sp:
+                for chunk in provider.stream_chat(
+                    messages, system=SYSTEM_PROMPT, max_tokens=ANSWER_MAX_TOKENS,
+                    temperature=0.3, yield_reasoning=True
+                ):
+                    if isinstance(chunk, dict):
+                        yield {"type": "thinking", "text": chunk.get("reasoning", "")}
+                    else:
+                        answer_parts.append(chunk)
+                        yield {"type": "token", "text": chunk}
+                clean_body = "".join(answer_parts)
+                _sp.set(model=getattr(provider, "model", None), output_len=len(clean_body))
     except Exception as exc:
         gen_failed = True
         msg = f"\n\n_Answer generation failed: {exc}_"
@@ -790,23 +831,28 @@ def stream_chat_events(
         yield {"type": "token", "text": msg}
 
     answer = "".join(answer_parts).strip() or "(no answer)"
-    sources = _public_sources(items)
-    mem.append_turn(session_id, "assistant", answer, sources=sources)
+    with trace.span("memory_save") as _sp:
+        sources = _public_sources(items)
+        mem.append_turn(session_id, "assistant", answer, sources=sources)
 
-    # Save for reuse ONLY when the generation truly succeeded: provider worked, no
-    # exception, the agentic answer passed verification AND its code didn't fail, and
-    # the answer wasn't rewritten post-verification. Cache the clean body (no footers).
-    verified = (not agentic_loop_enabled()) or (verification_passed(verdict) and not loop_run_failed)
-    body = (clean_body or "").strip() or _strip_answer_footers(answer)
-    if (cache_on and provider_ok and not gen_failed and verified
-            and not answer_rewritten and _cacheable_answer(q, body, sources)):
-        mem.cache_answer(
-            user_id=user_id,
-            session_id=session_id,
-            question=q,
-            answer=body,
-            sources=sources,
-            embedding=query_emb,
-            embedding_meta=query_meta,
-        )
+        # Save for reuse ONLY when the generation truly succeeded: provider worked, no
+        # exception, the agentic answer passed verification AND its code didn't fail, and
+        # the answer wasn't rewritten post-verification. Cache the clean body (no footers).
+        verified = (not agentic_loop_enabled()) or (verification_passed(verdict) and not loop_run_failed)
+        body = (clean_body or "").strip() or _strip_answer_footers(answer)
+        did_cache = False
+        if (cache_on and provider_ok and not gen_failed and verified
+                and not answer_rewritten and _cacheable_answer(q, body, sources)):
+            mem.cache_answer(
+                user_id=user_id,
+                session_id=session_id,
+                question=q,
+                answer=body,
+                sources=sources,
+                embedding=query_emb,
+                embedding_meta=query_meta,
+            )
+            did_cache = True
+        _sp.set(cached=did_cache)
+    trace.set(cached=did_cache, n_sources=len(sources)).end()
     yield {"type": "done", "answer": answer}

@@ -1,0 +1,26 @@
+[
+  {
+    "question": "What does an MVDR beamformer minimize, and what constraint does it keep?",
+    "context": [
+      "The Minimum Variance Distortionless Response (MVDR) beamformer minimizes the output power (variance) of a microphone array.",
+      "It is subject to a distortionless constraint: the response toward the desired look direction is held at unity gain, so the target signal passes undistorted while noise and interference arriving from other directions are suppressed."
+    ],
+    "answer": "An MVDR beamformer minimizes the array's output power (variance) while keeping a distortionless, unity-gain response toward the desired look direction, so the target signal is preserved and off-axis noise and interference are suppressed."
+  },
+  {
+    "question": "Why is overlap used between frames in the Short-Time Fourier Transform?",
+    "context": [
+      "The STFT splits a signal into short, windowed frames and applies the DFT to each frame.",
+      "Adjacent frames overlap (commonly 50% or 75%) so the analysis window's tapering does not discard information at the frame edges, satisfying the constant-overlap-add (COLA) condition needed for faithful reconstruction."
+    ],
+    "answer": "Overlap (typically 50-75%) is used so the tapering of each analysis window does not lose information at the frame boundaries; meeting the constant-overlap-add (COLA) condition lets the original signal be reconstructed faithfully."
+  },
+  {
+    "question": "What do PESQ and STOI each measure in speech evaluation?",
+    "context": [
+      "PESQ (Perceptual Evaluation of Speech Quality) is an objective metric that predicts perceived speech quality on a MOS-like scale.",
+      "STOI (Short-Time Objective Intelligibility) predicts speech intelligibility - how understandable the speech is - as a correlation-based score between 0 and 1."
+    ],
+    "answer": "PESQ estimates perceived speech quality on a MOS-like scale, whereas STOI predicts intelligibility (how understandable the speech is) as a score between 0 and 1. They capture related but distinct aspects of speech."
+  }
+]

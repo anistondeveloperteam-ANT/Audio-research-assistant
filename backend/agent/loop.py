@@ -28,6 +28,7 @@ from backend.agent.code_runner import RunResult, docker_available, run_python
 from backend.agent.hooks import pre_run
 from backend.agent.memory import TwoTierMemory
 from backend.llm.streaming_provider import get_provider
+from backend.observability import tracing  # no-op unless LANGFUSE_ENABLED=true
 
 # Budgets are generous because reasoning models (GPT-5 / o-series) spend tokens
 # "thinking" before emitting the code/JSON.
@@ -243,27 +244,38 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     attempts: List[Attempt] = []
     best: Optional[Attempt] = None
     last_code = ""
+    agent_trace = tracing.start_trace("agent_run", max_iters=max_iters, use_search=bool(use_search))
 
     for i in range(1, max_iters + 1):
         directive = _read_directive(directive_path)
         if directive:
             emit({"type": "directive", "iteration": i, "text": directive[:300]})
         emit({"type": "think", "iteration": i, "message": f"Designing a solution (attempt {i}/{max_iters})…"})
-        code = _generate_code(provider, memory.context(), last_code, directive)
+        with agent_trace.span("generate", iteration=i) as _sp:
+            code = _generate_code(provider, memory.context(), last_code, directive)
+            _sp.set(code_len=len(code or ""))
         emit({"type": "code", "iteration": i, "code": code})
 
         # Pre-execution lifecycle hook (kimi-code idea): audit + allow/block gate.
-        gate = pre_run(code, task=task)
+        with agent_trace.span("prerun_hook", iteration=i) as _sp:
+            gate = pre_run(code, task=task)
+            _sp.set(allowed=bool(gate.allowed), reason=gate.reason)
         if not gate.allowed:
             emit({"type": "blocked", "iteration": i, "reason": gate.reason})
             result = RunResult(False, -1, "", "", 0.0, f"blocked by policy: {gate.reason}")
         else:
             emit({"type": "run", "iteration": i, "message": "Running it in the Docker sandbox…"})
-            result = run_python(code)
+            with agent_trace.span("docker_run", iteration=i) as _sp:
+                result = run_python(code)
+                _sp.set(ok=bool(result.ok), seconds=round(result.seconds, 2),
+                        exit_code=result.exit_code)
         emit({"type": "run_result", "iteration": i, "ok": result.ok, "summary": result.summary,
               "stdout": result.stdout, "stderr": result.stderr, "error": result.error})
 
-        verdict = _reflect(provider, task, code, result, conversation)
+        with agent_trace.span("reflect", iteration=i) as _sp:
+            verdict = _reflect(provider, task, code, result, conversation)
+            _sp.set(score=int(verdict.get("score", 0)), done=bool(verdict.get("done")),
+                    relevant=verdict.get("relevant"))
         emit({"type": "reflect", "iteration": i, "verdict": verdict})
         if verdict.get("relevant") is False and i < max_iters:
             emit({"type": "status",
@@ -317,4 +329,5 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     )
     emit({"type": "final", "success": res.success, "answer": res.answer,
           "code": res.best_code, "output": res.best_output, "iterations": len(attempts)})
+    agent_trace.set(success=res.success, iterations=len(attempts)).end()
     return res
