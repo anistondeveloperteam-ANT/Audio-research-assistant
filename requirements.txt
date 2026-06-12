@@ -51,15 +51,40 @@ openai==1.109.1
 # research loop if this isn't installed, so it's safe to omit for a minimal setup.
 langgraph==1.2.4
 
+# --- Distributed multi-agent execution (optional; all OFF by default) ---
+# graph.py checkpoints (SqliteSaver). celery+redis power the optional task queue
+# (QUEUE_ENABLED=true); without them the app runs the agent in-process. Worker:
+#   celery -A backend.agent.celery_app worker --pool=solo
+langgraph-checkpoint-sqlite==3.1.0
+celery==5.6.3
+redis==8.0.0
+
 # --- Google Gemini (embeddings: EMBEDDING_PROVIDER=google) ---
 google-genai==1.75.0
 
 # --- HTTP + external search (Ollama calls, web/GitHub/PDF retrieval) ---
 requests==2.34.1
-beautifulsoup4==4.14.3    # readable-text extraction for web pages (external search)
+beautifulsoup4==4.14.3    # readable-text extraction for web pages (external search; also the
+                          # automatic fallback when Crawl4AI is off/missing — see below)
+
+# OPTIONAL: Crawl4AI page extraction (EXTERNAL_USE_CRAWL4AI=true). Renders JS in a headless
+# browser and returns BM25-filtered markdown keyed to the query. Install SEPARATELY (heavy):
+#   pip install crawl4ai==0.8.9  &&  python -m playwright install chromium   # or: crawl4ai-setup
+# NOTE: crawl4ai pulls a litellm fork that wants openai>=2.8; this project pins openai==1.109.1.
+# That conflict is benign here — we use only Crawl4AI's browser + BM25 markdown, never its LLM
+# features — so keep openai==1.109.1. If Crawl4AI is absent, fetch_page_text falls back to bs4.
+# crawl4ai==0.8.9
 
 # --- Misc utilities ---
 tqdm==4.67.3
+
+# --- Observability (optional: LLM tracing; only used when LANGFUSE_ENABLED=true) ---
+# The app degrades to a no-op if this is missing or the server is unreachable.
+langfuse==4.7.1
+# Pin protobuf: langfuse's OpenTelemetry deps otherwise pull protobuf 6.x, which
+# crashes transformers/torch model loading on Windows (native access violation).
+# 5.29.5 satisfies both OpenTelemetry and the ML stack.
+protobuf==5.29.5
 
 # ======================================================================
 # OPTIONAL: OCR fallback for scanned / image-only PDFs (ENABLE_OCR).
@@ -79,3 +104,6 @@ pytest==9.0.3
 pyflakes==3.4.0
 autoflake==2.3.3
 vulture==2.16
+# LLM-quality gates (tests/test_llm_quality.py). Opt-in: skips unless DEEPEVAL_ENABLED=true
+# and a judge-model key is set, so the normal offline suite is unaffected.
+deepeval==4.0.6

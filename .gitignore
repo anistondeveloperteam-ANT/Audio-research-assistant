@@ -62,3 +62,8 @@ Thumbs.db
 !.claude/skills/
 !.claude/skills/**
 .claude/settings.local.json
+
+# DeepEval runtime working dir + telemetry (created when the quality gates run)
+.deepeval/
+.deepeval_telemetry.txt
+.deepeval-cache.json
