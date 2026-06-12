@@ -240,11 +240,14 @@
     });
     const targets = [];
     while (walker.nextNode()) targets.push(walker.currentNode);
+    // Count THIS message's own sources (attached before render on history restore) so saved
+    // answers chip their [n] correctly — not just the live answer in state.currentSources.
+    const owner = root.closest && root.closest(".msg");
+    const nSources = ((owner && owner._sources) || state.currentSources || []).length;
     for (const node of targets) {
       const frag = document.createDocumentFragment();
       let last = 0;
       const s = node.nodeValue;
-      const nSources = (state.currentSources || []).length;
       s.replace(/\[(\d+)\]/g, (m, n, idx) => {
         if (idx > last) frag.appendChild(document.createTextNode(s.slice(last, idx)));
         const num = parseInt(n, 10);
@@ -491,6 +494,7 @@
     const h = addAssistantMessage();
     h.statusEl.style.display = "none";
     h.md.style.display = "";
+    h.el._sources = turn.sources || [];   // attach BEFORE render so [n] chips + drawer work
     renderMarkdown(h.md, turn.content);
     finalizeTools(h, turn.sources || []);
   }
