@@ -606,7 +606,6 @@
       if (st === "local_pdf") {
         if (s.section) meta += `<span class="chip">${esc(s.section)}</span>`;
         if (pages) meta += `<span class="chip">${pages}</span>`;
-        if (s.graph_reason) meta += `<span class="chip">Graph: ${esc(s.graph_reason)}</span>`;
       } else {
         if (s.file_path) {
           const loc = esc(s.file_path) + (s.line_start ? ":" + s.line_start + (s.line_end ? "-" + s.line_end : "") : "");
@@ -629,6 +628,18 @@
         const ex = t.classList.toggle("expanded");
         more.textContent = ex ? "Show less" : "Show more";
       });
+      // Whole card opens the source in a new tab (web/online sources have a URL; local
+      // papers don't). Clicking the title link, the Show more toggle, or selecting text
+      // still behaves normally.
+      if (s.url) {
+        card.classList.add("clickable");
+        card.title = "Open source in a new tab";
+        card.addEventListener("click", (e) => {
+          if (e.target.closest("a") || e.target.closest(".sc-more")) return;
+          if (String(window.getSelection() || "")) return;
+          window.open(s.url, "_blank", "noopener,noreferrer");
+        });
+      }
       body.appendChild(card);
     });
   }
