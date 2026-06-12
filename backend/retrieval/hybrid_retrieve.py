@@ -28,8 +28,10 @@ Backward compatible:
 
 import os
 import re
+import time
 import warnings
 import logging
+import concurrent.futures
 from collections import defaultdict
 
 from dotenv import load_dotenv
@@ -61,6 +63,8 @@ warnings.filterwarnings("ignore")
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -366,31 +370,55 @@ def _hybrid_retrieve_core(query: str, top_k: int = 10):
     )
 
     # Ranking A -- vector search with original question
-    debug_print("Vector search (original question)...")
-    vector_orig = vector_search(query, top_k=vec_k)
-    for r in vector_orig:
-        r["source"] = f"{r.get('source') or 'vector'}_orig"
+    # Rankings A/B/C are INDEPENDENT (each derived only from the query), so they run
+    # CONCURRENTLY here. The fusion order below is unchanged (vector_orig, [hyde], bm25),
+    # so RRF/rerank/MMR see identical inputs — only the wall-clock improves.
+    def _stage_vector_orig():
+        t = time.time()
+        out = vector_search(query, top_k=vec_k)
+        for r in out:
+            r["source"] = f"{r.get('source') or 'vector'}_orig"
+        logger.info("retrieval stage vector_orig: %d hits in %.2fs", len(out), time.time() - t)
+        return out
 
-    rankings = [vector_orig]
-
-    # Ranking B -- vector search with HyDE-expanded passage (NEW Batch 3)
-    if ENABLE_HYDE:
+    def _stage_vector_hyde():
+        if not ENABLE_HYDE:
+            return None
+        t = time.time()
         try:
             hyde_text = hyde_expand(query)
-            if hyde_text and hyde_text.strip() != query.strip():
-                debug_print("Vector search (HyDE expansion)...")
-                vector_hyde = vector_search(hyde_text, top_k=vec_k)
-                for r in vector_hyde:
-                    r["source"] = f"{r.get('source') or 'vector'}_hyde"
-                rankings.append(vector_hyde)
+            if not (hyde_text and hyde_text.strip() != query.strip()):
+                return None
+            out = vector_search(hyde_text, top_k=vec_k)
+            for r in out:
+                r["source"] = f"{r.get('source') or 'vector'}_hyde"
+            logger.info("retrieval stage vector_hyde: %d hits in %.2fs", len(out), time.time() - t)
+            return out
         except Exception as exc:
             debug_print(f"HyDE expansion failed (non-fatal): {exc}")
+            return None
 
-    # Ranking C -- field-weighted BM25 with original question
-    debug_print("Field-weighted BM25 search...")
-    keyword_results = keyword_search(query, top_k=bm_k)
-    for r in keyword_results:
-        r["source"] = "bm25"
+    def _stage_bm25():
+        t = time.time()
+        out = keyword_search(query, top_k=bm_k)
+        for r in out:
+            r["source"] = "bm25"
+        logger.info("retrieval stage bm25: %d hits in %.2fs", len(out), time.time() - t)
+        return out
+
+    t_par = time.time()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+        f_orig = ex.submit(_stage_vector_orig)
+        f_hyde = ex.submit(_stage_vector_hyde)
+        f_bm25 = ex.submit(_stage_bm25)
+        vector_orig = f_orig.result()
+        vector_hyde = f_hyde.result()
+        keyword_results = f_bm25.result()
+    logger.info("retrieval parallel (vector+hyde+bm25): %.2fs", time.time() - t_par)
+
+    rankings = [vector_orig]
+    if vector_hyde:
+        rankings.append(vector_hyde)
     rankings.append(keyword_results)
 
     # RRF fusion across all rankings
@@ -419,7 +447,9 @@ def _hybrid_retrieve_core(query: str, top_k: int = 10):
     # Reranker uses the ORIGINAL question (not HyDE expansion) because
     # cross-encoders are trained on natural-language query / doc pairs.
     debug_print("Reranking against original question...")
+    t_rr = time.time()
     reranked = rerank(query, candidates, top_k=rerank_n)
+    logger.info("retrieval stage rerank: %d candidates in %.2fs", len(candidates), time.time() - t_rr)
 
     reranked = apply_chunk_type_boost(query, reranked)
 

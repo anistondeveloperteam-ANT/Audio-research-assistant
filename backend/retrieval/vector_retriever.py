@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 import warnings
 import logging
 
@@ -50,10 +51,16 @@ def connect():
     )
 
 
+_embed_lock = threading.Lock()
+
+
 def embed_query(query: str):
-    """Embed the query via the configured provider (Google Gemini or local)."""
+    """Embed the query via the configured provider (Google Gemini or local). Serialized so
+    concurrent retrieval stages (parallel vector + HyDE) are safe with a non-thread-safe local
+    embedding model. Uncontended (negligible) on single-threaded paths like ingestion."""
     from backend.common.embeddings import embed_query as _embed
-    return _embed(query)
+    with _embed_lock:
+        return _embed(query)
 
 
 def _oracle_vector_search(query_vector, top_k: int = 10):
