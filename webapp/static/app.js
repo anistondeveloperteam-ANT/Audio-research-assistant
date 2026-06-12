@@ -640,7 +640,8 @@
         card.title = "Open source in a new tab";
         card.addEventListener("click", (e) => {
           if (e.target.closest("a") || e.target.closest(".sc-more")) return;
-          if (String(window.getSelection() || "")) return;
+          const sel = window.getSelection && window.getSelection();
+          if (sel && !sel.isCollapsed && sel.toString().trim()) return;  // mid text-selection
           window.open(s.url, "_blank", "noopener,noreferrer");
         });
       }

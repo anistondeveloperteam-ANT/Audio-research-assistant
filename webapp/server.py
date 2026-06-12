@@ -22,7 +22,7 @@ from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import (
-    FileResponse, JSONResponse, RedirectResponse, StreamingResponse,
+    FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -125,12 +125,27 @@ def _require_owner(request: Request, session_id: str) -> None:
 _NO_STORE = {"Cache-Control": "no-store, must-revalidate"}
 
 
+def _index_html() -> str:
+    """index.html with a cache-busting ?v=<mtime> appended to the local app.js/styles.css URLs,
+    so the browser always fetches the current build after a deploy — no hard-refresh needed."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    ver = 0
+    for name in ("app.js", "styles.css"):
+        try:
+            ver = max(ver, int((STATIC / name).stat().st_mtime))
+        except OSError:
+            pass
+    return (html.replace("/static/app.js", f"/static/app.js?v={ver}")
+                .replace("/static/styles.css", f"/static/styles.css?v={ver}"))
+
+
 @app.get("/")
 def index(request: Request):
     if webauth.auth_enabled() and not request.session.get("user_id"):
         return RedirectResponse("/login")
-    # no-store so the browser always re-checks auth on "/" (never serves a stale shell).
-    return FileResponse(str(STATIC / "index.html"), headers=_NO_STORE)
+    # no-store so the browser always re-checks auth on "/" (never serves a stale shell), and the
+    # ?v=<mtime> on app.js/styles.css guarantees a code change is picked up without a hard refresh.
+    return HTMLResponse(_index_html(), headers=_NO_STORE)
 
 
 @app.get("/login")
