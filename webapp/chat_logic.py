@@ -717,7 +717,8 @@ def stream_chat_events(
                         if err is not None:
                             raise err
                         break
-                    _sp.set(model=getattr(provider, "model", None), output_len=len(answer))
+                    _sp.set(model=getattr(provider, "model", None), output_len=len(answer),
+                            tokens_out_est=len(answer) // 4)   # ~4 chars/token (no exact usage)
 
                 yield {"type": "status", "message": "Checking for runnable Python simulation..."}
                 with trace.span("code_simulation") as _sp:
@@ -860,7 +861,8 @@ def stream_chat_events(
                         answer_parts.append(chunk)
                         yield {"type": "token", "text": chunk}
                 clean_body = "".join(answer_parts)
-                _sp.set(model=getattr(provider, "model", None), output_len=len(clean_body))
+                _sp.set(model=getattr(provider, "model", None), output_len=len(clean_body),
+                        tokens_out_est=len(clean_body) // 4)
     except Exception as exc:
         gen_failed = True
         msg = f"\n\n_Answer generation failed: {exc}_"
