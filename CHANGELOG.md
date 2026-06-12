@@ -13,6 +13,15 @@ companion to the git history.
 
 ## 2026-06-12
 
+### Coding-agent runs now persist across reopen
+- Previously a coding task routed to `/api/agent` and was **view-only** — the live "think → write
+  → run → check" cards were never saved, so reopening the chat lost the whole coding turn. Now the
+  server saves each agent run as a normal **user + assistant turn pair** (final answer + code +
+  output as markdown) via `_persist_agent_run`, and the frontend advances the turn index like the
+  main chat. Coding turns reload exactly like normal answers. Added `tests/test_agent_persistence.py`.
+- New `python -m backend.memory.reset_chats [--yes]` — backs up then empties the chat history +
+  answer cache (leaves `auth.db` and Oracle untouched). Tested.
+
 ### Lean the stack — remove unused optional systems (production cleanup)
 - Compared every optional vs. working tool against the actual `.env` and kept only what's used
   and best‑in‑class. **Removed completely** (code, deps, flags, tests, docs): **Crawl4AI** page

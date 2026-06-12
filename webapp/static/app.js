@@ -894,7 +894,9 @@
   async function sendAgent(text) {
     if (inner().querySelector(".welcome")) inner().innerHTML = "";
     $("input").value = ""; autosize();
-    addUserMessage(text, state.nextTurnIndex);   // view-only; agent runs aren't persisted
+    const userIndex = state.nextTurnIndex;
+    addUserMessage(text, userIndex);
+    state.nextTurnIndex = userIndex + 2;   // server appends user(+0) then assistant(+1)
     setStreaming(true);
     const h = addAssistantMessage();
     h.statusText.textContent = "Agent working…";

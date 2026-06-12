@@ -496,13 +496,39 @@ def _recent_conversation(request: Request, session_id: str,
     return "\n".join(lines)
 
 
+def _persist_agent_run(mem, session_id: str, task: str, res) -> None:
+    """Save a coding-agent run as a normal user+assistant turn pair so it reloads like any
+    other chat. The live step cards are ephemeral; the saved turn is the final code + output,
+    rendered as markdown on reopen. Never raises — persistence must not break the response."""
+    try:
+        parts = []
+        answer = (getattr(res, "answer", "") or "").strip()
+        code = (getattr(res, "best_code", "") or "").strip()
+        output = (getattr(res, "best_output", "") or "").strip()
+        if answer:
+            parts.append(answer)
+        if code:
+            parts.append(f"```python\n{code}\n```")
+        if output:
+            parts.append(f"**Output:**\n```text\n{output}\n```")
+        content = "\n\n".join(parts) or "_(the agent produced no result)_"
+        mem.append_turn(session_id, "user", task)
+        mem.append_turn(session_id, "assistant", content)
+    except Exception:
+        pass
+
+
 @app.post("/api/agent")
 def agent(request: Request, body: dict = Body(...)):
     task = (body.get("question") or body.get("task") or "").strip()
     use_search = bool(body.get("use_search", False))   # off by default = faster
     if not task:
         return JSONResponse({"error": "task is required"}, status_code=400)
-    conversation = _recent_conversation(request, body.get("session_id") or "")
+    session_id = (body.get("session_id") or "").strip()
+    if session_id:
+        _require_owner(request, session_id)   # 403/404 before streaming if not the caller's
+    conversation = _recent_conversation(request, session_id)
+    mem = chat_logic.memory()
 
     import queue
     import threading
@@ -513,7 +539,9 @@ def agent(request: Request, body: dict = Body(...)):
     def worker():
         try:
             from backend.agent.loop import run_agent
-            run_agent(task, use_search=use_search, conversation=conversation, on_event=q.put)
+            res = run_agent(task, use_search=use_search, conversation=conversation, on_event=q.put)
+            if session_id:
+                _persist_agent_run(mem, session_id, task, res)   # survives reopen
         except Exception as exc:
             q.put({"type": "error", "message": str(exc)})
         finally:
