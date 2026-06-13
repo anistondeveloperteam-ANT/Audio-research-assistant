@@ -168,6 +168,75 @@ def run_stage(label: str, module: str, extra_args=None) -> int:
     return subprocess.call(cmd, cwd=str(ROOT))
 
 
+# ----------------------------------------------------------------------
+# Re-index a single paper (repair) — delete its rows, keep the PDF, re-ingest
+# ----------------------------------------------------------------------
+def _resolve_target(filename: str, names):
+    """Resolve a user-supplied name to one PDF: exact match, else a UNIQUE case-insensitive
+    substring match. Returns (matched_name | None, error_message | None)."""
+    if filename in names:
+        return filename, None
+    matches = [n for n in names if filename.lower() in n.lower()]
+    if len(matches) == 1:
+        return matches[0], None
+    if not matches:
+        return None, f"no PDF in data/papers/ matches '{filename}'"
+    return None, f"'{filename}' matches {len(matches)} PDFs ({', '.join(matches)}); be more specific"
+
+
+def _delete_paper_rows(file_name: str) -> int:
+    """Delete a paper's indexed rows (concept links, chunks, paper) by file_name. Keeps the PDF.
+    Returns how many paper rows were removed."""
+    conn = connect_oracle()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM papers WHERE file_name = :n", {"n": file_name})
+    ids = [r[0] for r in cur.fetchall()]
+    for pid in ids:
+        try:
+            cur.execute("DELETE FROM chunk_concepts WHERE chunk_id IN "
+                        "(SELECT id FROM chunks WHERE paper_id = :p)", {"p": pid})
+        except Exception:
+            pass
+        cur.execute("DELETE FROM chunks WHERE paper_id = :p", {"p": pid})
+        cur.execute("DELETE FROM papers WHERE id = :p", {"p": pid})
+    conn.commit()
+    conn.close()
+    return len(ids)
+
+
+def reindex_paper(filename: str) -> int:
+    """Re-process ONE paper from scratch: clear its indexed rows (keep the PDF), then run the full
+    ingest -> embed -> vector-migrate stages. Other papers stay skipped by content hash, so only
+    this one is reprocessed. Use to repair a paper that was indexed with missing pages."""
+    names = [p.name for p in PAPERS_DIR.glob("*.pdf")]
+    target, err = _resolve_target(filename, names)
+    if err:
+        print(f"ERROR: {err}", file=sys.stderr)
+        return 1
+
+    ok, oerr = oracle_reachable()
+    if not ok:
+        print(f"ERROR: cannot reach Oracle at {ORACLE_DSN}: {oerr}", file=sys.stderr)
+        print("       Start it first, e.g.  docker start oracle-ai-db", file=sys.stderr)
+        return 1
+
+    removed = _delete_paper_rows(target)
+    print(f"Re-indexing '{target}' — cleared {removed} existing paper row(s); the PDF is kept.")
+
+    stages = list(FULL_STAGES)
+    if turbovec_stage_enabled():
+        stages.append(TURBOVEC_STAGE)
+
+    started = time.time()
+    for label, module, extra_args in stages:
+        code = run_stage(label, module, extra_args)
+        if code != 0:
+            print(f"\nFAILED at stage: {label} (exit code {code}).", file=sys.stderr)
+            return code
+    print(f"\nRe-index complete in {time.time() - started:.0f}s for '{target}'.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build, refresh, or inspect the search index.")
     parser.add_argument("--incremental", action="store_true",
@@ -178,10 +247,16 @@ def main() -> int:
                         help="Write a corpus coverage report (papers, chunks, topics, gaps) and exit.")
     parser.add_argument("--inspect-chunks", nargs="?", const="", metavar="PAPER_ID",
                         help="List papers + chunk counts, or dump one paper's chunks. No rebuild.")
+    parser.add_argument("--reindex", metavar="FILENAME",
+                        help="Re-process ONE paper from scratch (delete its rows, keep the PDF, "
+                             "re-ingest) — use to repair a paper indexed with missing pages.")
     args = parser.parse_args()
 
     if args.status:
         return show_status()
+
+    if args.reindex:
+        return reindex_paper(args.reindex)
 
     if args.corpus_report:
         from backend.evaluation.corpus_report import run_report
