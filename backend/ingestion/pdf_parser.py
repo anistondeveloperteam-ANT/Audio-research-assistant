@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from pathlib import Path
@@ -18,6 +19,14 @@ os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+logger = logging.getLogger(__name__)
+# Keep Docling quiet during ingestion — no scary multi-line "Stage … failed" stack traces.
+for _name in ("docling", "docling.utils", "docling.pipeline", "docling_core", "docling_ibm_models"):
+    try:
+        logging.getLogger(_name).setLevel(logging.ERROR)
+    except Exception:
+        pass
 
 
 EXTRACTED_DIR = Path("data/extracted")
@@ -163,13 +172,20 @@ def _is_oom_error(exc: Exception) -> bool:
             or "cuda error" in msg or "cublas" in msg or "cudnn" in msg)
 
 
-def _empty_cuda_cache() -> None:
-    try:
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:
-        pass
+def _should_hide_cuda() -> bool:
+    """During ingestion, parsing runs CUDA-free by DEFAULT so Docling never even ATTEMPTS the GPU
+    (its CPU AcceleratorDevice is not always honoured, and a GPU attempt OOMs std::bad_alloc on
+    small cards). Opt back in with DOCLING_DEVICE=cuda."""
+    return (os.getenv("DOCLING_DEVICE") or "cpu").strip().lower() != "cuda"
+
+
+def force_cpu_parsing() -> None:
+    """Hide CUDA from THIS process so Docling / torch / onnxruntime cannot initialize the GPU while
+    parsing. Call ONCE, before importing torch or docling. Scoped to the ingestion parse process:
+    the reranker/embedder use the GPU at QUERY time (a separate process), and embedding is a
+    separate ingestion stage (embed_chunks), so neither is affected."""
+    if _should_hide_cuda():
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 
 def _pages_needing_ocr(pages, min_chars: int = MIN_PAGE_CHARS):
@@ -222,21 +238,15 @@ def _docling_convert(pdf_path: Path, device: str):
 
 
 def _docling_safe(pdf_path: Path):
-    """Docling with OOM safety: on out-of-memory, empty the CUDA cache and retry on CPU; on any
-    other failure, return None so the caller falls back to the PyMuPDF per-page text."""
-    device = docling_device()
+    """Parse with Docling (CPU during ingestion — CUDA is hidden, so there is no GPU attempt). On
+    ANY failure, log ONE clean INFO line and return None so the caller falls back to PyMuPDF text.
+    This fallback is for GENUINE parse failures only — there is no GPU attempt left to OOM."""
     try:
-        return _docling_convert(pdf_path, device)
+        return _docling_convert(pdf_path, docling_device())
     except Exception as e:
-        if _is_oom_error(e) and device != "cpu":
-            _empty_cuda_cache()
-            print(f"  Docling OOM on {device}; retrying layout on CPU…")
-            try:
-                return _docling_convert(pdf_path, "cpu")
-            except Exception as e2:
-                print(f"  Docling CPU retry failed: {str(e2)[:200]}; using PyMuPDF text.")
-                return None
-        print(f"  Docling unavailable/failed for {pdf_path.name}: {str(e)[:200]}; using PyMuPDF text.")
+        kind = "out-of-memory" if _is_oom_error(e) else "parse error"
+        logger.info("Docling %s for %s — using PyMuPDF text (%s).",
+                    kind, pdf_path.name, str(e).splitlines()[0][:160])
         return None
 
 
@@ -321,6 +331,7 @@ def parse_pdf(pdf_path: Path):
 
 
 if __name__ == "__main__":
+    force_cpu_parsing()        # parse CUDA-free (no GPU attempt), same as the ingestion pipeline
     pdfs = list(Path("data/papers").glob("*.pdf"))
 
     if not pdfs:

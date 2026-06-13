@@ -1,4 +1,5 @@
 """PDF parsing + OCR device/coverage behaviour — fully mocked (no Docling, no real OCR, no fitz)."""
+import os
 import sys
 import types
 from pathlib import Path
@@ -74,22 +75,27 @@ def test_oom_error_detection():
     assert pp._is_oom_error(ValueError("a normal error")) is False
 
 
-def test_docling_oom_falls_back_to_cpu(monkeypatch):
-    calls = []
+def test_force_cpu_parsing_hides_cuda_by_default(monkeypatch):
+    monkeypatch.delenv("DOCLING_DEVICE", raising=False)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    assert pp._should_hide_cuda() is True
+    pp.force_cpu_parsing()
+    assert os.environ.get("CUDA_VISIBLE_DEVICES") == ""    # GPU invisible -> Docling can't attempt it
 
-    def fake_convert(pdf_path, device):
-        calls.append(device)
-        if device != "cpu":
-            raise RuntimeError("std::bad_alloc")
-        return {"raw_markdown": "# ok\n" + "a" * 500, "tables": [], "equations": []}
 
-    monkeypatch.setattr(pp, "_docling_convert", fake_convert)
-    monkeypatch.setattr(pp, "docling_device", lambda: "cuda")
-    emptied = {"n": 0}
-    monkeypatch.setattr(pp, "_empty_cuda_cache", lambda: emptied.__setitem__("n", emptied["n"] + 1))
-    out = pp._docling_safe(Path("x.pdf"))
-    assert calls == ["cuda", "cpu"]                        # GPU failed -> retried on CPU
-    assert emptied["n"] == 1 and out["raw_markdown"]        # cache emptied, CPU result used
+def test_docling_device_cuda_keeps_gpu_visible(monkeypatch):
+    monkeypatch.setenv("DOCLING_DEVICE", "cuda")
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    assert pp._should_hide_cuda() is False
+    pp.force_cpu_parsing()
+    assert "CUDA_VISIBLE_DEVICES" not in os.environ        # opt-in: GPU layout allowed
+
+
+def test_docling_safe_falls_back_to_none_on_failure(monkeypatch):
+    def boom(pdf, dev):
+        raise RuntimeError("docling not installed")
+    monkeypatch.setattr(pp, "_docling_convert", boom)
+    assert pp._docling_safe(Path("x.pdf")) is None         # genuine failure -> PyMuPDF text path
 
 
 # ---- parse_pdf: skip OCR on digital pages, coverage, per-page rescue ---
