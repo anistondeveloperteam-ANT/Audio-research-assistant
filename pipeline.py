@@ -105,6 +105,20 @@ def show_status() -> int:
         print(f"turbovec cache       : {enabled}, {state}")
     except Exception:
         print("turbovec cache       : unavailable")
+
+    # Compute device — shows whether the GPU (e.g. an RTX 3050) is actually used. The reranker
+    # always runs here; embeddings only when EMBEDDING_PROVIDER=local (else they're cloud).
+    try:
+        import torch
+        from backend.common.device import resolve_device
+        from backend.common.embeddings import provider as embed_provider
+        gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none"
+        embed_dev = resolve_device("EMBEDDING_DEVICE") if embed_provider() == "local" else "cloud"
+        print(f"Compute device       : GPU={gpu}; embeddings={embed_dev}, "
+              f"reranker={resolve_device('RERANKER_DEVICE')}")
+    except Exception:
+        pass
+
     print("\nRun `python pipeline.py` to (re)build, or `python run.py` to use the app.")
     return 0
 
