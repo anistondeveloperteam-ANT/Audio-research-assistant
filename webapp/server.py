@@ -448,7 +448,10 @@ async def upload(files: list[UploadFile] = File(...)):
 
 
 @app.post("/api/ingest")
-def run_ingest():
+def run_ingest(body: dict = Body(default={})):
+    # Record which just-uploaded files this run covers, so a cancel removes exactly those.
+    ingest.begin_ingest((body or {}).get("filenames") or [])
+
     def gen():
         try:
             for event in ingest.stream_ingest():
@@ -457,6 +460,12 @@ def run_ingest():
             yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+@app.post("/api/ingest/cancel")
+def cancel_ingest():
+    """Cancel the in-flight ingest: stop its subprocess and remove only the in-progress paper(s)."""
+    return ingest.cancel_ingest()
 
 
 # ----------------------------------------------------------------------

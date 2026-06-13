@@ -13,6 +13,7 @@ import hashlib
 import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Tuple
 
@@ -270,12 +271,103 @@ def _clear_retrieval_caches(remove_turbovec_files: bool = False) -> None:
 # ----------------------------------------------------------------------
 # Streaming ingestion
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# In-flight ingest tracking (so the UI ✕ can cancel + clean up). Single concurrent
+# ingest is assumed (a personal app); guarded by a lock for the cancel cross-thread call.
+# ----------------------------------------------------------------------
+_ingest_state: Dict[str, Any] = {"proc": None, "cancelled": False, "filenames": []}
+_ingest_lock = threading.Lock()
+
+
+def begin_ingest(filenames) -> None:
+    """Mark the start of an ingest run and which just-uploaded files it covers, so a cancel removes
+    exactly those (and nothing else)."""
+    with _ingest_lock:
+        _ingest_state["proc"] = None
+        _ingest_state["cancelled"] = False
+        _ingest_state["filenames"] = [str(f) for f in (filenames or [])]
+
+
+def _register_ingest_proc(proc) -> None:
+    with _ingest_lock:
+        _ingest_state["proc"] = proc
+
+
+def _ingest_cancelled() -> bool:
+    with _ingest_lock:
+        return bool(_ingest_state["cancelled"])
+
+
+def _delete_rows_by_filename(file_name: str) -> int:
+    """Delete indexed rows (chunk_concepts, chunks, papers) for ONE paper by file_name. Returns the
+    paper rows removed. Best-effort: if Oracle is unreachable there's nothing committed to clean."""
+    try:
+        conn = _connect()
+    except Exception:
+        return 0
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM papers WHERE file_name = :n", {"n": file_name})
+        ids = [r[0] for r in cur.fetchall()]
+        for pid in ids:
+            try:
+                cur.execute("DELETE FROM chunk_concepts WHERE chunk_id IN "
+                            "(SELECT id FROM chunks WHERE paper_id = :p)", {"p": pid})
+            except Exception:
+                pass
+            cur.execute("DELETE FROM chunks WHERE paper_id = :p", {"p": pid})
+            cur.execute("DELETE FROM papers WHERE id = :p", {"p": pid})
+        conn.commit()
+        cur.close()
+        conn.close()
+        return len(ids)
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return 0
+
+
+def cancel_ingest() -> Dict[str, Any]:
+    """Stop the in-flight ingest: terminate its subprocess and remove ONLY the in-progress papers'
+    data — their PDF files + any rows already inserted. Other papers are untouched."""
+    with _ingest_lock:
+        _ingest_state["cancelled"] = True
+        proc = _ingest_state["proc"]
+        filenames = list(_ingest_state["filenames"])
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+        except Exception:
+            pass
+    removed = []
+    for name in filenames:
+        _delete_rows_by_filename(name)
+        try:
+            p = PAPERS_DIR / name
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
+        removed.append(name)
+    _clear_retrieval_caches(remove_turbovec_files=True)
+    return {"cancelled": True, "removed": removed}
+
+
 def stream_ingest() -> Iterator[Dict[str, Any]]:
-    """Run the 3 ingestion stages, yielding progress events:
-    {type: stage|log|error|done}. Page-coverage warnings (pages that failed/were not indexed)
-    are collected from the stage output and surfaced in the final 'done' event."""
+    """Run the ingestion stages, yielding progress events {type: stage|log|error|cancelled|done}.
+    Registers each stage subprocess so a concurrent cancel_ingest() can terminate it; checks the
+    cancel flag between stages. Page-coverage warnings are surfaced in the final 'done' event."""
     page_warnings = []
     for label, module, extra_args in _ingestion_stages():
+        if _ingest_cancelled():
+            yield {"type": "cancelled", "message": "Ingestion cancelled."}
+            return
         yield {"type": "stage", "label": label}
         try:
             proc = subprocess.Popen(
@@ -291,6 +383,7 @@ def stream_ingest() -> Iterator[Dict[str, Any]]:
         except Exception as exc:
             yield {"type": "error", "message": f"Could not start {label}: {exc}"}
             return
+        _register_ingest_proc(proc)
 
         if proc.stdout is not None:
             for raw in iter(proc.stdout.readline, ""):
@@ -304,6 +397,9 @@ def stream_ingest() -> Iterator[Dict[str, Any]]:
                 yield {"type": "log", "line": line}
             proc.stdout.close()
         code = proc.wait()
+        if _ingest_cancelled():
+            yield {"type": "cancelled", "message": "Ingestion cancelled — partial data removed."}
+            return
         if code != 0:
             yield {"type": "error", "message": f"{label} failed (exit code {code})."}
             return

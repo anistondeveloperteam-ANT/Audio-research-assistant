@@ -60,3 +60,43 @@ def test_ingest_log_noise_filter():
         "Vector migration complete.",
     ]:
         assert ingest._is_log_noise(keep) is False, keep
+
+
+def test_cancel_ingest_removes_only_the_in_progress_paper(tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest, "PAPERS_DIR", tmp_path)
+    (tmp_path / "new.pdf").write_bytes(b"%PDF-1.4 new")      # the in-progress upload
+    (tmp_path / "keep.pdf").write_bytes(b"%PDF-1.4 keep")    # an already-indexed paper
+    deleted_rows = []
+    monkeypatch.setattr(ingest, "_delete_rows_by_filename", lambda n: deleted_rows.append(n))
+    monkeypatch.setattr(ingest, "_clear_retrieval_caches", lambda **k: None)
+
+    class _Proc:
+        def __init__(self):
+            self.terminated = False
+        def poll(self):
+            return None                                       # still running
+        def terminate(self):
+            self.terminated = True
+        def wait(self, timeout=None):
+            return 0
+        def kill(self):
+            self.terminated = True
+
+    ingest.begin_ingest(["new.pdf"])
+    proc = _Proc()
+    ingest._register_ingest_proc(proc)
+
+    res = ingest.cancel_ingest()
+    assert res["cancelled"] is True and res["removed"] == ["new.pdf"]
+    assert proc.terminated is True                            # subprocess stopped
+    assert deleted_rows == ["new.pdf"]                        # only the in-progress paper's rows
+    assert not (tmp_path / "new.pdf").exists()                # its PDF removed
+    assert (tmp_path / "keep.pdf").exists()                   # other paper untouched
+
+
+def test_stream_ingest_exits_immediately_when_pre_cancelled(monkeypatch):
+    ingest.begin_ingest([])
+    with ingest._ingest_lock:
+        ingest._ingest_state["cancelled"] = True              # cancelled before any stage runs
+    events = list(ingest.stream_ingest())
+    assert events and events[0]["type"] == "cancelled"        # no subprocess spawned
