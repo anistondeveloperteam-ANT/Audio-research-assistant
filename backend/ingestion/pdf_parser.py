@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 
 import fitz
-from backend.ingestion.ocr_fallback import ocr_pdf_fallback
+from backend.ingestion.ocr_fallback import ocr_pages
 from dotenv import load_dotenv
 
 try:
@@ -136,93 +136,188 @@ def total_text_length(parsed):
     return total
 
 
-def build_ocr_parsed_result(pdf_path: Path, ocr_result):
-    return {
-        "parser": f"ocr_{ocr_result['engine']}",
-        "pages": [
-            {
-                "page": 1,
-                "text": ocr_result.get("text") or "",
-                "parser": f"ocr_{ocr_result['engine']}",
-            }
-        ],
-        "page_count": estimate_page_count(pdf_path),
-        "raw_markdown": "",
-        "tables": [],
-        "equations": [],
-    }
+# ----------------------------------------------------------------------
+# Configuration (read live so .env / tests take effect)
+# ----------------------------------------------------------------------
+# A page with fewer than this many extracted characters is treated as "text-poor"
+# (scanned / image-only) and becomes a candidate for OCR.
+MIN_PAGE_CHARS = int(os.getenv("OCR_MIN_PAGE_CHARS", "50"))
 
 
-_docling_converter = None
+def enable_ocr() -> bool:
+    """OCR is OFF by default. When ON, it runs ONLY on text-poor pages, on the CPU."""
+    return (os.getenv("ENABLE_OCR", "false") or "false").strip().lower() in ("1", "true", "yes", "on")
 
 
-def _get_docling_converter():
-    """Lazily build and cache the Docling converter (loads layout models once),
-    on the GPU when DEVICE allows."""
-    global _docling_converter
-    if _docling_converter is None:
-        from docling.document_converter import DocumentConverter
-        try:
-            from docling.document_converter import PdfFormatOption
-            from docling.datamodel.base_models import InputFormat
-            from docling.datamodel.pipeline_options import (
-                PdfPipelineOptions, AcceleratorOptions, AcceleratorDevice,
-            )
-            want = (os.getenv("DEVICE", "auto") or "auto").strip().lower()
-            device = AcceleratorDevice.CPU if want == "cpu" else AcceleratorDevice.CUDA
-            opts = PdfPipelineOptions()
-            opts.accelerator_options = AcceleratorOptions(num_threads=8, device=device)
-            _docling_converter = DocumentConverter(
-                format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
-            )
-        except Exception:
-            # Older/different Docling API — fall back to its default (auto device).
-            _docling_converter = DocumentConverter()
-    return _docling_converter
+def docling_device() -> str:
+    """Device for Docling LAYOUT parsing. Default CPU — parsing stays off the GPU, which is
+    reserved for the reranker/embedder. Set DOCLING_DEVICE=cuda to put layout on the GPU."""
+    return (os.getenv("DOCLING_DEVICE") or "cpu").strip().lower()
+
+
+def _is_oom_error(exc: Exception) -> bool:
+    """True for GPU/host out-of-memory failures (torch OOM, RapidOCR/onnx std::bad_alloc, etc.)."""
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    return ("outofmemory" in name or "bad_alloc" in msg or "out of memory" in msg
+            or "cuda error" in msg or "cublas" in msg or "cudnn" in msg)
+
+
+def _empty_cuda_cache() -> None:
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _pages_needing_ocr(pages, min_chars: int = MIN_PAGE_CHARS):
+    """1-based page numbers whose extracted text is too short to trust (likely scanned)."""
+    return [p["page"] for p in pages if len((p.get("text") or "").strip()) < min_chars]
+
+
+# ----------------------------------------------------------------------
+# Docling (layout / tables / reading order). OCR is DISABLED here on purpose:
+# Docling's RapidOCR self-selects CUDA via onnxruntime-gpu — independent of the
+# accelerator device below — and OOMs (std::bad_alloc) on small GPUs, silently
+# dropping pages. We do our own per-page OCR on the CPU instead (ocr_fallback).
+# ----------------------------------------------------------------------
+_docling_converters = {}
+
+
+def _configure_pipeline_options(opts):
+    """Turn Docling OCR OFF (born-digital text extraction only; no RapidOCR on the GPU)."""
+    opts.do_ocr = False
+    return opts
+
+
+def _get_docling_converter(device: str):
+    if device not in _docling_converters:
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import (
+            PdfPipelineOptions, AcceleratorOptions, AcceleratorDevice,
+        )
+        opts = PdfPipelineOptions()
+        _configure_pipeline_options(opts)
+        dev = AcceleratorDevice.CPU if device == "cpu" else AcceleratorDevice.CUDA
+        opts.accelerator_options = AcceleratorOptions(num_threads=8, device=dev)
+        print(f"  Docling layout device: {device} (do_ocr=False)")
+        _docling_converters[device] = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+        )
+    return _docling_converters[device]
+
+
+def _docling_convert(pdf_path: Path, device: str):
+    """Run Docling on a given device and return {raw_markdown, tables, equations}."""
+    converter = _get_docling_converter(device)
+    result = converter.convert(str(pdf_path))
+    md = clean_text(result.document.export_to_markdown())
+    if not md.strip():
+        raise RuntimeError("Docling produced empty output.")
+    return {"raw_markdown": md, "tables": extract_markdown_tables(md),
+            "equations": extract_equation_blocks(md)}
+
+
+def _docling_safe(pdf_path: Path):
+    """Docling with OOM safety: on out-of-memory, empty the CUDA cache and retry on CPU; on any
+    other failure, return None so the caller falls back to the PyMuPDF per-page text."""
+    device = docling_device()
+    try:
+        return _docling_convert(pdf_path, device)
+    except Exception as e:
+        if _is_oom_error(e) and device != "cpu":
+            _empty_cuda_cache()
+            print(f"  Docling OOM on {device}; retrying layout on CPU…")
+            try:
+                return _docling_convert(pdf_path, "cpu")
+            except Exception as e2:
+                print(f"  Docling CPU retry failed: {str(e2)[:200]}; using PyMuPDF text.")
+                return None
+        print(f"  Docling unavailable/failed for {pdf_path.name}: {str(e)[:200]}; using PyMuPDF text.")
+        return None
 
 
 def parse_with_docling(pdf_path: Path):
-    """Parse via Docling's Python API (layout, tables, reading order)."""
-    converter = _get_docling_converter()
-    result = converter.convert(str(pdf_path))
-    md_text = clean_text(result.document.export_to_markdown())
-    if not md_text.strip():
-        raise RuntimeError("Docling produced empty output.")
-
+    """Back-compat wrapper: Docling parse (no OCR) on the configured device."""
+    out = _docling_convert(pdf_path, docling_device())
     return {
         "parser": "docling",
-        "pages": [{"page": 1, "text": md_text, "parser": "docling"}],
+        "pages": [{"page": 1, "text": out["raw_markdown"], "parser": "docling"}],
         "page_count": estimate_page_count(pdf_path),
-        "raw_markdown": md_text,
-        "tables": extract_markdown_tables(md_text),
-        "equations": extract_equation_blocks(md_text),
+        "raw_markdown": out["raw_markdown"],
+        "tables": out["tables"],
+        "equations": out["equations"],
     }
 
 
 def parse_pdf(pdf_path: Path):
-    # Best-quality parser first: Docling (layout, tables, reading order).
-    # Falls back to fast PyMuPDF only if Docling errors, so ingestion never fails.
-    parsed = None
-    try:
-        parsed = parse_with_docling(pdf_path)
-    except Exception as e:
-        print(f"Docling failed for {pdf_path.name}; falling back to PyMuPDF. {str(e)[:300]}")
+    """Parse a PDF into per-page text with full coverage accounting and NO silent page loss.
 
-    if parsed is None:
-        parsed = parse_with_pymupdf(pdf_path)
+    1. PyMuPDF gives fast, reliable per-page text — the source of truth for which pages exist.
+    2. Docling (layout/tables, OCR OFF) enriches the document-level markdown, OOM-safe.
+    3. OCR runs ONLY on text-poor pages and ONLY if ENABLE_OCR=true, on the CPU.
+    4. Every page is accounted for (pages_indexed vs pages_total) with a clear warning for any
+       page that ends up empty — never dropped silently.
+    """
+    pages_total = estimate_page_count(pdf_path)
+    pm = parse_with_pymupdf(pdf_path)
+    pages = pm.get("pages", [])
 
-    # OCR fallback only if normal extraction is weak (scanned / image-only PDF).
-    if total_text_length(parsed) < 500:
-        print(f"Weak extracted text detected for {pdf_path.name}. Trying OCR fallback...")
-        ocr_result = ocr_pdf_fallback(pdf_path, max_pages=10)
+    docling = _docling_safe(pdf_path)
+    raw_markdown = (docling or {}).get("raw_markdown", "")
+    tables = (docling or {}).get("tables", [])
+    equations = (docling or {}).get("equations", [])
 
-        if ocr_result.get("text") and len(ocr_result["text"]) > total_text_length(parsed):
-            print(f"OCR fallback used: {ocr_result['engine']}")
-            parsed = build_ocr_parsed_result(pdf_path, ocr_result)
-        else:
-            print("OCR fallback did not improve extraction.")
+    # Auto OCR — text-poor pages only, CPU only, opt-in via ENABLE_OCR.
+    poor = _pages_needing_ocr(pages)
+    ocr_used = []
+    if poor and enable_ocr():
+        print(f"  OCR (cpu): {len(poor)} text-poor page(s) {poor} — OCRing on CPU…")
+        try:
+            recovered = ocr_pages(pdf_path, poor)
+        except Exception as e:
+            print(f"  OCR failed: {str(e)[:160]}")
+            recovered = {}
+        for p in pages:
+            t = recovered.get(p["page"])
+            if t and len(t.strip()) >= MIN_PAGE_CHARS:
+                p["text"] = t.strip()
+                p["parser"] = "ocr"
+                ocr_used.append(p["page"])
+    elif poor:
+        print(f"  OCR off (ENABLE_OCR=false): {len(poor)} text-poor page(s) {poor} not OCR'd.")
 
-    return parsed
+    # Coverage — from the per-page spine, regardless of which text source we chunk.
+    indexed = [p["page"] for p in pages if len((p.get("text") or "").strip()) >= MIN_PAGE_CHARS]
+    missing = [p["page"] for p in pages if p["page"] not in indexed]
+    warnings = []
+    if missing:
+        warnings.append(
+            f"WARNING: {len(missing)} page(s) failed/empty and are NOT indexed: {missing}")
+
+    # Chunk from Docling markdown when it covers the text well; else per-page (keeps real page nums).
+    pm_len = sum(len((p.get("text") or "")) for p in pages)
+    use_markdown = bool(raw_markdown) and len(raw_markdown) >= 0.6 * max(pm_len, 1)
+    if use_markdown and ocr_used:
+        extra = "\n\n".join((p.get("text") or "") for p in pages if p["page"] in ocr_used)
+        raw_markdown = (raw_markdown + "\n\n" + extra).strip()
+
+    return {
+        "parser": "docling" if use_markdown else pm.get("parser", "pymupdf"),
+        "pages": pages,
+        "page_count": pages_total or len(pages),
+        "raw_markdown": raw_markdown if use_markdown else "",
+        "tables": tables,
+        "equations": equations,
+        "pages_total": pages_total or len(pages),
+        "pages_indexed": len(indexed),
+        "pages_missing": missing,
+        "ocr_pages": ocr_used,
+        "warnings": warnings,
+    }
 
 
 if __name__ == "__main__":
@@ -238,7 +333,10 @@ if __name__ == "__main__":
     result = parse_pdf(sample)
 
     print("Parser used:", result["parser"])
-    print("Pages:", result["page_count"])
+    print("Pages indexed:", f"{result.get('pages_indexed')}/{result.get('pages_total')}")
+    print("OCR pages:", result.get("ocr_pages"))
+    for w in result.get("warnings", []):
+        print(w)
     print("Tables detected:", len(result["tables"]))
     print("Equations detected:", len(result["equations"]))
     print("\nText preview:\n")
