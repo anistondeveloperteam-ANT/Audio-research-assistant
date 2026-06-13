@@ -56,7 +56,7 @@ def _retries() -> int:
 def _concurrency() -> int:
     """How many situating-sentence LLM calls to run at once (cache-miss chunks). The dominant cost
     of ingestion is one call per chunk; running them concurrently cuts a 40-chunk paper from minutes
-    to seconds. Lower it if your provider's rate limit complains."""
+    to seconds. 1 = serial (no threads). Lower it if your provider's rate limit complains."""
     try:
         return max(1, int(os.getenv("CONTEXTUAL_CONCURRENCY", "6")))
     except (TypeError, ValueError):
@@ -168,9 +168,9 @@ def contextualize_chunks(doc_text: str, chunks: List[dict], provider=None) -> Li
     on-disk cache, and only calls the LLM for cache misses — running those calls CONCURRENTLY (the
     per-chunk LLM call is the dominant ingestion cost). Returns ['']*len when disabled. Never raises.
 
-    One cache-miss is processed first, sequentially, so the working model is promoted to the front
-    of the chain (a quota-exhausted model is then skipped for the rest); the remaining misses run in
-    parallel using that promoted order."""
+    The first cache-miss is processed sequentially to promote the working model to the front of the
+    chain (a quota-exhausted model is then skipped for the rest); the remaining misses run in
+    parallel with that promoted order — or serially when CONTEXTUAL_CONCURRENCY=1."""
     n = len(chunks)
     if not contextual_enabled() or n == 0:
         return [""] * n
@@ -179,7 +179,7 @@ def contextualize_chunks(doc_text: str, chunks: List[dict], provider=None) -> Li
     out: List[str] = [""] * n
     doc_prefix = (doc_text or "")[: _doc_chars()]
 
-    misses = []                       # (index, key) for chunks not already cached
+    misses = []                       # (index, chunk_text, cache_key) for chunks not already cached
     for idx, ch in enumerate(chunks):
         ctext = (ch.get("text") or "").strip()
         if not ctext:
@@ -193,28 +193,28 @@ def contextualize_chunks(doc_text: str, chunks: List[dict], provider=None) -> Li
     if not (misses and chain):
         return out
 
-    def _prompt_for(ctext: str) -> str:
-        return _PROMPT.format(doc=doc_prefix, chunk=ctext[:4000])
+    def _one(item):
+        idx, ctext, key = item
+        ctx = _run_chain(list(chain), _PROMPT.format(doc=doc_prefix, chunk=ctext[:4000]))
+        return idx, key, ctx
 
-    # 1) Warm up on the first miss (sequential) to promote the working provider in `chain`.
-    w_idx, w_ctext, w_key = misses[0]
-    out[w_idx] = _run_chain(chain, _prompt_for(w_ctext))
-    cache[w_key] = out[w_idx]
+    # 1) Warm up on the first miss (sequential) so the working provider is promoted in `chain`.
+    w_idx, w_key, w_ctx = _one(misses[0])
+    out[w_idx] = w_ctx
+    cache[w_key] = w_ctx
 
-    # 2) Run the remaining misses concurrently, each on its own copy of the (now-promoted) chain.
+    # 2) Remaining misses: parallel (default) or serial when concurrency is 1 (also the test path,
+    #    so the offline suite spawns no threads).
     rest = misses[1:]
-    if rest:
-        order = list(chain)
-
-        def _work(item):
-            idx, ctext, key = item
-            return idx, key, _run_chain(list(order), _prompt_for(ctext))
-
-        workers = max(1, min(_concurrency(), len(rest)))
+    workers = max(1, min(_concurrency(), len(rest))) if rest else 1
+    if rest and workers > 1:
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            for idx, key, ctx in ex.map(_work, rest):
-                out[idx] = ctx
-                cache[key] = ctx
+            results = list(ex.map(_one, rest))
+    else:
+        results = [_one(item) for item in rest]
+    for idx, key, ctx in results:
+        out[idx] = ctx
+        cache[key] = ctx
 
     _save_cache(cache)
     return out

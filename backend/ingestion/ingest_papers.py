@@ -12,10 +12,6 @@ from backend.ingestion.document_chunker import chunk_parsed_document
 from backend.ingestion.contextualizer import contextualize_chunks
 
 load_dotenv()
-# Ingestion parses CUDA-free: Docling layout runs on the CPU and never attempts the GPU (no
-# std::bad_alloc, no retries). The reranker/embedder still use the GPU at query time, and embedding
-# is a separate ingestion stage — neither is affected. Set DOCLING_DEVICE=cuda to opt back in.
-force_cpu_parsing()
 
 PAPERS_DIR = Path("data/papers")
 
@@ -124,6 +120,11 @@ def coverage_warnings(name: str, parsed: dict) -> list:
 
 
 def main():
+    # Hide the GPU from THIS parse process so Docling never attempts it (no std::bad_alloc, no
+    # retries). Done inside main() — NOT at import — so merely importing this module (e.g. from a
+    # test or the app) never disables the GPU the reranker/embedder use at query time. Embedding is
+    # a separate stage. Opt back in with DOCLING_DEVICE=cuda.
+    force_cpu_parsing()
     pdfs = sorted(PAPERS_DIR.glob("*.pdf"))
 
     if not pdfs:

@@ -1,7 +1,5 @@
-"""Contextual Retrieval helper: prompt shape, fail-safe fallback, on-disk caching, and concurrency.
+"""Contextual Retrieval helper: prompt shape, fail-safe fallback, and on-disk caching.
 The LLM is always mocked, so these run fully offline."""
-import threading
-
 import backend.ingestion.contextualizer as ctx
 
 
@@ -67,25 +65,15 @@ def test_contextualize_chunks_uses_cache(monkeypatch, tmp_path):
     assert p2.calls == 0
 
 
-def test_contextualize_chunks_runs_concurrently_in_order(monkeypatch, tmp_path):
-    """Cache-miss chunks are contextualized in parallel; results stay in chunk order, one call each."""
+def test_contextualize_chunks_many_misses_one_call_each_in_order(monkeypatch, tmp_path):
+    """Every cache-miss chunk gets exactly one LLM call and results stay in chunk order (indexed
+    writes). Uses the serial path (CONTEXTUAL_CONCURRENCY=1) so the offline suite spawns no threads;
+    the parallel path is the same logic dispatched through a thread pool."""
     monkeypatch.setenv("CONTEXTUAL_CHUNKS", "true")
+    monkeypatch.setenv("CONTEXTUAL_CONCURRENCY", "1")
     monkeypatch.setattr(ctx, "CACHE_FILE", tmp_path / "cache.json")
-
-    class _Counting:
-        is_available = True
-
-        def __init__(self):
-            self.calls = 0
-            self._lock = threading.Lock()
-
-        def stream_chat(self, messages, system="", max_tokens=2048, temperature=0.3, **kw):
-            with self._lock:
-                self.calls += 1
-            yield "ctx"
-
     chunks = [{"text": f"distinct chunk number {i}"} for i in range(6)]
-    p = _Counting()
+    p = _FakeProvider(reply="ctx")
     out = ctx.contextualize_chunks("doc", chunks, provider=p)
-    assert out == ["ctx"] * 6          # every chunk contextualized, order preserved (indexed writes)
-    assert p.calls == 6                # exactly one LLM call per cache-miss chunk
+    assert out == ["ctx"] * 6
+    assert p.calls == 6
