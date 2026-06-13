@@ -41,6 +41,7 @@
       (Array.isArray(files) ? files : [files]).forEach((f) => fd.append("files", f));
       return fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json());
     },
+    cancelIngest: () => fetch("/api/ingest/cancel", { method: "POST" }).then((r) => r.json()),
   };
 
   const state = {
@@ -1280,13 +1281,21 @@
 
   async function startIngest(label, saved) {
     state.ingesting = true;
+    state.ingestSaved = saved || [];
+    const ac = new AbortController();
+    state.ingestAbort = ac;
     $("addPaperBtn").classList.add("busy");
     openIngestModal(label);
     const n = (saved && saved.length) || 1;
     logLine(`→ Saved ${n} file${n > 1 ? "s" : ""}. Indexing now — the first paper also warms up the models.`, "stage");
     if (saved && saved.length) saved.forEach((f) => logLine("   • " + f));
     try {
-      const resp = await fetch("/api/ingest", { method: "POST" });
+      const resp = await fetch("/api/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filenames: state.ingestSaved }),
+        signal: ac.signal,
+      });
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       let buf = "", ok = true;
@@ -1300,8 +1309,9 @@
           if (!line) continue;
           let ev; try { ev = JSON.parse(line); } catch { continue; }
           if (ev.type === "stage") { $("imStage").textContent = ev.label; logLine("◆ " + ev.label, "stage"); }
-          else if (ev.type === "log") { logLine(ev.line, /skip/i.test(ev.line) ? "warn" : null); }
+          else if (ev.type === "log") { logLine(ev.line, /WARNING|NOT indexed/i.test(ev.line) ? "warn" : null); }
           else if (ev.type === "error") { ok = false; logLine("✗ " + ev.message, "warn"); }
+          else if (ev.type === "cancelled") { logLine("✕ " + ev.message, "warn"); finishIngest(false, label, true); return; }
           else if (ev.type === "done") {
             logLine("✓ " + ev.message, "ok");
             if (ev.library) { const p = ev.library.papers != null ? ev.library.papers : ev.library.pdfs; $("libLabel").textContent = `${p} papers indexed`; }
@@ -1310,20 +1320,41 @@
       }
       finishIngest(ok, label);
     } catch (err) {
+      if (err && err.name === "AbortError") return;   // user cancelled — cancelIngestUI handles the UI
       logLine("✗ " + err.message, "warn");
       finishIngest(false, label);
     }
   }
 
-  function finishIngest(ok, label) {
+  async function cancelIngestUI() {
+    // If already finished, the ✕ just closes the modal.
+    if (!state.ingesting) { closeIngestModal(); return; }
+    logLine("✕ Cancelling — removing this upload…", "warn");
+    if (state.ingestAbort) { try { state.ingestAbort.abort(); } catch (e) { /* ignore */ } }
+    try { await api.cancelIngest(); } catch (e) { /* best effort */ }
     state.ingesting = false;
+    state.ingestAbort = null;
+    $("addPaperBtn").classList.remove("busy");
+    closeIngestModal();
+    toast("Upload cancelled — its data was removed. Other papers are untouched.");
+    loadLibrary();
+  }
+
+  function finishIngest(ok, label, cancelled) {
+    state.ingesting = false;
+    state.ingestAbort = null;
     $("addPaperBtn").classList.remove("busy");
     $("imSpinner").hidden = true;
     $("imCheck").hidden = !ok;
-    $("imTitle").textContent = ok ? "Done — indexed" : "Indexing failed";
-    $("imStage").textContent = ok ? "You can now ask questions about your papers." : "See the log above. The files were saved but not fully indexed.";
+    if (cancelled) {
+      $("imTitle").textContent = "Cancelled";
+      $("imStage").textContent = "This upload was cancelled and its data removed. Other papers are untouched.";
+    } else {
+      $("imTitle").textContent = ok ? "Done — indexed" : "Indexing failed";
+      $("imStage").textContent = ok ? "You can now ask questions about your papers." : "See the log above. The files were saved but not fully indexed.";
+    }
     $("imFoot").hidden = false;
-    if (ok) toast(`${label} added to your library.`);
+    if (ok && !cancelled) toast(`${label} added to your library.`);
     loadLibrary();
   }
 
@@ -1448,6 +1479,7 @@
     $("addPaperBtn").addEventListener("click", pickPdf);
     $("pdfInput").addEventListener("change", onPdfChosen);
     $("imDone").addEventListener("click", closeIngestModal);
+    $("imCancel").addEventListener("click", cancelIngestUI);
     $("themeBtn").addEventListener("click", toggleTheme);
     const modeBtn = $("modeToggle");
     if (modeBtn) {
