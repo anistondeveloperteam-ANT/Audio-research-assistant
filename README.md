@@ -11,7 +11,7 @@ Everything runs on your machine: a FastAPI backend, a dependency‑free HTML/JS 
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-184%20passing-2ea44f)
-![License](https://img.shields.io/badge/license-MIT-555)
+[![License](https://img.shields.io/badge/license-MIT-555)](LICENSE)
 
 **[Quick start](#-quick-start-5-minutes) · [What you can ask](#-what-you-can-ask) · [Fast vs Deep](#-fast-vs-deep) · [Trust](#-why-you-can-trust-the-answers) · [Features](#-features) · [Config](#-configuration)**
 
@@ -233,4 +233,5 @@ run.py     launch the app  (--share / --lan)
 
 <div align="center">
 <sub>Python · FastAPI · vanilla JS · Docker · SQLite · CUDA — self‑hosted, no telemetry.</sub>
+<br><sub>Released under the <a href="LICENSE">MIT License</a>.</sub>
 </div>
