@@ -147,6 +147,7 @@ def test_ingest_summary_reports_pages_and_warning():
               "warnings": ["WARNING: 3 page(s) failed/empty and are NOT indexed: [6, 7, 8]"]}
     line = ip.coverage_line("Deep.pdf", parsed, 40)
     assert "pages_indexed=5/8" in line
+    assert "parsed in 8.3s" in ip.coverage_line("Deep.pdf", parsed, 40, 8.3)   # per-PDF parse time
     warns = ip.coverage_warnings("Deep.pdf", parsed)
     assert warns and warns[0].startswith("Deep.pdf:") and "NOT indexed" in warns[0]
     # a fully-indexed paper produces no warnings

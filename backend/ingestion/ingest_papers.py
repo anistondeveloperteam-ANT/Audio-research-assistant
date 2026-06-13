@@ -1,16 +1,21 @@
 import os
 import hashlib
+import time
 from pathlib import Path
 
 import oracledb
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-from backend.ingestion.pdf_parser import parse_pdf
+from backend.ingestion.pdf_parser import parse_pdf, force_cpu_parsing
 from backend.ingestion.document_chunker import chunk_parsed_document
 from backend.ingestion.contextualizer import contextualize_chunks
 
 load_dotenv()
+# Ingestion parses CUDA-free: Docling layout runs on the CPU and never attempts the GPU (no
+# std::bad_alloc, no retries). The reranker/embedder still use the GPU at query time, and embedding
+# is a separate ingestion stage — neither is affected. Set DOCLING_DEVICE=cuda to opt back in.
+force_cpu_parsing()
 
 PAPERS_DIR = Path("data/papers")
 
@@ -103,11 +108,14 @@ def insert_chunk(cur, paper_id, chunk_index, chunk, context_text=""):
     )
 
 
-def coverage_line(name: str, parsed: dict, n_chunks: int) -> str:
-    """One-line per-PDF ingest report including pages_indexed/pages_total."""
-    return (f"Ingested: {name} | parser={parsed.get('parser')} | "
+def coverage_line(name: str, parsed: dict, n_chunks: int, parse_secs: float = None) -> str:
+    """One-line per-PDF ingest report: parser, pages_indexed/pages_total, chunks, and parse time."""
+    line = (f"Ingested: {name} | parser={parsed.get('parser')} | "
             f"pages_indexed={parsed.get('pages_indexed')}/{parsed.get('pages_total')} | "
             f"chunks={n_chunks}")
+    if parse_secs is not None:
+        line += f" | parsed in {parse_secs:.1f}s"
+    return line
 
 
 def coverage_warnings(name: str, parsed: dict) -> list:
@@ -140,7 +148,9 @@ def main():
 
         title = infer_title(pdf_path)
 
+        t0 = time.time()
         parsed = parse_pdf(pdf_path)
+        parse_secs = time.time() - t0
         chunks = chunk_parsed_document(parsed)
 
         # Contextual Retrieval: one situating sentence per chunk (cached; "" if disabled/LLM fails).
@@ -162,7 +172,7 @@ def main():
 
         total_new_chunks += len(chunks)
 
-        print(coverage_line(pdf_path.name, parsed, len(chunks)))
+        print(coverage_line(pdf_path.name, parsed, len(chunks), parse_secs))
         for w in coverage_warnings(pdf_path.name, parsed):
             print(f"  {w}")
             overall_warnings.append(w)
