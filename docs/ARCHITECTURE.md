@@ -363,7 +363,7 @@ flowchart LR
 | GPU | `DEVICE=auto` | auto | CPU |
 | Langfuse | `LANGFUSE_ENABLED` | off | no‑op |
 | DeepEval gates | `DEEPEVAL_ENABLED` | off | tests skip |
-| OCR | `ENABLE_OCR` | on | digital‑text parse only |
+| OCR | `ENABLE_OCR` | off | digital‑text parse only; when on, OCR runs only on scanned pages, on CPU |
 
 ---
 

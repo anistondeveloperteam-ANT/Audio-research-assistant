@@ -20,8 +20,11 @@ randomly inflating the chunk count with more papers on the same few topics.
    papers per domain (one survey covers more ground than five narrow papers on one method).
    Spread across the domains in the report, not just DOA/MVDR/beamforming.
 
-3. **Prefer text-based PDFs.** Scanned/image-only PDFs fall back to OCR (`ENABLE_OCR`), which
-   is slower and lower quality. A born-digital PDF chunks far better.
+3. **Prefer text-based PDFs.** Born-digital PDFs parse via fast text extraction (no OCR) and
+   chunk far better. OCR is **off by default** (`ENABLE_OCR=false`); enable it only for
+   scanned/image-only PDFs — it then runs only on the text-poor pages, on the CPU, and is slower
+   and lower quality. Any page that still can't be read is reported in the ingest summary
+   (`pages_indexed/pages_total` + a "NOT indexed" warning), never dropped silently.
 
 ## Add + index
 
