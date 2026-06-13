@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from backend.agent.anticheat import anticheat_enabled, scan_for_cheating
 from backend.agent.code_runner import RunResult, docker_available, run_python_auto
 from backend.agent.hooks import pre_run
 from backend.llm.streaming_provider import get_provider
@@ -42,6 +43,21 @@ GEN_MAX_TOKENS = int(os.getenv("AGENT_GEN_MAX_TOKENS", "5000"))
 REFLECT_MAX_TOKENS = int(os.getenv("AGENT_REFLECT_MAX_TOKENS", "2000"))
 Event = Dict[str, Any]
 OnEvent = Callable[[Event], None]
+
+
+def hidden_tests_enabled() -> bool:
+    """Live read (AGENT_HIDDEN_TESTS, default on): run held-out hidden tests + invariants on
+    random inputs at final acceptance, so passing the visible tests is never enough."""
+    return os.getenv("AGENT_HIDDEN_TESTS", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def verify_seeds() -> int:
+    """Live read (AGENT_VERIFY_SEEDS, default 3): independent random seeds the held-out suite must
+    pass on — passing on some but not all seeds is a fluke, not a verified solution."""
+    try:
+        return max(1, int(os.getenv("AGENT_VERIFY_SEEDS", "3")))
+    except (TypeError, ValueError):
+        return 3
 
 
 @dataclass
@@ -62,6 +78,10 @@ class AgentResult:
     attempts: List[Attempt] = field(default_factory=list)
     tests_passed: int = 0
     tests_total: int = 0
+    verification: str = "failed"      # verified | partial | rejected_cheating | failed
+    hidden_passed: int = 0
+    hidden_total: int = 0
+    cheat_flags: List[str] = field(default_factory=list)
 
 
 # ----------------------------------------------------------------------
@@ -135,6 +155,27 @@ _TESTS_SYSTEM = (
     "Do NOT define the solution or any test runner. Output ONLY the Python test functions."
 )
 
+_HIDDEN_SYSTEM = (
+    "You write HELD-OUT acceptance tests that the implementer never sees. Given a task and its "
+    "requirements, write 4-6 functions named test_hidden_<name>() that exercise the SAME required "
+    "behavior as ordinary tests but on DIFFERENT, FRESH inputs — generate them with random / "
+    "numpy.random (do NOT call seed yourself; the harness seeds globally) so each run uses new "
+    "data, and do NOT reuse any example values. Compare with tolerances (math.isclose / "
+    "numpy.allclose), call the SOLUTION's functions directly, and `assert`. Their purpose is to "
+    "catch code that special-cased or hardcoded the visible examples. Do NOT define the solution "
+    "or a runner. Output ONLY the Python test functions."
+)
+
+_INVARIANTS_SYSTEM = (
+    "You write INVARIANT checks: 1-3 functions named test_invariant_<name>() that assert "
+    "mathematical PROPERTIES which must hold for ANY correct implementation, on RANDOM inputs "
+    "(use random / numpy.random; do NOT seed — the harness seeds globally). Examples: a "
+    "beamformer's distortionless constraint w^H d ~= 1 and output noise power <= input; "
+    "Black-Scholes put-call parity C - P ~= S - K*exp(-rT), price >= 0, price monotonic in "
+    "volatility. Use tolerances, call the SOLUTION's functions directly, and `assert`. Do NOT "
+    "define the solution or a runner. Output ONLY the Python test functions."
+)
+
 # Appended after (solution + generated tests): runs every test_* and prints a parseable tally.
 _TEST_FOOTER = (
     "\n\n# === auto-appended test runner ===\n"
@@ -154,6 +195,34 @@ _TEST_FOOTER = (
     "    print('TESTS_PASSED %d/%d' % (passed, len(names)))\n"
     "__run_all_tests()\n"
 )
+
+
+def _seeded_footer(seed: int) -> str:
+    """Held-out runner that seeds the RNGs first, so each seed exercises different random inputs
+    while staying reproducible. Same TESTS_PASSED k/n contract as _TEST_FOOTER."""
+    return (
+        "\n\n# === auto-appended held-out runner (seeded) ===\n"
+        "def __run_all_tests():\n"
+        "    import traceback, random\n"
+        f"    random.seed({seed})\n"
+        "    try:\n"
+        f"        import numpy as _np; _np.random.seed({seed})\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    g = dict(globals())\n"
+        "    names = sorted(n for n, v in g.items() if n.startswith('test_') and callable(v))\n"
+        "    passed = 0\n"
+        "    for _n in names:\n"
+        "        try:\n"
+        "            g[_n]()\n"
+        "            print('TEST', _n, 'PASS')\n"
+        "            passed += 1\n"
+        "        except Exception:\n"
+        "            print('TEST', _n, 'FAIL')\n"
+        "            traceback.print_exc()\n"
+        "    print('TESTS_PASSED %d/%d' % (passed, len(names)))\n"
+        "__run_all_tests()\n"
+    )
 
 
 def _restate_requirements(provider, task: str, conversation: str, reference: str) -> str:
@@ -177,16 +246,20 @@ def _generate_tests(provider, task: str, requirements: str) -> str:
 
 
 def _generate_solution(provider, task: str, requirements: str, tests: str, reference: str,
-                       last_code: str, feedback: str) -> str:
+                       last_code: str, feedback: str, memory_summary: str = "") -> str:
     """(c) Write modular solution code so the provided tests pass. The tests are appended by the
-    runner, not by the model."""
+    runner, not by the model. `memory_summary` carries the cross-attempt 'avoid these' notes."""
     parts = [f"TASK:\n{task}", f"\nREQUIREMENTS:\n{requirements}",
-             "\nYour solution MUST define the functions these tests call so they pass. Do NOT "
-             f"include the tests or a runner in your output:\n```python\n{tests}\n```"]
+             "\nYour solution MUST define the functions these tests call so they pass. Solve the "
+             "GENERAL problem — do NOT hardcode the expected outputs, special-case these specific "
+             "inputs, read the tests, or fake the functions; your code is also checked on unseen "
+             f"random inputs. Do NOT include the tests or a runner:\n```python\n{tests}\n```"]
     if reference:
         parts.append(f"\nREFERENCE implementations (adapt the approach, do NOT copy):\n{reference[:3000]}")
     if last_code:
         parts.append(f"\nYOUR PREVIOUS SOLUTION (fix it):\n```python\n{last_code}\n```")
+    if memory_summary:
+        parts.append("\nAVOID repeating these already-failed or REJECTED approaches:\n" + memory_summary)
     if feedback:
         parts.append("\nThe tests FAILED last time. Read these PASS/FAIL lines and tracebacks and "
                      f"fix the SPECIFIC failures (do not rewrite from scratch):\n{feedback[:3000]}")
@@ -194,19 +267,73 @@ def _generate_solution(provider, task: str, requirements: str, tests: str, refer
     return _extract_code(_complete(provider, _GEN_SYSTEM, "\n".join(parts), GEN_MAX_TOKENS))
 
 
+def _generate_hidden_tests(provider, task: str, requirements: str, strict: bool = False) -> str:
+    """(C1) Held-out tests on DIFFERENT randomized inputs — never shown to the solver."""
+    extra = " Generate MORE tests than usual and use WIDER input ranges." if strict else ""
+    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\n"
+            "Write the held-out test_hidden_* functions now (fresh random inputs)." + extra)
+    return _extract_code(_complete(provider, _HIDDEN_SYSTEM, user, GEN_MAX_TOKENS))
+
+
+def _generate_invariants(provider, task: str, requirements: str, strict: bool = False) -> str:
+    """(C3) Invariant-property checks on random inputs — never shown to the solver."""
+    extra = " Add more invariants and widen the random input ranges." if strict else ""
+    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\n"
+            "Write the test_invariant_* functions now (random inputs, assert properties)." + extra)
+    return _extract_code(_complete(provider, _INVARIANTS_SYSTEM, user, GEN_MAX_TOKENS))
+
+
 def _count_tests(tests_code: str) -> int:
     return len(re.findall(r"^\s*def\s+test_\w+\s*\(", tests_code or "", re.M))
 
 
-def _run_against_tests(solution_code: str, tests_code: str):
-    """Combine solution + generated tests + the runner, execute in the sandbox, and return
+def _run_against_tests(solution_code: str, tests_code: str, footer: str = _TEST_FOOTER):
+    """Combine solution + tests + a runner, execute in the sandbox, and return
     (RunResult, passed, total). A crash before the runner -> 0 passed (stderr feeds the rewrite)."""
-    script = solution_code + "\n\n# === generated tests ===\n" + tests_code + _TEST_FOOTER
+    script = solution_code + "\n\n# === generated tests ===\n" + tests_code + footer
     result = run_python_auto(script)
     m = re.search(r"TESTS_PASSED\s+(\d+)\s*/\s*(\d+)", result.stdout or "")
     passed = int(m.group(1)) if m else 0
     total = int(m.group(2)) if m else _count_tests(tests_code)
     return result, passed, total
+
+
+def _verify_heldout(solution_code: str, heldout_code: str, seeds: int):
+    """(C4) Run solution + held-out (hidden + invariant) tests once per random seed. Returns
+    (ok_all_seeds, passed, total, last_result); ok only if EVERY seed fully passes. No held-out
+    available -> (True, 0, 0, None) so we degrade gracefully to visible-only acceptance."""
+    total0 = _count_tests(heldout_code)
+    if not total0:
+        return True, 0, 0, None
+    last = None
+    for s in range(max(1, seeds)):
+        result, passed, total = _run_against_tests(solution_code, heldout_code, _seeded_footer(1000 + s))
+        last = result
+        if total == 0 or passed < total:
+            return False, passed, (total or total0), result
+    return True, total0, total0, last
+
+
+class _AttemptMemory:
+    """(C5) Compact, capped memory of what failed or was flagged across iterations, fed back into
+    the next THINK round so the agent never repeats a failed or cheating approach. Bounded in both
+    entry count and characters so the prompt never bloats."""
+
+    def __init__(self, max_notes: int = 5, max_chars: int = 1200):
+        self._notes: List[str] = []
+        self._max_notes = max_notes
+        self._max_chars = max_chars
+
+    def add(self, note: str) -> None:
+        note = " ".join((note or "").split())
+        if note:
+            self._notes.append(note)
+            self._notes = self._notes[-self._max_notes:]
+
+    def summary(self) -> str:
+        if not self._notes:
+            return ""
+        return "\n".join(f"- {n}" for n in self._notes)[-self._max_chars:]
 
 
 # Generic English / request words that are not algorithm names — they must not trip the
@@ -264,14 +391,19 @@ def _verdict_from_tests(passed: int, total: int, relevant: bool, result: RunResu
 
 
 def _score(att: Attempt) -> int:
-    # Off-topic attempts never win; then a program that ran beats one that didn't; then score.
-    if att.verdict.get("relevant") is False:
+    # Gaming attempts never win; off-topic never win; a verified attempt beats any unverified one;
+    # then a program that ran beats one that didn't; then the visible pass-rate breaks ties.
+    v = att.verdict
+    if v.get("cheating"):
+        return -2
+    if v.get("relevant") is False:
         return -1
+    bonus = 5000 if v.get("verified") else 0
     base = 1000 if att.result.ok else 0
     try:
-        return base + int(att.verdict.get("score", 0))
+        return bonus + base + int(v.get("score", 0))
     except Exception:
-        return base
+        return bonus + base
 
 
 def _build_brief(task: str, brief: str, context: str, conversation: str = "") -> str:
@@ -362,9 +494,28 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     strong_model = os.getenv("AGENT_MODEL_STRONG") or ""
     attempts: List[Attempt] = []
     best: Optional[Attempt] = None
+    best_clean: Optional[Attempt] = None      # best NON-cheating attempt — the only thing we return
     last_code = ""
     feedback = ""
     rounds_failed = 0
+    cheat_count = 0
+    mem = _AttemptMemory()
+    hstate: Dict[str, Any] = {"code": None, "strict": False}   # lazily-built held-out suite
+
+    def _ensure_heldout(hp, strict: bool) -> str:
+        """(C1/C3) Build (once, cached) the held-out suite = hidden tests + invariants. Rebuilt
+        stricter if escalation flips `strict`. Never shown to the solver."""
+        if not hidden_tests_enabled():
+            return ""
+        if hstate["code"] is not None and hstate["strict"] == strict:
+            return hstate["code"]
+        emit({"type": "status", "message": "Building held-out hidden tests + invariants…"})
+        hidden = _generate_hidden_tests(hp, task, requirements, strict=strict)
+        invariants = _generate_invariants(hp, task, requirements, strict=strict)
+        combined = ((hidden or "") + "\n\n" + (invariants or "")).strip()
+        hstate["code"], hstate["strict"] = combined, strict
+        emit({"type": "heldout", "count": _count_tests(combined), "strict": strict})
+        return combined
 
     for i in range(1, max_iters + 1):
         directive = _read_directive(directive_path)
@@ -372,9 +523,11 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
             emit({"type": "directive", "iteration": i, "text": directive[:300]})
             feedback = (feedback + "\nUSER DIRECTIVE (priority): " + directive).strip()
 
-        # (e) Escalate to a stronger model after two failed rounds, if one is configured.
+        # (6) Escalate to a stronger model after two failed rounds OR two cheating catches; two
+        # cheats also strengthens the held-out audit (more tests, wider ranges).
+        strict = cheat_count >= 2
         gen_provider = provider
-        if rounds_failed >= 2 and strong_model:
+        if (rounds_failed >= 2 or strict) and strong_model:
             try:
                 gen_provider = get_provider(strong_model)
                 emit({"type": "status",
@@ -385,31 +538,34 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         emit({"type": "think", "iteration": i,
               "message": f"Writing code to pass the tests (attempt {i}/{max_iters})…"})
 
-        # (d) Best-of-2: up to two candidates per round; keep the higher-passing, on-topic one.
+        # (d) Best-of-2: up to two candidates per round; keep the best (verified > passes > ran).
         round_best: Optional[Attempt] = None
         round_best_rank: Optional[tuple] = None
         for c in range(2):
             cand_feedback = feedback
             if c > 0:
-                cand_feedback = (feedback + "\n\nYour first attempt this round did not pass all "
-                                 "tests — take a materially different approach.").strip()
+                cand_feedback = (feedback + "\n\nYour first attempt this round did not pass — take "
+                                 "a materially different approach.").strip()
             with agent_trace.span("generate", iteration=i, candidate=c + 1) as _sp:
                 code = _generate_solution(gen_provider, task, requirements, tests, reference,
-                                          last_code, cand_feedback)
+                                          last_code, cand_feedback, mem.summary())
                 _sp.set(code_len=len(code or ""))
             if not (code or "").strip():
                 continue
             emit({"type": "code", "iteration": i, "candidate": c + 1, "code": code})
 
-            # Pre-execution lifecycle hook (kimi-code idea): audit + allow/block gate. NEVER weakened.
+            # Pre-execution SECURITY gate (kimi-code idea): audit + allow/block. NEVER weakened.
             with agent_trace.span("prerun_hook", iteration=i, candidate=c + 1) as _sp:
                 gate = pre_run(code, task=task)
                 _sp.set(allowed=bool(gate.allowed), reason=gate.reason)
+            cheat = None
             if not gate.allowed:
                 emit({"type": "blocked", "iteration": i, "candidate": c + 1, "reason": gate.reason})
                 result = RunResult(False, -1, "", "", 0.0, f"blocked by policy: {gate.reason}")
                 passed, total = 0, test_n
             else:
+                # (2) Static anti-cheat scan BEFORE trusting any pass.
+                cheat = scan_for_cheating(code, tests, task) if anticheat_enabled() else None
                 emit({"type": "run", "iteration": i, "candidate": c + 1,
                       "message": "Running it against the tests in the Docker sandbox…"})
                 with agent_trace.span("docker_run", iteration=i, candidate=c + 1) as _sp:
@@ -419,15 +575,50 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
 
             relevant = _is_relevant_code(task, code, tests)        # (C6) algorithm-match gate
             verdict = _verdict_from_tests(passed, total, relevant, result)
+            cheating = bool(cheat and cheat.flagged)
+            verdict["cheating"] = cheating
+            verdict["cheat_reasons"] = list(cheat.reasons) if cheat else []
+            verdict["verified"] = False
+
+            if cheating:
+                verdict["done"] = False
+                verdict["feedback"] = (
+                    "Your solution was REJECTED for possible test gaming: " + "; ".join(cheat.reasons)
+                    + ". Do NOT hardcode outputs, special-case the example inputs, read the tests, "
+                    "or fake the functions — solve the GENERAL task.")
+            elif verdict.get("done"):
+                # (1/3/4) Passed visible + relevant + clean -> held-out hidden + invariants on
+                # multiple random seeds. Verified only if EVERY layer passes.
+                heldout = _ensure_heldout(gen_provider, strict)
+                if heldout:
+                    ok, hp_pass, hp_tot, hres = _verify_heldout(code, heldout, verify_seeds())
+                    verdict["hidden_passed"], verdict["hidden_total"] = hp_pass, hp_tot
+                    if ok:
+                        verdict["verified"] = True
+                    else:
+                        verdict["done"] = False
+                        verdict["hidden_fail"] = True
+                        diag = (((hres.stdout if hres else "") + "\n"
+                                 + (hres.stderr if hres else "")).strip())
+                        verdict["feedback"] = (
+                            "Your code passes the VISIBLE tests but FAILS on unseen inputs "
+                            f"({hp_pass}/{hp_tot} held-out checks) — solve the GENERAL problem, do "
+                            "not special-case the examples.\n" + diag)[:3000]
+                else:
+                    verdict["verified"] = True   # held-out unavailable -> visible-only acceptance
+
             att = Attempt(i, code, result, verdict)
             emit({"type": "run_result", "iteration": i, "candidate": c + 1, "ok": result.ok,
-                  "passed": passed, "total": total, "relevant": relevant,
-                  "summary": result.summary, "stdout": result.stdout, "stderr": result.stderr})
+                  "passed": passed, "total": total, "relevant": relevant, "cheating": cheating,
+                  "verified": verdict["verified"], "hidden_passed": verdict.get("hidden_passed", 0),
+                  "hidden_total": verdict.get("hidden_total", 0), "summary": result.summary,
+                  "stdout": result.stdout, "stderr": result.stderr})
 
-            rank = (1 if relevant else 0, passed, 1 if result.ok else 0)
+            rank = (0 if cheating else 1, 1 if verdict["verified"] else 0, passed,
+                    1 if result.ok else 0)
             if round_best is None or rank > round_best_rank:
                 round_best, round_best_rank = att, rank
-            if verdict.get("done"):    # a relevant, fully-passing candidate ends the round early
+            if verdict["verified"]:    # a fully-verified candidate ends the round early
                 break
 
         if round_best is None:         # both candidates were empty or produced no code
@@ -437,13 +628,29 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         attempts.append(round_best)
         if best is None or _score(round_best) > _score(best):
             best = round_best
+        if not round_best.verdict.get("cheating"):
+            if best_clean is None or _score(round_best) > _score(best_clean):
+                best_clean = round_best
+
         v = round_best.verdict
         emit({"type": "reflect", "iteration": i, "verdict": {
-            "done": bool(v.get("done")), "relevant": bool(v.get("relevant")),
+            "done": bool(v.get("done")), "verified": bool(v.get("verified")),
+            "relevant": bool(v.get("relevant")), "cheating": bool(v.get("cheating")),
             "score": v.get("score"), "passed": v.get("passed"), "total": v.get("total"),
+            "hidden_passed": v.get("hidden_passed", 0), "hidden_total": v.get("hidden_total", 0),
             "feedback": (v.get("feedback") or "")[:300]}})
+
+        # (5) Record one compact, bounded memory note so the next round avoids this approach.
+        if v.get("cheating"):
+            cheat_count += 1
+            mem.add(f"iter {i}: REJECTED for gaming — {'; '.join(v.get('cheat_reasons') or [])[:160]}")
+        elif v.get("hidden_fail"):
+            mem.add(f"iter {i}: passed visible but FAILED hidden/unseen inputs — must generalize")
+        elif not v.get("verified"):
+            mem.add(f"iter {i}: only {v.get('passed')}/{v.get('total')} visible tests passed")
+
         last_code = round_best.code
-        if v.get("done"):
+        if v.get("verified"):
             break
         if v.get("relevant") is False:
             emit({"type": "status",
@@ -451,57 +658,76 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         feedback = v.get("feedback", "")
         rounds_failed += 1
 
-    # (f) Honest outcome — derive a short answer from the best attempt's test tally.
-    bpassed = int(best.verdict.get("passed", 0)) if best else 0
-    btotal = int(best.verdict.get("total", 0)) if best else 0
+    # (7) Honest outcome — prefer the best NON-cheating attempt; never present a gaming solution.
     try:
         from backend.agent.reference_code import topic_of
         topic = topic_of(task) or task
     except Exception:
         topic = task
 
-    # Optional automatic peer review of the best result — a relevance double-check only.
-    try:
-        from backend.answering.agentic_answer import auto_review_enabled
-        from backend.answering.reviewer import review as _peer_review, is_relevant
-        if best and auto_review_enabled():
-            emit({"type": "status", "message": "Reviewing the best result…"})
-            payload = f"Implements {topic}.\n\n```python\n{best.code or ''}\n```"
-            intent = (convo + "\n\n" + task).strip() if convo else task
-            rev = _peer_review(payload, task=intent)
-            if rev and not rev.get("error") and not is_relevant(rev):
-                best.verdict["relevant"] = False        # off-topic -> never "verified"
-                best.verdict["done"] = False
-                emit({"type": "reflect", "iteration": len(attempts), "verdict": {
-                    "done": False, "relevant": False,
-                    "feedback": "Peer review: off-topic for the request."}})
-    except Exception:
-        pass
+    final = best_clean if best_clean is not None else best
+    # Optional peer review (relevance double-check) on the chosen clean attempt.
+    if best_clean is not None:
+        try:
+            from backend.answering.agentic_answer import auto_review_enabled
+            from backend.answering.reviewer import review as _peer_review, is_relevant
+            if auto_review_enabled():
+                emit({"type": "status", "message": "Reviewing the best result…"})
+                payload = f"Implements {topic}.\n\n```python\n{best_clean.code or ''}\n```"
+                intent = (convo + "\n\n" + task).strip() if convo else task
+                rev = _peer_review(payload, task=intent)
+                if rev and not rev.get("error") and not is_relevant(rev):
+                    best_clean.verdict["relevant"] = False
+                    best_clean.verdict["verified"] = False
+                    best_clean.verdict["done"] = False
+                    emit({"type": "reflect", "iteration": len(attempts), "verdict": {
+                        "done": False, "relevant": False, "feedback": "Peer review: off-topic."}})
+        except Exception:
+            pass
 
-    done = bool(best and best.verdict.get("done"))
-    if not best:
-        answer = "The agent could not produce a working solution."
-    elif done:
-        answer = (f"Implemented {topic} in Python — all {btotal} generated correctness "
-                  "tests pass in the sandbox.")
+    bpassed = int(final.verdict.get("passed", 0)) if final else 0
+    btotal = int(final.verdict.get("total", 0)) if final else 0
+    hpassed = int(final.verdict.get("hidden_passed", 0)) if final else 0
+    htotal = int(final.verdict.get("hidden_total", 0)) if final else 0
+    cheat_flags = list(final.verdict.get("cheat_reasons") or []) if final else []
+
+    if final is None:
+        verification, answer, present = "failed", "The agent could not produce a working solution.", None
+    elif best_clean is None:                  # every attempt was flagged for gaming
+        verification = "rejected_cheating"
+        answer = ("Rejected — possible test gaming was detected in every attempt, so no genuine, "
+                  "verified solution could be produced.")
+        present = None                        # never present the gaming code as a deliverable
+    elif final.verdict.get("verified"):
+        verification = "verified"
+        answer = (f"Implemented {topic} in Python — passes all {btotal} visible tests plus "
+                  f"{htotal} held-out hidden/invariant checks on {verify_seeds()} random seeds.")
+        present = final
     else:
-        answer = (f"Best effort at {topic} in Python — {bpassed}/{btotal} generated correctness "
-                  "tests pass (partially verified).")
+        verification = "partial"
+        answer = (f"Best effort at {topic} in Python — {bpassed}/{btotal} visible tests pass "
+                  "(partially verified).")
+        present = final
 
     res = AgentResult(
         task=task,
-        success=done,
-        best_code=best.code if best else "",
-        best_output=best.result.stdout if best else "",
+        success=(verification == "verified"),
+        best_code=present.code if present else "",
+        best_output=present.result.stdout if present else "",
         answer=answer,
         attempts=attempts,
         tests_passed=bpassed,
         tests_total=btotal,
+        verification=verification,
+        hidden_passed=hpassed,
+        hidden_total=htotal,
+        cheat_flags=cheat_flags,
     )
-    emit({"type": "final", "success": res.success, "answer": res.answer,
-          "code": res.best_code, "output": res.best_output, "iterations": len(attempts),
-          "tests_passed": bpassed, "tests_total": btotal})
-    agent_trace.set(success=res.success, iterations=len(attempts),
+    emit({"type": "final", "success": res.success, "verification": verification,
+          "answer": res.answer, "code": res.best_code, "output": res.best_output,
+          "iterations": len(attempts), "tests_passed": bpassed, "tests_total": btotal,
+          "hidden_passed": hpassed, "hidden_total": htotal})
+    agent_trace.set(success=res.success, iterations=len(attempts), verification=verification,
                     tests_passed=bpassed, tests_total=btotal).end()
     return res
 
@@ -511,12 +737,17 @@ def result_to_markdown(res) -> str:
     output, with an honest verification label when tests didn't all pass. Shared by the chat
     code-route and the /api/agent persistence so both render identically."""
     parts = []
+    verification = (getattr(res, "verification", "") or "").strip()
     answer = (getattr(res, "answer", "") or "").strip()
     code = (getattr(res, "best_code", "") or "").strip()
     output = (getattr(res, "best_output", "") or "").strip()
     total = int(getattr(res, "tests_total", 0) or 0)
     passed = int(getattr(res, "tests_passed", 0) or 0)
-    if total and not (getattr(res, "success", False) and passed >= total):
+    # A gaming solution is NEVER presented as a clean answer.
+    if verification == "rejected_cheating":
+        return ("> ⛔ Rejected — possible test gaming detected; no genuine, verified solution was "
+                "produced. Try rephrasing the request, or set a stronger model (AGENT_MODEL_STRONG).")
+    if verification == "partial" or (total and not (getattr(res, "success", False) and passed >= total)):
         parts.append(f"> ⚠ Partially verified — {passed}/{total} generated tests passing.")
     if answer:
         parts.append(answer)
