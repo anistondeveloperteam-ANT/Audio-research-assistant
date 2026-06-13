@@ -1,5 +1,7 @@
-"""Contextual Retrieval helper: prompt shape, fail-safe fallback, and on-disk caching.
+"""Contextual Retrieval helper: prompt shape, fail-safe fallback, on-disk caching, and concurrency.
 The LLM is always mocked, so these run fully offline."""
+import threading
+
 import backend.ingestion.contextualizer as ctx
 
 
@@ -63,3 +65,27 @@ def test_contextualize_chunks_uses_cache(monkeypatch, tmp_path):
     second = ctx.contextualize_chunks("doc about beamforming", chunks, provider=p2)
     assert second == first
     assert p2.calls == 0
+
+
+def test_contextualize_chunks_runs_concurrently_in_order(monkeypatch, tmp_path):
+    """Cache-miss chunks are contextualized in parallel; results stay in chunk order, one call each."""
+    monkeypatch.setenv("CONTEXTUAL_CHUNKS", "true")
+    monkeypatch.setattr(ctx, "CACHE_FILE", tmp_path / "cache.json")
+
+    class _Counting:
+        is_available = True
+
+        def __init__(self):
+            self.calls = 0
+            self._lock = threading.Lock()
+
+        def stream_chat(self, messages, system="", max_tokens=2048, temperature=0.3, **kw):
+            with self._lock:
+                self.calls += 1
+            yield "ctx"
+
+    chunks = [{"text": f"distinct chunk number {i}"} for i in range(6)]
+    p = _Counting()
+    out = ctx.contextualize_chunks("doc", chunks, provider=p)
+    assert out == ["ctx"] * 6          # every chunk contextualized, order preserved (indexed writes)
+    assert p.calls == 6                # exactly one LLM call per cache-miss chunk
