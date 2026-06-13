@@ -1,11 +1,18 @@
 """Tests for the research agent loop — fully mocked (no Docker, no LLM, no network)."""
 import json
 
+import pytest
+
 from backend.agent import loop
 from backend.agent import hooks
 from backend.agent.code_runner import RunResult
 from backend.agent.hooks import HookDecision
 from backend.agent.memory import TwoTierMemory
+
+
+@pytest.fixture(autouse=True)
+def _disable_auto_review(monkeypatch):
+    monkeypatch.setenv("AUTO_REVIEW", "false")
 
 
 # ---- pre-execution lifecycle hook (kimi-code idea) -------------------
@@ -113,7 +120,7 @@ def test_agent_succeeds_first_try(monkeypatch):
     ])
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
-    monkeypatch.setattr(loop, "run_python",
+    monkeypatch.setattr(loop, "run_python_auto",
                         lambda code, **k: RunResult(True, 0, "answer=42\n", "", 0.2))
 
     res = loop.run_agent("What is 6*7?", use_search=False)
@@ -136,7 +143,7 @@ def test_agent_refines_after_a_failure(monkeypatch):
     ])
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
-    monkeypatch.setattr(loop, "run_python", lambda code, **k: next(results))
+    monkeypatch.setattr(loop, "run_python_auto", lambda code, **k: next(results))
 
     res = loop.run_agent("Print ok", use_search=False)
     assert res.success is True
@@ -152,7 +159,7 @@ def test_loop_blocks_without_running(monkeypatch):
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
     ran = []
-    monkeypatch.setattr(loop, "run_python", lambda code, **k: ran.append(1) or RunResult(True, 0, "", "", 0.1))
+    monkeypatch.setattr(loop, "run_python_auto", lambda code, **k: ran.append(1) or RunResult(True, 0, "", "", 0.1))
     monkeypatch.setattr(loop, "pre_run", lambda code, task="": HookDecision(False, "matched blocked pattern"))
     events = []
     res = loop.run_agent("x", use_search=False, max_iters=1, on_event=events.append)
