@@ -90,12 +90,16 @@ def _parse_json(text: str) -> Dict[str, Any]:
 
 
 _GEN_SYSTEM = (
-    "You are an expert algorithms engineer. Given a task, write ONE complete, "
-    "self-contained Python program that solves it and PRINTS the final answer/result "
-    "clearly (plus any benchmark numbers or a short correctness check). "
-    "Rules: standard library only unless you are certain a package is installed; if an "
-    "import would fail, use the stdlib instead. No network, no reading files, no input(). "
-    "The program must run to completion within a few seconds and print its result. "
+    "You are an expert software and algorithms engineer. Implement the requested algorithm or "
+    "task in Python using your OWN expert knowledge of how it works. NEVER refuse or apologize "
+    "for a lack of reference material or sources — your correctness is judged by RUNNING the "
+    "code, not by citations. "
+    "You MAY use well-known third-party libraries when they are the right tool (e.g. numpy, "
+    "scipy, pandas); the sandbox installs the packages you import, so import what you need. "
+    "Write ONE complete, self-contained program: small named functions for the core logic, then "
+    "a runnable section that exercises it and PRINTS a clear result plus a short correctness "
+    "check. At RUNTIME the sandbox has no network, no file access, and no input() — do not use "
+    "them (third-party imports are fine). The program must run to completion in a few seconds. "
     "Output ONLY the Python code — no explanation, no markdown."
 )
 
