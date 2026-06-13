@@ -361,7 +361,7 @@ settings:
 | `DEVICE` / `EMBEDDING_DEVICE` / `RERANKER_DEVICE` | `auto` / `cuda` / `cpu` | GPU/CPU placement (reranker/embedder) |
 | `MAX_QUERY_ROUTES`, `RETRIEVAL_TOP_K`, `TOTAL_SOURCE_LIMIT` | `4 / 8 / 14` | Retrieval tuning |
 | `ENABLE_OCR` | `false` | OCR off by default; when on it runs ONLY on text-poor (scanned) pages, on the CPU |
-| `DOCLING_DEVICE` | `cpu` | Device for Docling layout parsing (Docling's own RapidOCR is always disabled) |
+| `DOCLING_DEVICE` | `cpu` | Docling layout device. Default hides CUDA from the parse process so Docling never attempts the GPU (no `std::bad_alloc`); set `cuda` to opt into GPU layout. RapidOCR is always disabled. |
 | `CREATE_VECTOR_INDEX` | `false` | Opt in to an approximate HNSW/IVF vector index |
 | `VECTOR_BACKEND` | `oracle` \| `turbovec` | Dense vector backend for local PDFs |
 | `TURBOVEC_ENABLED` | `false` | Enable optional compressed vector cache |
