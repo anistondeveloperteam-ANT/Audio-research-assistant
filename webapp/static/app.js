@@ -60,13 +60,16 @@
   // Auto-routing: a clear "build / run / solve code" task goes to the autonomous
   // agent (write -> run in Docker -> verify -> refine). Everything else uses the
   // chat path, which already verifies its answer and runs any code it writes.
+  // Mirrors backend/answering/code_intent.py::is_code_intent — keep the two in sync so the UI
+  // fast-path and the server agree on what's a coding task (catches "give me X code" etc.).
   function looksLikeCodingTask(t) {
-    const s = " " + (t || "").toLowerCase().replace(/[^a-z0-9+ ]/g, " ") + " ";
-    return /\b(implement|benchmark|simulate|simulation|leetcode|refactor|debug|optimi[sz]e)\b/.test(s)
-      || /\bwrite\s+(a|an|me|the)?\s*(python|program|code|script|function|class)\b/.test(s)
-      || /\b(code|program|script|function)\s+(to|that|for|which)\b/.test(s)
-      || /\bsolve\b[^.]*\b(problem|equation|puzzle|leetcode|sudoku|maze)\b/.test(s)
-      || /\b(find|compute|calculate|build)\b[^.]*\b(fastest|most efficient|optimal|best)\b[^.]*\b(algorithm|code|program|way|method)\b/.test(s);
+    const s = " " + (t || "").toLowerCase().replace(/[^a-z0-9+# ]/g, " ").replace(/\s+/g, " ") + " ";
+    return /\b(implement|simulate|simulation|benchmark|refactor|debug|optimi[sz]e|leetcode)\b/.test(s)
+      || /\b(write|give|gen|generate|show|build|create|make|provide|produce|need|want)\b.{0,40}\b(code|script|program|function|implementation|snippet)\b/.test(s)
+      || /\bpython\b.{0,40}\b(code|script|program|function|implementation|snippet|class)\b/.test(s)
+      || /\b(code|script|program|function|implementation|snippet|class)\b.{0,40}\bpython\b/.test(s)
+      || /\b(code|script|snippet)\s+(for|to|that|which)\b/.test(s)
+      || /\bimplementation\s+(of|for)\b/.test(s);
   }
 
   // Icons for the per-question action buttons (copy / edit / delete).

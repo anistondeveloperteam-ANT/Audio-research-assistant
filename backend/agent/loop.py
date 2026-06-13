@@ -331,3 +331,24 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
           "code": res.best_code, "output": res.best_output, "iterations": len(attempts)})
     agent_trace.set(success=res.success, iterations=len(attempts)).end()
     return res
+
+
+def result_to_markdown(res) -> str:
+    """Render an AgentResult as the markdown saved/shown for a coding turn: answer + code +
+    output, with an honest verification label when tests didn't all pass. Shared by the chat
+    code-route and the /api/agent persistence so both render identically."""
+    parts = []
+    answer = (getattr(res, "answer", "") or "").strip()
+    code = (getattr(res, "best_code", "") or "").strip()
+    output = (getattr(res, "best_output", "") or "").strip()
+    total = int(getattr(res, "tests_total", 0) or 0)
+    passed = int(getattr(res, "tests_passed", 0) or 0)
+    if total and not (getattr(res, "success", False) and passed >= total):
+        parts.append(f"> ⚠ Partially verified — {passed}/{total} generated tests passing.")
+    if answer:
+        parts.append(answer)
+    if code:
+        parts.append(f"```python\n{code}\n```")
+    if output:
+        parts.append(f"**Output:**\n```text\n{output}\n```")
+    return "\n\n".join(parts) or "_(the agent produced no result)_"

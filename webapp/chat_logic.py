@@ -476,6 +476,50 @@ def _deep_queries(question: str) -> List[str]:
 
 
 # ----------------------------------------------------------------------
+# Code-intent route: run the autonomous code agent and stream its events
+# ----------------------------------------------------------------------
+def _run_code_agent(question: str, session_id: str, mem) -> Iterator[Dict[str, Any]]:
+    """Stream a code-agent run (write -> run in sandbox -> verify against generated tests) for a
+    code-intent query. The caller has already saved the user turn; here we save the assistant
+    turn (final code) when the run finishes. Runs the agent off-thread so events stream live."""
+    import queue
+    import threading
+    from backend.agent.loop import run_agent, result_to_markdown
+
+    recent = mem.get_recent_turns(session_id, n_messages=6)
+    conversation = "\n".join(
+        f"{t['role']}: {t['content']}" for t in recent if t.get("content"))[:3000]
+
+    ev: "queue.Queue" = queue.Queue()
+    DONE = object()
+    box: Dict[str, Any] = {}
+
+    def worker():
+        try:
+            box["res"] = run_agent(question, use_search=True,
+                                   conversation=conversation, on_event=ev.put)
+        except Exception as exc:
+            ev.put({"type": "error", "message": str(exc)})
+        finally:
+            ev.put(DONE)
+
+    threading.Thread(target=worker, daemon=True).start()
+    while True:
+        e = ev.get()
+        if e is DONE:
+            break
+        yield e
+
+    res = box.get("res")
+    content = result_to_markdown(res) if res is not None else "_(the code agent produced no result)_"
+    try:
+        mem.append_turn(session_id, "assistant", content)
+    except Exception:
+        pass
+    yield {"type": "done", "answer": content, "code_agent": True}
+
+
+# ----------------------------------------------------------------------
 # The streaming orchestration
 # ----------------------------------------------------------------------
 def stream_chat_events(
@@ -511,6 +555,14 @@ def stream_chat_events(
     mem = memory()
     user_id = mem.session_owner(session_id) or "local"
     mem.append_turn(session_id, "user", q)
+
+    # Code-intent queries ("give me X code", "implement X", "simulate X") go straight to the
+    # autonomous code agent — never the prose/citation pipeline (which would wrongly refuse for
+    # "sources lack code" and ship a toy demo). The agent proves correctness by running tests.
+    from backend.answering.code_intent import is_code_intent
+    if is_code_intent(q):
+        yield from _run_code_agent(q, session_id, mem)
+        return
 
     # One trace per chat request (no-op unless LANGFUSE_ENABLED=true). Carries only
     # coarse settings — never the question text.

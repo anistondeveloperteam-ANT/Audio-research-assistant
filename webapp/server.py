@@ -516,19 +516,9 @@ def _persist_agent_run(mem, session_id: str, task: str, res) -> None:
     other chat. The live step cards are ephemeral; the saved turn is the final code + output,
     rendered as markdown on reopen. Never raises — persistence must not break the response."""
     try:
-        parts = []
-        answer = (getattr(res, "answer", "") or "").strip()
-        code = (getattr(res, "best_code", "") or "").strip()
-        output = (getattr(res, "best_output", "") or "").strip()
-        if answer:
-            parts.append(answer)
-        if code:
-            parts.append(f"```python\n{code}\n```")
-        if output:
-            parts.append(f"**Output:**\n```text\n{output}\n```")
-        content = "\n\n".join(parts) or "_(the agent produced no result)_"
+        from backend.agent.loop import result_to_markdown
         mem.append_turn(session_id, "user", task)
-        mem.append_turn(session_id, "assistant", content)
+        mem.append_turn(session_id, "assistant", result_to_markdown(res))
     except Exception:
         pass
 
