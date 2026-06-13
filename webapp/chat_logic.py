@@ -556,6 +556,13 @@ def stream_chat_events(
     user_id = mem.session_owner(session_id) or "local"
     mem.append_turn(session_id, "user", q)
 
+    # Silently fix spelling/grammar BEFORE search so typos don't poison retrieval.
+    # The turn stored above keeps the user's exact words; everything downstream
+    # (intent, embedding, retrieval, external search, the LLM) uses the corrected
+    # text. refine_query never raises and falls back to the original on any error.
+    from backend.answering.query_refine import refine_query
+    q = refine_query(q)
+
     # Code-intent queries ("give me X code", "implement X", "simulate X") go straight to the
     # autonomous code agent — never the prose/citation pipeline (which would wrongly refuse for
     # "sources lack code" and ship a toy demo). The agent proves correctness by running tests.
