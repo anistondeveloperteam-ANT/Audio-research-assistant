@@ -43,8 +43,6 @@ flowchart LR
         VEC --> SEARCH
         SEARCH --> FUSE[RRF fusion]
         BM --> FUSE
-        FUSE --> GRAPH[Optional Memgraph GraphRAG]
-        GRAPH --> RERANK
         FUSE --> RERANK[Cross-encoder rerank]
         RERANK --> MMR[MMR diversify]
     end
@@ -173,14 +171,6 @@ Step by step:
    Relevance** trades relevance against redundancy and enforces a **per-paper
    cap**, so you don't get five near-duplicate chunks. `MMR_LAMBDA = 0.7`.
 
-**Optional Memgraph GraphRAG** (`backend/graph_rag/`) can be enabled with
-`ENABLE_GRAPH_RAG=true` after local PDFs are indexed. The graph is built from
-Oracle papers, chunks, sections, chunk types, and detected concepts. During
-retrieval, fused local chunks become seed nodes; Memgraph expands to related
-Oracle chunks through shared concepts, sections, papers, and concept
-co-occurrence. It never returns graph-only evidence: every graph hit maps back to
-an Oracle chunk/page before reranking and citation.
-
 **Optional turbovec accelerator** (`backend/retrieval/turbovec_index.py`) can be
 enabled with `VECTOR_BACKEND=turbovec`. It builds a compressed `IdMapIndex` from
 Oracle chunk embeddings and uses Oracle `chunks.id` as stable ids. Query results
@@ -227,6 +217,12 @@ flowchart LR
    conversation store (`backend/memory/store.py`) so history survives a refresh.
    Each question supports **copy / edit-and-resend / delete** in the UI.
 
+Before retrieval starts, `chat_logic.py` checks the saved-answer cache in the
+same SQLite memory store. Exact or high-similarity questions can return the
+previous cited answer immediately, without another web search, local retrieval,
+or LLM call. Freshness-sensitive questions such as "latest", "today", "current",
+and "this year" skip reuse by default.
+
 Current default: before the final answer is emitted, `backend/answering/agentic_answer.py`
 runs a bounded draft -> verify -> refine loop (`ENABLE_AGENTIC_ANSWER_LOOP=true`).
 The verifier checks evidence support, citation use, and completeness. If it finds
@@ -260,8 +256,8 @@ To measure which model answers best, use
 | Capability | Module | What it does |
 |------------|--------|--------------|
 | **Conversation memory** | `backend/memory/store.py` | Three-tier memory in SQLite (`data/memory.db`): sessions, turns (with saved sources), and facts. Supports edit/delete of individual turns. |
+| **Saved-answer reuse** | `backend/memory/store.py` + `webapp/chat_logic.py` | Reuses high-confidence answers for repeat/similar questions before retrieval and LLM calls. |
 | **Memory backup** | `backend/memory/memory_backup.py` | Human-readable, checksummed, secret-masked export/import of memory (used by `scripts/`). |
-| **Optional GraphRAG** | `backend/graph_rag/` | Builds a Memgraph graph from Oracle papers/chunks/concepts and expands local retrieval through relationships. |
 | **Retrieval evaluation** | `backend/evaluation/evaluate_retrieval.py` | Scores retrieval quality against `data/evaluation_questions.json`. |
 | **LLM accuracy** | `backend/evaluation/evaluate_llm.py` | Scores/compares LLM answer accuracy (keypoint coverage, citation rate, optional LLM-judge) against `data/llm_eval_questions.json`. |
 | **Data viewer** | `scripts/show_data.py` | Inspect indexed PDFs, chunks, embeddings, and memory. |
@@ -279,7 +275,6 @@ To measure which model answers best, use
 | **Oracle Database Free (23ai)** | Relational store **+ native vector search** (Docker) |
 | **python-oracledb** | Oracle driver |
 | **turbovec** *(optional)* | Compressed local dense-vector accelerator; Oracle remains source of truth |
-| **Memgraph** *(optional)* | GraphRAG relationship expansion over local paper chunks |
 
 ### AI / ML
 | Technology | Role |
@@ -369,8 +364,9 @@ settings:
 | `CREATE_VECTOR_INDEX` | `false` | Opt in to an approximate HNSW/IVF vector index |
 | `VECTOR_BACKEND` | `oracle` \| `turbovec` | Dense vector backend for local PDFs |
 | `TURBOVEC_ENABLED` | `false` | Enable optional compressed vector cache |
-| `ENABLE_GRAPH_RAG` | `false` | Opt in to optional Memgraph expansion over local PDFs |
-| `MEMGRAPH_URI` | `bolt://localhost:7687` | Memgraph Bolt endpoint |
+| `ENABLE_ANSWER_CACHE` | `true` | Reuse saved answers for repeat/similar questions |
+| `ANSWER_CACHE_MIN_SIMILARITY` | `0.88` | Similarity threshold required for reuse |
+| `ANSWER_CACHE_MAX_AGE_DAYS` | `30` | Maximum age for reusable answers; `0` disables expiry |
 
 > Embeddings use the Gemini API by default, so the GPU is free for the reranker
 > and Docling. `DEVICE=cuda` runs everything local on the GPU.
@@ -388,9 +384,6 @@ python pipeline.py                 # full rebuild
 python pipeline.py --incremental   # only changed PDFs
 python pipeline.py --status        # show what's indexed (no rebuild)
 
-# Optional: build the Memgraph graph after local PDF indexing
-python -m backend.graph_rag.build_graph
-
 # 2. Launch the web app  ->  http://localhost:8600
 python run.py                      # local to this PC
 python run.py --port 9000          # optional: choose another local port
@@ -398,7 +391,7 @@ python run.py --port 9000          # optional: choose another local port
 
 Useful checks:
 ```powershell
-python -m backend.database.test_oracle    # verify DB connection
+python -m backend.database.check_oracle    # verify DB connection
 python -m backend.database.db_status       # show indexed papers / chunks
 ```
 
@@ -415,7 +408,6 @@ Audio-research-assistant/
 │   ├── common/             # device (GPU/CPU), embeddings (Gemini/local)
 │   ├── ingestion/          # pdf_parser, ocr_fallback, document_chunker,
 │   │                       #   ingest_papers, embed_chunks, incremental_index
-│   ├── graph_rag/          # optional Memgraph graph expansion
 │   ├── retrieval/          # hybrid_retrieve, vector_retriever,
 │   │                       #   retrieval_fusion, hyde_generator
 │   ├── answering/          # research_modes, query_sanity

@@ -34,10 +34,11 @@ backend/
 |-- database/          # Oracle setup, reset, inspection, migration scripts
 |-- evaluation/        # retrieval and LLM evaluation runners
 |-- external_search/   # web, papers, patents, GitHub, online PDF search
-|-- graph_rag/         # optional Memgraph graph expansion
 |-- ingestion/         # PDF parsing, chunking, embedding, indexing
+|-- maintenance/       # factory_reset (wipe-all utility)
 |-- llm/               # chat provider interface: OpenAI
 |-- memory/            # SQLite conversation memory and backups
+|-- observability/     # optional Langfuse request tracing (no-op when off)
 |-- retrieval/         # local hybrid retrieval, fusion, HyDE, vector search
 ```
 

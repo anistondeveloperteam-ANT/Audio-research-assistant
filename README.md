@@ -10,10 +10,10 @@ Everything runs on your machine: a FastAPI backend, a dependency‑free HTML/JS 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-184%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-259%20passing-2ea44f)
 [![License](https://img.shields.io/badge/license-MIT-555)](LICENSE)
 
-**[Quick start](#-quick-start-5-minutes) · [What you can ask](#-what-you-can-ask) · [Fast vs Deep](#-fast-vs-deep) · [Trust](#-why-you-can-trust-the-answers) · [Features](#-features) · [Config](#-configuration)**
+**[Quick start](#-quick-start-5-minutes) · [What you can ask](#-what-you-can-ask) · [Fast vs Deep](#-fast-vs-deep) · [Trust](#-why-you-can-trust-the-answers) · [Features](#-features) · [Code map](#-code-map-where-everything-lives) · [Config](#-configuration)**
 
 </div>
 
@@ -210,24 +210,60 @@ Keep `ENABLE_AUTH=true` so visitors must sign in.
 
 ---
 
+## 🗺️ Code map (where everything lives)
+
+New to the codebase? Here's the whole thing on one screen. **The arrows show how a request flows; the table tells you which file to open first.**
+
+```mermaid
+flowchart TD
+    UI["🖥️ Browser UI<br/>webapp/static · app.js · index.html"] --> SRV["⚡ FastAPI server<br/>webapp/server.py — routes · auth · streaming"]
+    SRV --> ORC["🧭 Orchestration<br/>webapp/chat_logic.py"]
+    ORC --> ANS["🧠 Answering brain<br/>backend/answering<br/>sanity · code-intent · modes · verify · cite"]
+    ANS -->|prose question| RET["🔎 Local retrieval<br/>backend/retrieval<br/>hybrid · vector · BM25 · RRF · HyDE · rerank"]
+    ANS -->|prose question| EXT["🌐 External search<br/>backend/external_search<br/>web · arXiv · Scholar · GitHub · patents · PDFs"]
+    ANS -->|code task| AGT["🤖 Code agent<br/>backend/agent<br/>test-first loop · Docker sandbox · anti-cheat"]
+    ANS --> LLM["💬 LLM provider<br/>backend/llm/streaming_provider.py<br/>Gemini · Mistral · OpenAI · Ollama"]
+    ING["📥 Ingestion + pipeline.py<br/>backend/ingestion<br/>parse → chunk → embed"] --> DB[("🗄️ Oracle 23ai<br/>vectors + chunks")]
+    RET --> DB
+    RET --> COM["🧰 backend/common<br/>embeddings · device GPU/CPU"]
+    ING --> COM
+    ORC --> MEM[("💾 backend/memory<br/>SQLite: sessions · facts · answer-cache")]
+    SRV --> AUTH["🔐 backend/auth<br/>users · Google OAuth · mailer"]
+```
+
+| Folder | What lives here | Open first |
+|---|---|---|
+| **`webapp/`** | FastAPI server, chat orchestration, no‑build UI | `server.py` · `chat_logic.py` |
+| **`backend/answering/`** | The decision brain — route, verify, cite, review | `agentic_answer.py` · `code_intent.py` |
+| **`backend/retrieval/`** | Local hybrid RAG over your PDFs (vector + BM25 + RRF + rerank) | `hybrid_retrieve.py` |
+| **`backend/external_search/`** | Web · arXiv · Semantic Scholar · Wikipedia · patents · GitHub · online PDFs | `orchestrator.py` |
+| **`backend/agent/`** | Autonomous code agent — writes → runs in Docker → verifies | `loop.py` · `code_runner.py` |
+| **`backend/ingestion/`** | PDF → chunks → embeddings (driven by `pipeline.py` at the root) | `ingest_papers.py` |
+| **`backend/llm/`** | One OpenAI‑compatible streaming client + model router | `streaming_provider.py` |
+| **`backend/database/`** | Oracle schema, CLOB→native‑VECTOR migration, admin CLIs | `create_schema.py` · `vector_migration.py` |
+| **`backend/memory/`** | Conversations, facts, answer cache (SQLite) | `store.py` |
+| **`backend/common/`** | Embeddings facade + GPU/CPU device picker | `embeddings.py` · `device.py` |
+| **`backend/auth/`** | Accounts, Google OAuth, password‑reset email | `users.py` |
+| **`backend/maintenance/`** | One‑shot factory reset (wipe all local data) | `factory_reset.py` |
+| **`backend/evaluation/`** | Retrieval + LLM answer‑quality scoring | `evaluate_retrieval.py` |
+| **`backend/observability/`** | Optional Langfuse request tracing (off by default) | `tracing.py` |
+| **`tests/`** | 259 offline tests — Docker / LLM / network all mocked | `test_*.py` |
+
+> 🧭 Deeper dives: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** (full diagrams) · **[docs/PIPELINE.md](docs/PIPELINE.md)** (step‑by‑step flow) · **[docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)** (every folder & naming rules).
+
+---
+
 ## 🛠️ Development
 
 ```bash
-.venv\Scripts\python.exe -m pytest -q          # 184 passing, fully offline/mocked
+.venv\Scripts\python.exe -m pytest -q          # 259 passing, fully offline/mocked
 .venv\Scripts\pyflakes backend webapp          # lint
-python pipeline.py --status                    # what's indexed right now
+python pipeline.py --status                    # what's indexed + which device (GPU/CPU)
 python pipeline.py --corpus-report             # coverage + gaps report
 ```
 
-```
-backend/   retrieval · external search · LLM router · agents · memory · evaluation · observability
-webapp/    FastAPI server + chat orchestration + static UI (no build step)
-docs/      ARCHITECTURE.md (full pipeline + tech) · OBSERVABILITY.md · INGESTION_CHECKLIST.md
-run.py     launch the app  (--share / --lan)
-```
-
-> 🧭 **Want the full engineering map** — every tool, module, and pipeline in detail? See
-> **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+New here? Start with the **[Code map](#-code-map-where-everything-lives)** above to see where each
+piece lives, then read **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full engineering deep‑dive.
 
 ---
 
