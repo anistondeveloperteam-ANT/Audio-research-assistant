@@ -10,10 +10,29 @@ Upload + ingestion for the web UI.
 from __future__ import annotations
 
 import hashlib
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Tuple
+
+# Subprocess output that is noise in the UI: tqdm bars, dedup skips, Docling's recovered-page
+# failures / tracebacks, and internal device logs. Pages are never lost (PyMuPDF recovers them),
+# so these add nothing for the user — the modal should stay a clean checklist.
+_LOG_NOISE = re.compile(
+    r"\d+%\|"                       # tqdm progress bar
+    r"|\bit/s\]"                    # tqdm rate
+    r"|^Skipping already ingested"  # content-hash dedup skips
+    r"|Stage \w+ failed"            # Docling per-page stage failure (recovered)
+    r"|std::bad_alloc"              # native OOM noise (recovered)
+    r"|^Traceback "                 # python traceback header
+    r"|^File \""                    # traceback frame (stripped line)
+    r"|Docling layout device"       # internal device log
+)
+
+
+def _is_log_noise(line: str) -> bool:
+    return (not line.strip()) or bool(_LOG_NOISE.search(line))
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -275,11 +294,14 @@ def stream_ingest() -> Iterator[Dict[str, Any]]:
 
         if proc.stdout is not None:
             for raw in iter(proc.stdout.readline, ""):
-                line = raw.rstrip("\n")
-                if line.strip():
-                    if "NOT indexed" in line:
-                        page_warnings.append(line.strip())
-                    yield {"type": "log", "line": line}
+                line = raw.rstrip("\n").strip()
+                if not line:
+                    continue
+                if "NOT indexed" in line:           # always surface coverage warnings
+                    page_warnings.append(line)
+                elif _is_log_noise(line):           # drop tqdm/skips/recovered-page traces
+                    continue
+                yield {"type": "log", "line": line}
             proc.stdout.close()
         code = proc.wait()
         if code != 0:

@@ -38,3 +38,25 @@ def test_save_pdfs_empty_batch(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest, "PAPERS_DIR", tmp_path)
     res = ingest.save_pdfs([])
     assert res == {"results": [], "total": 0, "saved": 0, "duplicate": 0, "error": 0}
+
+
+def test_ingest_log_noise_filter():
+    # Noise the UI must NOT show (tqdm bars, dedup skips, recovered-page traces, internal logs).
+    for noisy in [
+        "Ingesting PDFs: 100%|####| 10/10 [01:32<00:00,  9.24s/it]",
+        "Skipping already ingested: Foo.pdf",
+        "Stage preprocess failed for run 1, pages [5]: std::bad_alloc",
+        'File "x.py", line 5, in foo',
+        "  Docling layout device: cpu (do_ocr=False, page_batch=1)",
+        "   ",
+    ]:
+        assert ingest._is_log_noise(noisy) is True, noisy
+    # Meaningful lines the UI MUST keep.
+    for keep in [
+        "Ingested: Foo.pdf | parser=docling | pages_indexed=8/8 | chunks=41 | parsed in 6.0s",
+        "Page coverage: all pages indexed (no warnings).",
+        "WARNING: 1 page(s) failed/empty and are NOT indexed: [5]",
+        "Embedded chunks: 297/297",
+        "Vector migration complete.",
+    ]:
+        assert ingest._is_log_noise(keep) is False, keep
