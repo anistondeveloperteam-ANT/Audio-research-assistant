@@ -132,3 +132,16 @@ def test_per_page_cpu_ocr_rescues_scanned_page(monkeypatch):
     res = pp.parse_pdf(Path("x.pdf"))
     assert res["ocr_pages"] == [2]                         # page 2 OCR'd on CPU and rescued
     assert res["pages_missing"] == [] and res["pages_indexed"] == 2
+
+
+# ---- ingest summary surfaces coverage + the missing-page warning -------
+def test_ingest_summary_reports_pages_and_warning():
+    from backend.ingestion import ingest_papers as ip
+    parsed = {"parser": "docling", "pages_indexed": 5, "pages_total": 8,
+              "warnings": ["WARNING: 3 page(s) failed/empty and are NOT indexed: [6, 7, 8]"]}
+    line = ip.coverage_line("Deep.pdf", parsed, 40)
+    assert "pages_indexed=5/8" in line
+    warns = ip.coverage_warnings("Deep.pdf", parsed)
+    assert warns and warns[0].startswith("Deep.pdf:") and "NOT indexed" in warns[0]
+    # a fully-indexed paper produces no warnings
+    assert ip.coverage_warnings("ok.pdf", {"warnings": []}) == []

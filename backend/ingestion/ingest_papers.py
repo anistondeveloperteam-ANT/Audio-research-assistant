@@ -103,6 +103,18 @@ def insert_chunk(cur, paper_id, chunk_index, chunk, context_text=""):
     )
 
 
+def coverage_line(name: str, parsed: dict, n_chunks: int) -> str:
+    """One-line per-PDF ingest report including pages_indexed/pages_total."""
+    return (f"Ingested: {name} | parser={parsed.get('parser')} | "
+            f"pages_indexed={parsed.get('pages_indexed')}/{parsed.get('pages_total')} | "
+            f"chunks={n_chunks}")
+
+
+def coverage_warnings(name: str, parsed: dict) -> list:
+    """Per-PDF page-coverage warnings (e.g. 'WARNING: N pages ... NOT indexed'), name-prefixed."""
+    return [f"{name}: {w}" for w in parsed.get("warnings", [])]
+
+
 def main():
     pdfs = sorted(PAPERS_DIR.glob("*.pdf"))
 
@@ -114,6 +126,7 @@ def main():
     cur = conn.cursor()
 
     total_new_chunks = 0
+    overall_warnings = []
 
     print(f"Found {len(pdfs)} PDFs")
 
@@ -149,12 +162,10 @@ def main():
 
         total_new_chunks += len(chunks)
 
-        print(
-            f"Ingested: {pdf_path.name} | "
-            f"parser={parsed.get('parser')} | "
-            f"pages={parsed.get('page_count')} | "
-            f"chunks={len(chunks)}"
-        )
+        print(coverage_line(pdf_path.name, parsed, len(chunks)))
+        for w in coverage_warnings(pdf_path.name, parsed):
+            print(f"  {w}")
+            overall_warnings.append(w)
 
     cur.execute("SELECT COUNT(*) FROM papers")
     paper_count = cur.fetchone()[0]
@@ -166,6 +177,14 @@ def main():
     print(f"Papers in DB: {paper_count}")
     print(f"Chunks in DB: {chunk_count}")
     print(f"New chunks added this run: {total_new_chunks}")
+    if overall_warnings:
+        print("\n" + "=" * 64)
+        print(f"PAGE COVERAGE WARNINGS ({len(overall_warnings)}) — some pages are NOT indexed:")
+        for w in overall_warnings:
+            print(f"  - {w}")
+        print("=" * 64)
+    else:
+        print("Page coverage: all pages indexed (no warnings).")
 
     cur.close()
     conn.close()

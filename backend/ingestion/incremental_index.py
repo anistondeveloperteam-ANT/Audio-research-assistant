@@ -134,7 +134,6 @@ def main() -> None:
     args = parser.parse_args()
 
     started = time.time()
-    os.environ["ENABLE_OCR"] = "true"
 
     old_manifest = read_json(MANIFEST_FILE, {"files": {}})
     current = scan_library()

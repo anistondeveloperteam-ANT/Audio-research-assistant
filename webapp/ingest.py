@@ -253,7 +253,9 @@ def _clear_retrieval_caches(remove_turbovec_files: bool = False) -> None:
 # ----------------------------------------------------------------------
 def stream_ingest() -> Iterator[Dict[str, Any]]:
     """Run the 3 ingestion stages, yielding progress events:
-    {type: stage|log|error|done}."""
+    {type: stage|log|error|done}. Page-coverage warnings (pages that failed/were not indexed)
+    are collected from the stage output and surfaced in the final 'done' event."""
+    page_warnings = []
     for label, module, extra_args in _ingestion_stages():
         yield {"type": "stage", "label": label}
         try:
@@ -275,6 +277,8 @@ def stream_ingest() -> Iterator[Dict[str, Any]]:
             for raw in iter(proc.stdout.readline, ""):
                 line = raw.rstrip("\n")
                 if line.strip():
+                    if "NOT indexed" in line:
+                        page_warnings.append(line.strip())
                     yield {"type": "log", "line": line}
             proc.stdout.close()
         code = proc.wait()
@@ -283,4 +287,9 @@ def stream_ingest() -> Iterator[Dict[str, Any]]:
             return
 
     _clear_retrieval_caches()
-    yield {"type": "done", "message": "Paper indexed and ready.", "library": library_stats()}
+    message = "Paper indexed and ready."
+    if page_warnings:
+        message += (f" ⚠ {len(page_warnings)} page-coverage warning(s): some pages were not indexed "
+                    "(see the log).")
+    yield {"type": "done", "message": message, "library": library_stats(),
+           "page_warnings": page_warnings}
