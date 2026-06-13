@@ -123,15 +123,21 @@ def _enumerates_inputs(tree: ast.AST) -> Optional[str]:
 
 
 def _returns_test_literal(tree: ast.AST, tlits: Set) -> Optional[str]:
-    """Rule (hardcoded expected output): the solution returns a constant equal to one of the
-    tests' non-trivial expected values."""
+    """Rule (hardcoded expected output): a function that TAKES inputs returns a constant equal to
+    one of the tests' non-trivial expected values. Restricted to functions WITH parameters so a
+    legitimate constant-valued task (a no-arg function returning a constant) is never flagged."""
     if not tlits:
         return None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Return) and isinstance(node.value, ast.Constant):
-            v = node.value.value
-            if not isinstance(v, bool) and v in tlits:
-                return f"hardcodes a value equal to a test's expected result ({v!r})"
+    for fn in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+        params = [a.arg for a in (list(getattr(fn.args, "posonlyargs", [])) + list(fn.args.args)
+                                  + list(fn.args.kwonlyargs)) if a.arg not in ("self", "cls")]
+        if not params:
+            continue
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Return) and isinstance(node.value, ast.Constant):
+                v = node.value.value
+                if not isinstance(v, bool) and v in tlits:
+                    return f"hardcodes a value equal to a test's expected result ({v!r})"
     return None
 
 

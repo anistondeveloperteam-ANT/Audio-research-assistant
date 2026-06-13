@@ -86,6 +86,15 @@ def test_clean_blackscholes_not_flagged():
     assert not rep.flagged, rep.reasons
 
 
+def test_no_arg_constant_function_not_flagged_as_hardcode():
+    # A constant-valued task legitimately returns a constant from a NO-ARG function; only a
+    # function that takes inputs and returns the expected literal is hardcoding.
+    tests = "def test_g():\n    assert gravity() == 9.81\n"
+    assert not scan_for_cheating("def gravity():\n    return 9.81\n", tests_code=tests).flagged
+    # but a function WITH params returning that same literal IS flagged
+    assert scan_for_cheating("def g(x):\n    return 9.81\n", tests_code=tests).flagged
+
+
 def test_clean_recursion_with_trivial_base_cases_not_flagged():
     # fib has two `== 0/1 -> return 0/1` branches: trivial constants must not trip the rule.
     code = ("def fib(n):\n"
