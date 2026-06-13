@@ -1,19 +1,25 @@
 """
-The research agent's THINK -> EXECUTE -> REFLECT loop.
+The coding agent's test-first generate -> run-vs-tests -> refine loop (AlphaCodium, 2401.08500).
 
-    THINK    : the LLM designs a complete Python program for the task.
-    EXECUTE  : the program is run in a throwaway Docker sandbox (code_runner).
-    REFLECT  : the LLM reviews the *actual run result* and decides: done, or refine.
+    REQUIREMENTS : the LLM restates the task as a concrete requirements checklist
+                   (using the conversation topic), so the code addresses THIS request.
+    TESTS        : the LLM writes 5-8 concrete correctness tests for the task (the
+                   acceptance criteria), derived from the algorithm itself.
+    SOLUTION     : the LLM writes modular code; for each round we try up to two
+                   candidates (best-of-2) and keep the one that passes more tests.
+    RUN-VS-TESTS : solution + tests run together in a throwaway Docker sandbox; a
+                   candidate is accepted ONLY when ALL generated tests pass (never on
+                   "it ran without error") AND it implements the requested algorithm
+                   (relevance gate). If two rounds fail, escalate to AGENT_MODEL_STRONG.
 
-It keeps the best working attempt and stops when the reviewer is satisfied (or after
-`max_iters`). Optionally it first searches the web/papers/GitHub for relevant
-approaches to inform the first attempt.
+It keeps the best attempt and, if tests never fully pass, returns it honestly labelled
+"partially verified — N/M tests passing". Optionally it first fetches 1-2 stars-first
+GitHub reference implementations of the named algorithm to ADAPT (never copy).
 
-Two ideas adapted (original code) from `auto-deep-researcher-24x7` (Apache-2.0):
-  - the THINK -> EXECUTE -> REFLECT control loop, and
-  - a constant-size two-tier memory (`memory.py`) so many cycles never bloat context,
-    steered by a PROJECT_BRIEF (the goal + an if-then decision tree) plus an optional
-    mid-flight HUMAN_DIRECTIVE file.
+The THINK -> EXECUTE -> REFLECT control-loop skeleton and the constant-size memory idea
+were adapted (original code) from `auto-deep-researcher-24x7` (Apache-2.0); the test-first
+generation/acceptance is adapted from AlphaCodium. A mid-flight HUMAN_DIRECTIVE file can
+still steer the loop between rounds.
 """
 from __future__ import annotations
 
@@ -26,7 +32,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 from backend.agent.code_runner import RunResult, docker_available, run_python_auto
 from backend.agent.hooks import pre_run
-from backend.agent.memory import TwoTierMemory
 from backend.llm.streaming_provider import get_provider
 from backend.observability import tracing  # no-op unless LANGFUSE_ENABLED=true
 
@@ -55,6 +60,8 @@ class AgentResult:
     best_output: str
     answer: str
     attempts: List[Attempt] = field(default_factory=list)
+    tests_passed: int = 0
+    tests_total: int = 0
 
 
 # ----------------------------------------------------------------------
@@ -96,64 +103,151 @@ _GEN_SYSTEM = (
     "code, not by citations. "
     "You MAY use well-known third-party libraries when they are the right tool (e.g. numpy, "
     "scipy, pandas); the sandbox installs the packages you import, so import what you need. "
-    "Write ONE complete, self-contained program: small named functions for the core logic, then "
-    "a runnable section that exercises it and PRINTS a clear result plus a short correctness "
-    "check. At RUNTIME the sandbox has no network, no file access, and no input() — do not use "
-    "them (third-party imports are fine). The program must run to completion in a few seconds. "
+    "Write complete, self-contained, MODULAR code: small named functions for the core logic, "
+    "each with a clear signature. A separate harness imports and exercises your functions against "
+    "unit tests, so do NOT add a __main__ block, prints, or your own test runner — just define the "
+    "functions. At RUNTIME the sandbox has no network, no file access, and no input() — do not use "
+    "them (third-party imports are fine). The code must run to completion in a few seconds. "
     "Output ONLY the Python code — no explanation, no markdown."
 )
 
-_REFLECT_SYSTEM = (
-    "You are a strict reviewer. You are given the task (and the conversation topic it came "
-    "from), a candidate Python program, and the ACTUAL result of running it in a sandbox. "
-    "Reply with ONLY a JSON object and nothing else:\n"
-    '{"relevant": true|false, "success": true|false, "score": 0-100, "done": true|false, '
-    '"feedback": "concrete fix or improvement if not done", '
-    '"answer": "the final answer/best algorithm in 1-2 sentences"}\n'
-    "relevant = the program actually addresses THIS task/topic (not some unrelated problem). "
-    "If it is not relevant, set relevant=false, success=false, done=false regardless of whether "
-    "it ran. success = it ran and is correct. done = true only if it is correct, relevant, AND "
-    "good enough that further iteration would not meaningfully improve it."
+_REQ_SYSTEM = (
+    "You are a senior engineer. Restate the user's coding task as a short, concrete checklist of "
+    "requirements (3-7 bullets): the function(s) to implement WITH their signatures, the inputs "
+    "and outputs, and the key correctness properties to satisfy. Use the conversation context if "
+    "given. Output ONLY the bullet list."
+)
+
+_TESTS_SYSTEM = (
+    "You write rigorous unit tests as plain Python (no pytest, no unittest). Given a task and its "
+    "requirements, write 5-8 test functions named test_<name>() that build CONCRETE inputs (use "
+    "numpy if it helps), call the SOLUTION's functions directly (they are defined in the same "
+    "file), and `assert` the expected outputs/properties — derive them from the algorithm itself "
+    "(e.g. for an MVDR beamformer: the distortionless constraint w^H d ~= 1, and output SNR >= "
+    "input SNR on synthetic multichannel data; for Black-Scholes: put-call parity and a known "
+    "reference value). Each test must raise AssertionError on failure. Do NOT define the solution "
+    "or any test runner. Output ONLY the Python test functions."
+)
+
+# Appended after (solution + generated tests): runs every test_* and prints a parseable tally.
+_TEST_FOOTER = (
+    "\n\n# === auto-appended test runner ===\n"
+    "def __run_all_tests():\n"
+    "    import traceback\n"
+    "    g = dict(globals())\n"
+    "    names = sorted(n for n, v in g.items() if n.startswith('test_') and callable(v))\n"
+    "    passed = 0\n"
+    "    for _n in names:\n"
+    "        try:\n"
+    "            g[_n]()\n"
+    "            print('TEST', _n, 'PASS')\n"
+    "            passed += 1\n"
+    "        except Exception:\n"
+    "            print('TEST', _n, 'FAIL')\n"
+    "            traceback.print_exc()\n"
+    "    print('TESTS_PASSED %d/%d' % (passed, len(names)))\n"
+    "__run_all_tests()\n"
 )
 
 
-def _generate_code(provider, memory_context: str, last_code: str, directive: str) -> str:
-    """THINK: design (or refine) the program from the constant-size memory context.
+def _restate_requirements(provider, task: str, conversation: str, reference: str) -> str:
+    """(a) Restate the task as a concrete requirements checklist, using conversation context."""
+    parts = []
+    if conversation.strip():
+        parts.append(f"CONVERSATION (the topic the code must address):\n{conversation}\n")
+    parts.append(f"TASK:\n{task}")
+    if reference:
+        parts.append(f"\nREFERENCE (context only):\n{reference[:1500]}")
+    parts.append("\nWrite the requirements checklist now.")
+    out = _complete(provider, _REQ_SYSTEM, "\n".join(parts), REFLECT_MAX_TOKENS)
+    return out or f"- Implement the task: {task}"
 
-    `memory_context` = brief (goal/decision-tree) + a compacted log of prior attempts.
-    Only the single most-recent full program is carried verbatim (for line-level
-    refinement) so the prompt stays bounded as iterations grow.
-    """
-    parts = [memory_context]
+
+def _generate_tests(provider, task: str, requirements: str) -> str:
+    """(b) Generate 5-8 concrete test_* functions that target THIS task (derived, not hardcoded)."""
+    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\n"
+            "Write the test_* functions now (they call the solution's functions directly).")
+    return _extract_code(_complete(provider, _TESTS_SYSTEM, user, GEN_MAX_TOKENS))
+
+
+def _generate_solution(provider, task: str, requirements: str, tests: str, reference: str,
+                       last_code: str, feedback: str) -> str:
+    """(c) Write modular solution code so the provided tests pass. The tests are appended by the
+    runner, not by the model."""
+    parts = [f"TASK:\n{task}", f"\nREQUIREMENTS:\n{requirements}",
+             "\nYour solution MUST define the functions these tests call so they pass. Do NOT "
+             f"include the tests or a runner in your output:\n```python\n{tests}\n```"]
+    if reference:
+        parts.append(f"\nREFERENCE implementations (adapt the approach, do NOT copy):\n{reference[:3000]}")
     if last_code:
-        parts.append(f"\nYOUR PREVIOUS PROGRAM (improve it):\n```python\n{last_code}\n```")
-    if directive:
-        parts.append(f"\nNEW INSTRUCTION FROM THE USER (take priority):\n{directive}")
-    parts.append("\nWrite the complete, improved program now.")
+        parts.append(f"\nYOUR PREVIOUS SOLUTION (fix it):\n```python\n{last_code}\n```")
+    if feedback:
+        parts.append(f"\nThe tests FAILED last time — fix these specifically:\n{feedback[:1500]}")
+    parts.append("\nWrite the solution code now (functions only).")
     return _extract_code(_complete(provider, _GEN_SYSTEM, "\n".join(parts), GEN_MAX_TOKENS))
 
 
-def _reflect(provider, task: str, code: str, result: RunResult,
-             conversation: str = "") -> Dict[str, Any]:
-    user = (
-        (f"CONVERSATION TOPIC (the real subject the code must address):\n{conversation}\n\n"
-         if conversation.strip() else "")
-        + f"TASK:\n{task}\n\n"
-        f"PROGRAM:\n```python\n{code}\n```\n\n"
-        f"RUN RESULT: {result.summary}\n"
-        f"STDOUT:\n{result.stdout or '(none)'}\n\n"
-        f"STDERR:\n{result.stderr or '(none)'}\n"
-        f"{('HARNESS ERROR: ' + result.error) if result.error else ''}"
-    )
-    verdict = _parse_json(_complete(provider, _REFLECT_SYSTEM, user, REFLECT_MAX_TOKENS))
-    # Defensive defaults if the model didn't return clean JSON.
-    verdict.setdefault("relevant", True)   # conservative: only block on an explicit false
-    verdict.setdefault("success", bool(result.ok))
-    verdict.setdefault("score", 55 if result.ok else 0)
-    verdict.setdefault("done", False)
-    verdict.setdefault("feedback", "" if result.ok else (result.stderr or result.error or "It failed to run."))
-    verdict.setdefault("answer", "")
-    return verdict
+def _count_tests(tests_code: str) -> int:
+    return len(re.findall(r"^\s*def\s+test_\w+\s*\(", tests_code or "", re.M))
+
+
+def _run_against_tests(solution_code: str, tests_code: str):
+    """Combine solution + generated tests + the runner, execute in the sandbox, and return
+    (RunResult, passed, total). A crash before the runner -> 0 passed (stderr feeds the rewrite)."""
+    script = solution_code + "\n\n# === generated tests ===\n" + tests_code + _TEST_FOOTER
+    result = run_python_auto(script)
+    m = re.search(r"TESTS_PASSED\s+(\d+)\s*/\s*(\d+)", result.stdout or "")
+    passed = int(m.group(1)) if m else 0
+    total = int(m.group(2)) if m else _count_tests(tests_code)
+    return result, passed, total
+
+
+# Generic English / request words that are not algorithm names — they must not trip the
+# relevance gate ("what is 6*7" has no technical term, so it can never be "off-topic").
+_GENERIC = {
+    "the", "and", "for", "with", "that", "this", "your", "you", "are", "how", "why", "what",
+    "when", "where", "which", "please", "python", "code", "script", "program", "function",
+    "implementation", "give", "make", "write", "create", "build", "show", "need", "want",
+    "provide", "generate", "using", "use", "from", "into", "get", "set", "run", "value",
+    "values", "output", "input", "result", "print", "return", "given",
+    # vague fillers / quantifiers / adjectives that are not algorithm names
+    "some", "any", "all", "one", "two", "simple", "basic", "just", "like", "thing", "stuff",
+    "example", "demo", "small", "quick", "good", "nice", "snippet", "based",
+}
+
+
+def _topic_terms(task: str) -> List[str]:
+    """Significant technical terms in the task (generic English/request words dropped)."""
+    from backend.agent.reference_code import topic_of
+    words = re.findall(r"[a-z0-9]{3,}", topic_of(task).lower())
+    return [w for w in words if w not in _GENERIC]
+
+
+def _is_relevant_code(task: str, code: str, tests: str) -> bool:
+    """C6: the deliverable must implement the REQUESTED algorithm — at least one significant term
+    from the task must appear in the code/tests. If the task names no specific topic, can't fail."""
+    terms = _topic_terms(task)
+    if not terms:
+        return True
+    hay = ((code or "") + "\n" + (tests or "")).lower()
+    return any(t in hay for t in terms)
+
+
+def _verdict_from_tests(passed: int, total: int, relevant: bool, result: RunResult) -> Dict[str, Any]:
+    """Synthesize the Attempt verdict from the test tally (no extra LLM call): correctness is the
+    pass-rate; 'done' means ALL tests pass AND the code is on-topic (relevance gate)."""
+    all_pass = bool(total and passed >= total)
+    return {
+        "relevant": relevant,
+        "success": bool(all_pass and relevant and result.ok),
+        "done": bool(all_pass and relevant),
+        "score": int(round(100 * passed / total)) if total else (40 if result.ok else 0),
+        "passed": int(passed),
+        "total": int(total),
+        "feedback": "" if all_pass else (
+            (result.stderr or result.error or result.stdout or "Not all tests passed.").strip()[:1500]),
+        "answer": "",
+    }
 
 
 def _score(att: Attempt) -> int:
@@ -165,22 +259,6 @@ def _score(att: Attempt) -> int:
         return base + int(att.verdict.get("score", 0))
     except Exception:
         return base
-
-
-def _gather_context(task: str, on_event: OnEvent) -> str:
-    """Best-effort: search the web/papers/GitHub for relevant approaches. Never fatal."""
-    try:
-        from backend.external_search.orchestrator import gather_external_evidence
-        sources, _ = gather_external_evidence(task, max_results=6)
-    except Exception as exc:
-        on_event({"type": "warning", "message": f"Research step skipped: {exc}"})
-        return ""
-    lines: List[str] = []
-    for s in sources[:6]:
-        snippet = (getattr(s, "text", "") or getattr(s, "snippet", "") or "").strip().replace("\n", " ")
-        if snippet:
-            lines.append(f"- {getattr(s, 'title', 'source')}: {snippet[:300]}")
-    return "\n".join(lines)
 
 
 def _build_brief(task: str, brief: str, context: str, conversation: str = "") -> str:
@@ -237,103 +315,181 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                                           "agent can run and verify its code."})
         return AgentResult(task, False, "", "", "Docker unavailable.", [])
 
-    context = ""
+    # Reference implementations of the NAMED algorithm (any domain) to ADAPT, never copy.
+    reference = ""
     if use_search:
-        emit({"type": "status", "message": "Researching relevant approaches…"})
-        context = _gather_context(task, emit)
-        emit({"type": "context", "chars": len(context)})
+        emit({"type": "status", "message": "Finding reference implementations…"})
+        try:
+            from backend.agent.reference_code import fetch_reference_code
+            reference = fetch_reference_code(task)
+        except Exception as exc:
+            emit({"type": "warning", "message": f"Reference search skipped: {exc}"})
+        emit({"type": "context", "chars": len(reference)})
 
-    # Tier-1 brief (frozen) + Tier-2 log (auto-compacting) -> constant-size context.
-    memory = TwoTierMemory(brief=_build_brief(task, brief, context, conversation))
+    convo = conversation.strip()
+    if brief:
+        convo = (convo + "\n\n# Brief\n" + brief).strip()
+    agent_trace = tracing.start_trace("agent_run", max_iters=max_iters, use_search=bool(use_search))
+
+    # (a) Restate the task as a concrete requirements checklist (uses the conversation topic).
+    emit({"type": "status", "message": "Restating the task as requirements…"})
+    with agent_trace.span("requirements") as _sp:
+        requirements = _restate_requirements(provider, task, convo, reference)
+        _sp.set(chars=len(requirements))
+    emit({"type": "requirements", "text": requirements[:1500]})
+
+    # (b) Generate concrete correctness tests for THIS task — the acceptance criteria.
+    emit({"type": "status", "message": "Writing correctness tests…"})
+    with agent_trace.span("tests") as _sp:
+        tests = _generate_tests(provider, task, requirements)
+        _sp.set(count=_count_tests(tests))
+    test_n = _count_tests(tests)
+    emit({"type": "tests", "iteration": 0, "code": tests, "count": test_n})
+
+    strong_model = os.getenv("AGENT_MODEL_STRONG") or ""
     attempts: List[Attempt] = []
     best: Optional[Attempt] = None
     last_code = ""
-    agent_trace = tracing.start_trace("agent_run", max_iters=max_iters, use_search=bool(use_search))
+    feedback = ""
+    rounds_failed = 0
 
     for i in range(1, max_iters + 1):
         directive = _read_directive(directive_path)
         if directive:
             emit({"type": "directive", "iteration": i, "text": directive[:300]})
-        emit({"type": "think", "iteration": i, "message": f"Designing a solution (attempt {i}/{max_iters})…"})
-        with agent_trace.span("generate", iteration=i) as _sp:
-            code = _generate_code(provider, memory.context(), last_code, directive)
-            _sp.set(code_len=len(code or ""))
-        emit({"type": "code", "iteration": i, "code": code})
+            feedback = (feedback + "\nUSER DIRECTIVE (priority): " + directive).strip()
 
-        # Pre-execution lifecycle hook (kimi-code idea): audit + allow/block gate.
-        with agent_trace.span("prerun_hook", iteration=i) as _sp:
-            gate = pre_run(code, task=task)
-            _sp.set(allowed=bool(gate.allowed), reason=gate.reason)
-        if not gate.allowed:
-            emit({"type": "blocked", "iteration": i, "reason": gate.reason})
-            result = RunResult(False, -1, "", "", 0.0, f"blocked by policy: {gate.reason}")
-        else:
-            emit({"type": "run", "iteration": i, "message": "Running it in the Docker sandbox…"})
-            with agent_trace.span("docker_run", iteration=i) as _sp:
-                result = run_python_auto(code)
-                _sp.set(ok=bool(result.ok), seconds=round(result.seconds, 2),
-                        exit_code=result.exit_code)
-        emit({"type": "run_result", "iteration": i, "ok": result.ok, "summary": result.summary,
-              "stdout": result.stdout, "stderr": result.stderr, "error": result.error})
+        # (e) Escalate to a stronger model after two failed rounds, if one is configured.
+        gen_provider = provider
+        if rounds_failed >= 2 and strong_model:
+            try:
+                gen_provider = get_provider(strong_model)
+                emit({"type": "status",
+                      "message": f"Escalating to a stronger model ({strong_model})…"})
+            except Exception:
+                gen_provider = provider
 
-        with agent_trace.span("reflect", iteration=i) as _sp:
-            verdict = _reflect(provider, task, code, result, conversation)
-            _sp.set(score=int(verdict.get("score", 0)), done=bool(verdict.get("done")),
-                    relevant=verdict.get("relevant"))
-        emit({"type": "reflect", "iteration": i, "verdict": verdict})
-        if verdict.get("relevant") is False and i < max_iters:
-            emit({"type": "status",
-                  "message": "Off-topic — regenerating with the conversation context…"})
+        emit({"type": "think", "iteration": i,
+              "message": f"Writing code to pass the tests (attempt {i}/{max_iters})…"})
 
-        att = Attempt(i, code, result, verdict)
-        attempts.append(att)
-        if best is None or _score(att) > _score(best):
-            best = att
+        # (d) Best-of-2: up to two candidates per round; keep the higher-passing, on-topic one.
+        round_best: Optional[Attempt] = None
+        round_best_rank: Optional[tuple] = None
+        for c in range(2):
+            cand_feedback = feedback
+            if c > 0:
+                cand_feedback = (feedback + "\n\nYour first attempt this round did not pass all "
+                                 "tests — take a materially different approach.").strip()
+            with agent_trace.span("generate", iteration=i, candidate=c + 1) as _sp:
+                code = _generate_solution(gen_provider, task, requirements, tests, reference,
+                                          last_code, cand_feedback)
+                _sp.set(code_len=len(code or ""))
+            if not (code or "").strip():
+                continue
+            emit({"type": "code", "iteration": i, "candidate": c + 1, "code": code})
 
-        # Record a compact, bounded note of this attempt for future cycles.
-        memory.append(f"Attempt {i}: {result.summary}. Review score={verdict.get('score')} "
-                      f"done={verdict.get('done')}. {(verdict.get('feedback') or '')[:240]}")
-        last_code = code
-        if result.ok and verdict.get("done") and verdict.get("relevant", True):
+            # Pre-execution lifecycle hook (kimi-code idea): audit + allow/block gate. NEVER weakened.
+            with agent_trace.span("prerun_hook", iteration=i, candidate=c + 1) as _sp:
+                gate = pre_run(code, task=task)
+                _sp.set(allowed=bool(gate.allowed), reason=gate.reason)
+            if not gate.allowed:
+                emit({"type": "blocked", "iteration": i, "candidate": c + 1, "reason": gate.reason})
+                result = RunResult(False, -1, "", "", 0.0, f"blocked by policy: {gate.reason}")
+                passed, total = 0, test_n
+            else:
+                emit({"type": "run", "iteration": i, "candidate": c + 1,
+                      "message": "Running it against the tests in the Docker sandbox…"})
+                with agent_trace.span("docker_run", iteration=i, candidate=c + 1) as _sp:
+                    result, passed, total = _run_against_tests(code, tests)
+                    _sp.set(ok=bool(result.ok), passed=passed, total=total,
+                            seconds=round(result.seconds, 2))
+
+            relevant = _is_relevant_code(task, code, tests)        # (C6) algorithm-match gate
+            verdict = _verdict_from_tests(passed, total, relevant, result)
+            att = Attempt(i, code, result, verdict)
+            emit({"type": "run_result", "iteration": i, "candidate": c + 1, "ok": result.ok,
+                  "passed": passed, "total": total, "relevant": relevant,
+                  "summary": result.summary, "stdout": result.stdout, "stderr": result.stderr})
+
+            rank = (1 if relevant else 0, passed, 1 if result.ok else 0)
+            if round_best is None or rank > round_best_rank:
+                round_best, round_best_rank = att, rank
+            if verdict.get("done"):    # a relevant, fully-passing candidate ends the round early
+                break
+
+        if round_best is None:         # both candidates were empty or produced no code
+            rounds_failed += 1
+            continue
+
+        attempts.append(round_best)
+        if best is None or _score(round_best) > _score(best):
+            best = round_best
+        v = round_best.verdict
+        emit({"type": "reflect", "iteration": i, "verdict": {
+            "done": bool(v.get("done")), "relevant": bool(v.get("relevant")),
+            "score": v.get("score"), "passed": v.get("passed"), "total": v.get("total"),
+            "feedback": (v.get("feedback") or "")[:300]}})
+        last_code = round_best.code
+        if v.get("done"):
             break
+        if v.get("relevant") is False:
+            emit({"type": "status",
+                  "message": "Off-topic for the requested algorithm — regenerating…"})
+        feedback = v.get("feedback", "")
+        rounds_failed += 1
 
-    # Automatic peer review of the best result (the "Review" step, run for you):
-    # critique the final code + answer and surface the verdict in the timeline.
+    # (f) Honest outcome — derive a short answer from the best attempt's test tally.
+    bpassed = int(best.verdict.get("passed", 0)) if best else 0
+    btotal = int(best.verdict.get("total", 0)) if best else 0
+    try:
+        from backend.agent.reference_code import topic_of
+        topic = topic_of(task) or task
+    except Exception:
+        topic = task
+
+    # Optional automatic peer review of the best result — a relevance double-check only.
     try:
         from backend.answering.agentic_answer import auto_review_enabled
         from backend.answering.reviewer import review as _peer_review, is_relevant
         if best and auto_review_enabled():
             emit({"type": "status", "message": "Reviewing the best result…"})
-            payload = ((best.verdict.get("answer") or "") + "\n\n```python\n"
-                       + (best.code or "") + "\n```")
-            intent = (conversation + "\n\n" + task).strip() if conversation.strip() else task
+            payload = f"Implements {topic}.\n\n```python\n{best.code or ''}\n```"
+            intent = (convo + "\n\n" + task).strip() if convo else task
             rev = _peer_review(payload, task=intent)
-            if rev and not rev.get("error"):
-                rec = rev.get("recommendation", "")
-                relevant = is_relevant(rev)
-                if not relevant:
-                    best.verdict["relevant"] = False   # off-topic -> never "verified"
+            if rev and not rev.get("error") and not is_relevant(rev):
+                best.verdict["relevant"] = False        # off-topic -> never "verified"
+                best.verdict["done"] = False
                 emit({"type": "reflect", "iteration": len(attempts), "verdict": {
-                    "done": relevant and rec in ("accept", "minor revision"),
-                    "relevant": relevant,
-                    "score": (rev.get("scores") or {}).get("soundness"),
-                    "feedback": f"Peer review: {rec}. " + "; ".join((rev.get("suggestions") or [])[:2]),
-                }})
+                    "done": False, "relevant": False,
+                    "feedback": "Peer review: off-topic for the request."}})
     except Exception:
         pass
 
+    done = bool(best and best.verdict.get("done"))
+    if not best:
+        answer = "The agent could not produce a working solution."
+    elif done:
+        answer = (f"Implemented {topic} in Python — all {btotal} generated correctness "
+                  "tests pass in the sandbox.")
+    else:
+        answer = (f"Best effort at {topic} in Python — {bpassed}/{btotal} generated correctness "
+                  "tests pass (partially verified).")
+
     res = AgentResult(
         task=task,
-        success=bool(best and best.result.ok and best.verdict.get("success")
-                     and best.verdict.get("relevant", True)),
+        success=done,
         best_code=best.code if best else "",
         best_output=best.result.stdout if best else "",
-        answer=(best.verdict.get("answer", "") if best else ""),
+        answer=answer,
         attempts=attempts,
+        tests_passed=bpassed,
+        tests_total=btotal,
     )
     emit({"type": "final", "success": res.success, "answer": res.answer,
-          "code": res.best_code, "output": res.best_output, "iterations": len(attempts)})
-    agent_trace.set(success=res.success, iterations=len(attempts)).end()
+          "code": res.best_code, "output": res.best_output, "iterations": len(attempts),
+          "tests_passed": bpassed, "tests_total": btotal})
+    agent_trace.set(success=res.success, iterations=len(attempts),
+                    tests_passed=bpassed, tests_total=btotal).end()
     return res
 
 
