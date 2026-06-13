@@ -261,18 +261,22 @@ A single **OpenAI‑compatible** router. `PROVIDERS` + `CATALOG` map model names
 
 ## 9. The coding agent — `backend/agent/loop.py`
 
-When a question needs a program, the agent **runs** it (it doesn't just print code):
+When a question needs a program, the agent **writes tests first, then code, and runs them** (it doesn't just print code). This is a test-first flow (AlphaCodium): the LLM's algorithm knowledge writes the solution and **passing the generated tests** — not citations — is what makes it correct.
 
 ```mermaid
 flowchart LR
-    T[THINK<br/>_generate_code] --> H{pre_run<br/>policy gate} --> X[EXECUTE<br/>run_python in Docker] --> RF[REFLECT<br/>_reflect: relevant? correct? done?]
-    RF -- not done --> T
-    RF -- done / max iters --> BEST[best attempt → peer review → final]
+    REQ[REQUIREMENTS<br/>restate as checklist] --> TST[TESTS<br/>5-8 concrete asserts]
+    TST --> GEN[SOLUTION<br/>best-of-2 candidates] --> H{pre_run<br/>policy gate}
+    H --> X[RUN solution+tests<br/>in Docker]
+    X --> RF{all tests pass<br/>AND on-topic?}
+    RF -- no --> GEN
+    RF -- yes / max iters --> BEST[best attempt → peer review → final]
 ```
 
-- **Streamed** to the UI as think → write → run → check cards; saved with the chat.
-- **Constant‑size memory** (`memory.py`): a two‑tier scheme keeps the prompt bounded across iterations.
-- **The Docker sandbox** (`code_runner.py`, never weakened): `--network none`, capped `--memory`/`--cpus`/`--pids-limit`, hard timeout, non‑root, auto‑removed; a scientific image (numpy/scipy/pandas/sklearn/sympy/…) is built on first run.
+- **Acceptance = all generated tests pass** (a candidate that merely ran is never "success"); a **relevance gate** requires the code to implement the *requested* algorithm. After two failed rounds it escalates to `AGENT_MODEL_STRONG`; if tests never fully pass it returns the best attempt honestly labelled *"partially verified — N/M tests passing"*.
+- **Streamed** to the UI as requirements → tests → write → run → check cards; saved with the chat.
+- **Reference implementations** (`reference_code.py`): 1-2 stars-first GitHub hits for the named algorithm (any domain), marked REFERENCE — adapt, never copy.
+- **The Docker sandbox** (`code_runner.py`, never weakened): `--network none`, capped `--memory`/`--cpus`/`--pids-limit`, hard timeout, non‑root, auto‑removed; a scientific image (numpy/scipy/pandas/sklearn/sympy/…) is built on first run, plus a per‑domain image with the imports the code needs (built network‑on, hash‑cached; runtime stays network‑off).
 - `/api/agent` streams the run in‑process (NDJSON); `/api/research` runs the deep‑research loop (`research_agent.py`: plan → search everywhere → reflect → report).
 
 ---
