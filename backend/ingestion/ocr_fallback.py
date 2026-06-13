@@ -32,18 +32,37 @@ def pdf_pages_to_images(pdf_path: Path, out_dir: Path, dpi=220, max_pages=10):
     return image_paths
 
 
+_paddle_ocr = None
+
+
+def _get_paddle():
+    """Build (once) a PaddleOCR forced onto the CPU. PaddleOCR otherwise self-selects the GPU
+    when paddlepaddle-gpu is installed (its own device config, separate from torch) — which we must
+    NOT do here: OCR runs on CPU, the GPU is reserved for the reranker/embedder."""
+    global _paddle_ocr
+    if _paddle_ocr is None:
+        from paddleocr import PaddleOCR
+        try:
+            _paddle_ocr = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=False)  # force CPU
+        except TypeError:
+            # Newer PaddleOCR dropped use_gpu in favour of `device`; pin to CPU there instead.
+            try:
+                _paddle_ocr = PaddleOCR(use_angle_cls=True, lang="en", device="cpu")
+            except TypeError:
+                _paddle_ocr = PaddleOCR(use_angle_cls=True, lang="en")
+    return _paddle_ocr
+
+
 def ocr_with_paddle(image_paths):
     """
-    PaddleOCR fallback.
-    Good for scanned/image-heavy PDFs.
+    PaddleOCR fallback (CPU). Good for scanned/image-heavy PDFs.
     """
     try:
-        from paddleocr import PaddleOCR
+        ocr = _get_paddle()
     except Exception as e:
         return "", f"PaddleOCR not available: {e}"
 
     try:
-        ocr = PaddleOCR(use_angle_cls=True, lang="en")
         texts = []
 
         for img in image_paths:
@@ -130,6 +149,53 @@ def ocr_pdf_fallback(pdf_path: Path, max_pages=10):
         "text": "",
         "error": paddle_error or tess_error or "No OCR text extracted",
     }
+
+
+def _render_page_image(pdf_path: Path, page_no: int, out_dir: Path, dpi: int = 200) -> Path:
+    """Render ONE 1-based page to a PNG (only the pages that actually need OCR)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open(pdf_path)
+    try:
+        pix = doc[page_no - 1].get_pixmap(dpi=dpi)
+        out = out_dir / f"page_{page_no}.png"
+        pix.save(str(out))
+        return out
+    finally:
+        doc.close()
+
+
+def _ocr_image_cpu(img_path: Path) -> str:
+    """OCR a single image on the CPU: PaddleOCR (forced CPU) then Tesseract. '' if neither works."""
+    text, _ = ocr_with_paddle([img_path])
+    if text and len(text.strip()) > 20:
+        return text.strip()
+    text, _ = ocr_with_tesseract([img_path])
+    return (text or "").strip()
+
+
+def ocr_pages(pdf_path: Path, page_numbers, dpi: int = 200) -> dict:
+    """OCR ONLY the given 1-based pages, on the CPU. Returns {page_no: text} for pages that yielded
+    text. OCR engines are optional — an absent/failing engine just yields no text for that page (the
+    caller then records it as a missing page), and one page's failure never aborts the rest."""
+    wanted = sorted({int(p) for p in (page_numbers or [])})
+    if not wanted:
+        return {}
+    out_dir = Path("data/extracted/ocr_cache") / pdf_path.stem
+    result = {}
+    for p in wanted:
+        try:
+            img = _render_page_image(pdf_path, p, out_dir, dpi=dpi)
+        except Exception as e:
+            print(f"  OCR: could not render page {p}: {str(e)[:120]}")
+            continue
+        try:
+            text = _ocr_image_cpu(img)
+        except Exception as e:
+            print(f"  OCR: page {p} failed: {str(e)[:120]}")
+            continue
+        if text:
+            result[p] = text
+    return result
 
 
 if __name__ == "__main__":
