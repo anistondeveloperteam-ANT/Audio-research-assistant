@@ -80,7 +80,25 @@ def test_force_cpu_parsing_hides_cuda_by_default(monkeypatch):
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     assert pp._should_hide_cuda() is True
     pp.force_cpu_parsing()
-    assert os.environ.get("CUDA_VISIBLE_DEVICES") == ""    # GPU invisible -> Docling can't attempt it
+    # MUST be "-1" — an empty string does NOT hide the GPU (torch stays cuda_available=True).
+    assert os.environ.get("CUDA_VISIBLE_DEVICES") == "-1"
+
+
+def test_docling_page_batch_default_and_override(monkeypatch):
+    monkeypatch.delenv("DOCLING_PAGE_BATCH", raising=False)
+    assert pp._docling_page_batch() == 1                  # low peak memory + faster by default
+    monkeypatch.setenv("DOCLING_PAGE_BATCH", "4")
+    assert pp._docling_page_batch() == 4
+    monkeypatch.setenv("DOCLING_PAGE_BATCH", "bad")
+    assert pp._docling_page_batch() == 1                  # bad value -> safe default
+
+
+def test_suppress_native_stderr_is_safe(capsys):
+    # No-op-safe context manager: the body runs and nothing raises (stderr is captured here).
+    ran = []
+    with pp._suppress_native_stderr():
+        ran.append(True)
+    assert ran == [True]
 
 
 def test_docling_device_cuda_keeps_gpu_visible(monkeypatch):

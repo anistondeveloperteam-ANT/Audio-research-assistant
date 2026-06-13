@@ -1,6 +1,8 @@
+import contextlib
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 
 import fitz
@@ -183,9 +185,12 @@ def force_cpu_parsing() -> None:
     """Hide CUDA from THIS process so Docling / torch / onnxruntime cannot initialize the GPU while
     parsing. Call ONCE, before importing torch or docling. Scoped to the ingestion parse process:
     the reranker/embedder use the GPU at QUERY time (a separate process), and embedding is a
-    separate ingestion stage (embed_chunks), so neither is affected."""
+    separate ingestion stage (embed_chunks), so neither is affected.
+
+    NOTE: the value MUST be "-1" — an EMPTY string does NOT hide the GPU (torch still reports
+    cuda_available=True), which is why parsing previously still touched CUDA."""
     if _should_hide_cuda():
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 
 def _pages_needing_ocr(pages, min_chars: int = MIN_PAGE_CHARS):
@@ -194,10 +199,13 @@ def _pages_needing_ocr(pages, min_chars: int = MIN_PAGE_CHARS):
 
 
 # ----------------------------------------------------------------------
-# Docling (layout / tables / reading order). OCR is DISABLED here on purpose:
-# Docling's RapidOCR self-selects CUDA via onnxruntime-gpu — independent of the
-# accelerator device below — and OOMs (std::bad_alloc) on small GPUs, silently
-# dropping pages. We do our own per-page OCR on the CPU instead (ocr_fallback).
+# Docling (layout / tables / reading order). OCR is DISABLED here on purpose
+# (RapidOCR self-selects CUDA and OOMs on small GPUs). Two more hardening points,
+# established by profiling:
+#   - Docling's native `preprocess` can throw std::bad_alloc on complex (vector-heavy) pages,
+#     device-independent and unfixable via options. That page is recovered losslessly by the
+#     PyMuPDF per-page spine, so we just SILENCE the native stderr noise (it is not data loss).
+#   - page_batch_size=1 keeps peak memory low and is ~5x faster than the default batch of 4.
 # ----------------------------------------------------------------------
 _docling_converters = {}
 
@@ -208,6 +216,42 @@ def _configure_pipeline_options(opts):
     return opts
 
 
+def _docling_page_batch() -> int:
+    """Pages Docling processes per batch. 1 keeps peak memory low (fewer simultaneous heavy
+    allocations) and parses ~5x faster here than the default of 4. Tune via DOCLING_PAGE_BATCH."""
+    try:
+        return max(1, int(os.getenv("DOCLING_PAGE_BATCH", "1")))
+    except (TypeError, ValueError):
+        return 1
+
+
+@contextlib.contextmanager
+def _suppress_native_stderr():
+    """Silence NATIVE (C/C++) writes to stderr for the block. Docling's per-page 'Stage preprocess
+    failed ... std::bad_alloc' is a native write Python logging can't filter; the page is recovered
+    via PyMuPDF, so the line is pure noise. No-op when stderr has no real fd (e.g. captured under
+    pytest), so it never interferes with test output."""
+    try:
+        fd = sys.stderr.fileno()
+        saved = os.dup(fd)
+    except Exception:
+        yield
+        return
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        sys.stderr.flush()
+        os.dup2(devnull, fd)
+        yield
+    finally:
+        try:
+            sys.stderr.flush()
+        except Exception:
+            pass
+        os.dup2(saved, fd)
+        os.close(devnull)
+        os.close(saved)
+
+
 def _get_docling_converter(device: str):
     if device not in _docling_converters:
         from docling.document_converter import DocumentConverter, PdfFormatOption
@@ -215,11 +259,13 @@ def _get_docling_converter(device: str):
         from docling.datamodel.pipeline_options import (
             PdfPipelineOptions, AcceleratorOptions, AcceleratorDevice,
         )
+        from docling.datamodel.settings import settings as _docling_settings
+        _docling_settings.perf.page_batch_size = _docling_page_batch()
         opts = PdfPipelineOptions()
         _configure_pipeline_options(opts)
         dev = AcceleratorDevice.CPU if device == "cpu" else AcceleratorDevice.CUDA
         opts.accelerator_options = AcceleratorOptions(num_threads=8, device=dev)
-        print(f"  Docling layout device: {device} (do_ocr=False)")
+        print(f"  Docling layout device: {device} (do_ocr=False, page_batch={_docling_page_batch()})")
         _docling_converters[device] = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
         )
@@ -227,10 +273,12 @@ def _get_docling_converter(device: str):
 
 
 def _docling_convert(pdf_path: Path, device: str):
-    """Run Docling on a given device and return {raw_markdown, tables, equations}."""
+    """Run Docling on a given device and return {raw_markdown, tables, equations}. Native stderr is
+    suppressed during convert so a recovered-page std::bad_alloc never reaches the console."""
     converter = _get_docling_converter(device)
-    result = converter.convert(str(pdf_path))
-    md = clean_text(result.document.export_to_markdown())
+    with _suppress_native_stderr():
+        result = converter.convert(str(pdf_path))
+        md = clean_text(result.document.export_to_markdown())
     if not md.strip():
         raise RuntimeError("Docling produced empty output.")
     return {"raw_markdown": md, "tables": extract_markdown_tables(md),
