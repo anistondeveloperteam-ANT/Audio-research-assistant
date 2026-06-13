@@ -35,8 +35,10 @@
     models: () => fetch("/api/models").then((r) => r.json()),
     setModel: (provider, model) =>
       fetch("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, model }) }).then((r) => r.json()),
-    upload: (file) => {
-      const fd = new FormData(); fd.append("file", file);
+    upload: (files) => {
+      // Accepts one File or an array; sends them all in a single multipart request.
+      const fd = new FormData();
+      (Array.isArray(files) ? files : [files]).forEach((f) => fd.append("files", f));
       return fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json());
     },
   };
@@ -1230,21 +1232,25 @@
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
 
+    const pdfs = files.filter(isPdf);
+    let errs = files.length - pdfs.length;          // non-PDF selections
+    const saved = [], dups = [];
+
     $("addPaperBtn").classList.add("busy");
-    const saved = [], dups = [], errs = [];
-    for (const file of files) {
-      if (!isPdf(file)) { errs.push(file.name); continue; }
+    if (pdfs.length) {
       try {
-        const res = await api.upload(file);
-        if (res.status === "saved") saved.push(res.filename);
-        else if (res.status === "duplicate") dups.push(res.filename);
-        else errs.push(file.name);
-      } catch { errs.push(file.name); }
+        const res = await api.upload(pdfs);         // ONE batched request for every chosen PDF
+        (res.results || []).forEach((r) => {
+          if (r.status === "saved") saved.push(r.filename);
+          else if (r.status === "duplicate") dups.push(r.filename || r.name);
+          else errs += 1;
+        });
+      } catch { errs += pdfs.length; }
     }
     $("addPaperBtn").classList.remove("busy");
 
     if (dups.length) toast(`${dups.length} already indexed — skipped.`);
-    if (errs.length) toast(`${errs.length} file${errs.length > 1 ? "s" : ""} couldn't be added.`, "error");
+    if (errs) toast(`${errs} file${errs > 1 ? "s" : ""} couldn't be added.`, "error");
     if (!saved.length) return;  // nothing new to index
 
     const label = saved.length === 1 ? saved[0] : `${saved.length} papers`;

@@ -13,7 +13,7 @@ import hashlib
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Iterable, Iterator, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -89,6 +89,21 @@ def save_pdf(filename: str, data: bytes) -> Dict[str, Any]:
     target = _safe_target(filename)
     target.write_bytes(data)
     return {"status": "saved", "filename": target.name}
+
+
+def save_pdfs(items: Iterable[Tuple[str, bytes]]) -> Dict[str, Any]:
+    """Save MANY uploaded PDFs in one batch. `items` is (filename, data) pairs. Files are saved
+    sequentially, so content-hash dedup applies both against the existing library AND within the
+    batch (a second identical file in the same batch is reported 'duplicate'). Returns each file's
+    result plus saved/duplicate/error counts."""
+    results = []
+    counts = {"saved": 0, "duplicate": 0, "error": 0}
+    for filename, data in items:
+        name = filename or "paper.pdf"
+        outcome = save_pdf(name, data or b"")
+        counts[outcome["status"]] = counts.get(outcome["status"], 0) + 1
+        results.append({"name": name, **outcome})
+    return {"results": results, "total": len(results), **counts}
 
 
 # ----------------------------------------------------------------------

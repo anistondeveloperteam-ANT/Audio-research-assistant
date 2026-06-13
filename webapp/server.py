@@ -440,9 +440,11 @@ def set_model(body: dict = Body(...)):
 
 
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...)):
-    data = await file.read()
-    return ingest.save_pdf(file.filename or "paper.pdf", data)
+async def upload(files: list[UploadFile] = File(...)):
+    """Upload one OR many PDFs in a single request. Returns per-file results + saved/duplicate/
+    error counts; content-hash dedup applies across the library and within the batch."""
+    items = [(f.filename or "paper.pdf", await f.read()) for f in files]
+    return ingest.save_pdfs(items)
 
 
 @app.post("/api/ingest")
