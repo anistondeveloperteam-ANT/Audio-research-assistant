@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from backend.agent.code_runner import RunResult, docker_available, run_python
+from backend.agent.code_runner import RunResult, docker_available, run_python_auto
 from backend.agent.hooks import pre_run
 from backend.agent.memory import TwoTierMemory
 from backend.llm.streaming_provider import get_provider
@@ -270,7 +270,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         else:
             emit({"type": "run", "iteration": i, "message": "Running it in the Docker sandbox…"})
             with agent_trace.span("docker_run", iteration=i) as _sp:
-                result = run_python(code)
+                result = run_python_auto(code)
                 _sp.set(ok=bool(result.ok), seconds=round(result.seconds, 2),
                         exit_code=result.exit_code)
         emit({"type": "run_result", "iteration": i, "ok": result.ok, "summary": result.summary,

@@ -15,11 +15,13 @@ runner returns a clear error instead of falling back to unsafe local execution.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import List
 
 # Our sandbox image bakes in the scientific stack (numpy/scipy/...) so generated
 # simulations run under --network none. Built once on first use (see
@@ -121,6 +123,63 @@ def ensure_sandbox_image() -> tuple[bool, str]:
     return True, ""
 
 
+def dynamic_deps_enabled() -> bool:
+    return os.getenv("AGENT_DYNAMIC_DEPS", "true").strip().lower() == "true"
+
+
+_SAFE_PKG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
+_built_images: dict = {}   # hash -> tag, in-process memo so repeat domains skip the inspect call
+
+
+def ensure_image_for(packages: List[str]) -> str:
+    """Return a sandbox image tag that has `packages` installed on top of the base scientific
+    image. Reuses a cached `agent-sandbox:<hash>` image when present; otherwise builds one —
+    network is allowed ONLY during this build step (the eventual `docker run` stays --network
+    none). On ANY problem (bad package name, base image missing, build failure) it returns the
+    base image, so a missing import surfaces as an ImportError that feeds the agent's REFLECT
+    step rather than hard-failing."""
+    packages = sorted({p for p in (packages or []) if _SAFE_PKG.match(p)})
+    if not packages or not dynamic_deps_enabled():
+        return DEFAULT_IMAGE
+
+    from backend.agent.deps import requirements_hash
+    digest = requirements_hash(packages)
+    if digest in _built_images:
+        return _built_images[digest]
+
+    base_ready, _ = ensure_sandbox_image()
+    if not base_ready:
+        return DEFAULT_IMAGE
+
+    tag = f"agent-sandbox:{digest}"
+    try:
+        r = subprocess.run(["docker", "image", "inspect", tag],
+                           capture_output=True, text=True, timeout=20)
+        if r.returncode == 0:
+            _built_images[digest] = tag
+            return tag
+    except Exception:
+        return DEFAULT_IMAGE
+
+    # Build FROM the base image; install as root, then drop back to the non-root sandbox user
+    # so the RUN limits and non-root execution are preserved.
+    dockerfile = (
+        f"FROM {SANDBOX_TAG}\n"
+        f"USER root\n"
+        f"RUN pip install --no-cache-dir {' '.join(packages)}\n"
+        f"USER sandbox\n"
+    )
+    try:
+        r = subprocess.run(["docker", "build", "-t", tag, "-"], input=dockerfile,
+                           capture_output=True, text=True, timeout=BUILD_TIMEOUT)
+        if r.returncode == 0:
+            _built_images[digest] = tag
+            return tag
+    except Exception:
+        pass
+    return DEFAULT_IMAGE   # build failed -> base image; the ImportError feeds REFLECT
+
+
 def run_python(code: str, *, timeout: int = RUN_TIMEOUT, image: str = DEFAULT_IMAGE) -> RunResult:
     """Run `code` as a Python script inside a locked-down Docker container.
 
@@ -172,3 +231,21 @@ def run_python(code: str, *, timeout: int = RUN_TIMEOUT, image: str = DEFAULT_IM
                          f"could not pull image {image!r}")
     return RunResult(proc.returncode == 0, proc.returncode,
                      _cap(proc.stdout), _cap(proc.stderr), secs)
+
+
+def run_python_auto(code: str, *, timeout: int = RUN_TIMEOUT) -> RunResult:
+    """Run `code` in a sandbox image that has its third-party imports installed (built/cached by
+    hash when AGENT_DYNAMIC_DEPS is on; network only during build). Runtime limits are unchanged:
+    the actual run still uses --network none + memory/CPU/PID caps + timeout + non-root + --rm.
+    Falls back to the base image if deps can't be resolved/built — the ImportError then drives the
+    agent's REFLECT step to rewrite using available libraries."""
+    image = DEFAULT_IMAGE
+    if dynamic_deps_enabled():
+        try:
+            from backend.agent.deps import requirements_for
+            pkgs = requirements_for(code)
+            if pkgs:
+                image = ensure_image_for(pkgs)
+        except Exception:
+            image = DEFAULT_IMAGE
+    return run_python(code, timeout=timeout, image=image)
