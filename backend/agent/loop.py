@@ -119,14 +119,20 @@ _REQ_SYSTEM = (
 )
 
 _TESTS_SYSTEM = (
-    "You write rigorous unit tests as plain Python (no pytest, no unittest). Given a task and its "
-    "requirements, write 5-8 test functions named test_<name>() that build CONCRETE inputs (use "
-    "numpy if it helps), call the SOLUTION's functions directly (they are defined in the same "
-    "file), and `assert` the expected outputs/properties — derive them from the algorithm itself "
-    "(e.g. for an MVDR beamformer: the distortionless constraint w^H d ~= 1, and output SNR >= "
-    "input SNR on synthetic multichannel data; for Black-Scholes: put-call parity and a known "
-    "reference value). Each test must raise AssertionError on failure. Do NOT define the solution "
-    "or any test runner. Output ONLY the Python test functions."
+    "You write rigorous but ROBUST unit tests as plain Python (no pytest, no unittest). Given a "
+    "task and its requirements, write 5-7 focused test functions named test_<name>() that:\n"
+    "- call the SOLUTION's functions directly (they are defined in the same file);\n"
+    "- use SELF-CONSISTENT inputs: the SAME calling convention and array shapes in EVERY test, "
+    "matching ONE function signature — do NOT require the function to accept several different "
+    "input shapes;\n"
+    "- compare floats with tolerances (math.isclose, or numpy.allclose with explicit rtol/atol), "
+    "NEVER exact ==; build small CONCRETE inputs (use numpy if it helps);\n"
+    "- prefer PROPERTIES that hold for ANY correct implementation over hard-coded magic numbers "
+    "(e.g. for an MVDR beamformer: the distortionless constraint w^H d ~= 1, and output noise "
+    "power <= input noise power; for Black-Scholes: put-call parity C - P ~= S - K*exp(-rT), "
+    "monotonicity in volatility, and ONE textbook reference value);\n"
+    "- each test must `assert` and raise AssertionError on failure.\n"
+    "Do NOT define the solution or any test runner. Output ONLY the Python test functions."
 )
 
 # Appended after (solution + generated tests): runs every test_* and prints a parseable tally.
@@ -182,7 +188,8 @@ def _generate_solution(provider, task: str, requirements: str, tests: str, refer
     if last_code:
         parts.append(f"\nYOUR PREVIOUS SOLUTION (fix it):\n```python\n{last_code}\n```")
     if feedback:
-        parts.append(f"\nThe tests FAILED last time — fix these specifically:\n{feedback[:1500]}")
+        parts.append("\nThe tests FAILED last time. Read these PASS/FAIL lines and tracebacks and "
+                     f"fix the SPECIFIC failures (do not rewrite from scratch):\n{feedback[:3000]}")
     parts.append("\nWrite the solution code now (functions only).")
     return _extract_code(_complete(provider, _GEN_SYSTEM, "\n".join(parts), GEN_MAX_TOKENS))
 
@@ -237,6 +244,13 @@ def _verdict_from_tests(passed: int, total: int, relevant: bool, result: RunResu
     """Synthesize the Attempt verdict from the test tally (no extra LLM call): correctness is the
     pass-rate; 'done' means ALL tests pass AND the code is on-topic (relevance gate)."""
     all_pass = bool(total and passed >= total)
+    if all_pass:
+        feedback = ""
+    else:
+        # Give the rewrite BOTH the PASS/FAIL summary (stdout) and the tracebacks (stderr) so it
+        # can see every failing test, not just the first one.
+        diag = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+        feedback = (diag or result.error or "Not all tests passed.")[:3000]
     return {
         "relevant": relevant,
         "success": bool(all_pass and relevant and result.ok),
@@ -244,8 +258,7 @@ def _verdict_from_tests(passed: int, total: int, relevant: bool, result: RunResu
         "score": int(round(100 * passed / total)) if total else (40 if result.ok else 0),
         "passed": int(passed),
         "total": int(total),
-        "feedback": "" if all_pass else (
-            (result.stderr or result.error or result.stdout or "Not all tests passed.").strip()[:1500]),
+        "feedback": feedback,
         "answer": "",
     }
 
