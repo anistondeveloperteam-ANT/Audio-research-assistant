@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +58,34 @@ class RunResult:
 
 
 _docker_ok: bool | None = None
+
+# Concurrency cap: when the agent runs best-of-N candidates in parallel, each one
+# needs its own container. This bounds how many sandboxes run AT ONCE (extra runs
+# queue, they don't fail) so we never overwhelm the Docker daemon. It only LIMITS
+# concurrency — it never weakens a container's own limits (network/cpu/mem/pids/
+# timeout/--rm are unchanged). Read live so .env / tests take effect.
+_sandbox_sem: "threading.BoundedSemaphore | None" = None
+_sandbox_sem_size: int = 0
+_sandbox_sem_lock = threading.Lock()
+
+
+def max_concurrent_sandboxes() -> int:
+    try:
+        return max(1, int(os.getenv("AGENT_MAX_CONCURRENT_SANDBOXES", "4")))
+    except (TypeError, ValueError):
+        return 4
+
+
+def _sandbox_semaphore() -> "threading.BoundedSemaphore":
+    """A process-wide bounded semaphore sized to AGENT_MAX_CONCURRENT_SANDBOXES,
+    rebuilt if the configured size changes (e.g. in tests)."""
+    global _sandbox_sem, _sandbox_sem_size
+    size = max_concurrent_sandboxes()
+    with _sandbox_sem_lock:
+        if _sandbox_sem is None or size != _sandbox_sem_size:
+            _sandbox_sem = threading.BoundedSemaphore(size)
+            _sandbox_sem_size = size
+        return _sandbox_sem
 
 
 def docker_available() -> bool:
@@ -207,6 +236,10 @@ def run_python(code: str, *, timeout: int = RUN_TIMEOUT, image: str = DEFAULT_IM
         "-e", "PYTHONIOENCODING=utf-8",
         image, "python", "-",   # read the script from stdin
     ]
+    # Bound how many containers run concurrently (best-of-N). The semaphore is held
+    # ONLY for the duration of the container run; extra candidates queue here.
+    sem = _sandbox_semaphore()
+    sem.acquire()
     start = time.time()
     try:
         # encoding="utf-8" is REQUIRED: the generated code often contains Unicode math symbols,
@@ -222,6 +255,8 @@ def run_python(code: str, *, timeout: int = RUN_TIMEOUT, image: str = DEFAULT_IM
                          float(timeout), f"timed out after ~{timeout}s")
     except Exception as exc:
         return RunResult(False, -1, "", "", time.time() - start, f"could not start container: {exc}")
+    finally:
+        sem.release()
 
     secs = time.time() - start
     # A failed image pull surfaces on stderr with a non-zero exit before any Python runs.

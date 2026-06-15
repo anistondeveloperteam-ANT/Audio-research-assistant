@@ -100,3 +100,46 @@ def test_run_python_pipes_unicode_code_as_utf8(monkeypatch):
     assert captured["kw"].get("input") == code            # code piped through unchanged
     assert "PYTHONUTF8=1" in captured["cmd"]              # container runs in UTF-8 too
     assert "λ" in res.stdout and "∇" in res.stdout        # Unicode output survives the round-trip
+
+
+def test_max_concurrent_sandboxes_reads_env(monkeypatch):
+    monkeypatch.delenv("AGENT_MAX_CONCURRENT_SANDBOXES", raising=False)
+    assert cr.max_concurrent_sandboxes() == 4              # default
+    monkeypatch.setenv("AGENT_MAX_CONCURRENT_SANDBOXES", "3")
+    assert cr.max_concurrent_sandboxes() == 3
+    monkeypatch.setenv("AGENT_MAX_CONCURRENT_SANDBOXES", "garbage")
+    assert cr.max_concurrent_sandboxes() == 4              # bad value -> safe default
+
+
+def test_run_python_caps_concurrent_sandboxes(monkeypatch):
+    # Best-of-N runs many containers; the semaphore must bound how many run AT ONCE.
+    import threading
+    import time
+    import types
+
+    monkeypatch.setenv("AGENT_MAX_CONCURRENT_SANDBOXES", "2")
+    monkeypatch.setattr(cr, "docker_available", lambda: True)
+    monkeypatch.setattr(cr, "ensure_sandbox_image", lambda: (True, ""))
+
+    state = {"cur": 0, "peak": 0}
+    lock = threading.Lock()
+
+    def fake_run(cmd, **kw):
+        with lock:
+            state["cur"] += 1
+            state["peak"] = max(state["peak"], state["cur"])
+        time.sleep(0.05)            # hold the slot so contenders overlap
+        with lock:
+            state["cur"] -= 1
+        return types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(cr.subprocess, "run", fake_run)
+    cr._sandbox_semaphore()         # rebuild at the new cap before launching
+
+    threads = [threading.Thread(target=lambda: cr.run_python("print(1)")) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert state["peak"] == 2, f"peak concurrency {state['peak']} must equal the cap (2)"
