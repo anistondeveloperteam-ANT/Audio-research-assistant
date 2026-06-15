@@ -128,13 +128,15 @@ class _FakeProvider:
     is_available = True
 
     def __init__(self, *, requirements="- requirements", tests="", first=None, refined=None,
-                 hidden="", invariants=""):
+                 hidden="", invariants="", reference="", driver=""):
         self._req = requirements
         self._tests = tests
         self._first = list(first or [])
         self._refined = list(refined or [])
         self._hidden = hidden
         self._invariants = invariants
+        self._reference = reference
+        self._driver = driver
         self.calls = []          # (system, user) for every stream_chat call
         self._lock = threading.Lock()
 
@@ -150,6 +152,10 @@ class _FakeProvider:
             self.calls.append((system, user))
             if system == loop._REQ_SYSTEM:
                 return [self._req]
+            if system == loop._REFERENCE_SYSTEM:
+                return [self._reference]
+            if system == loop._DRIVER_SYSTEM:
+                return [self._driver]
             if system == loop._TESTS_SYSTEM:
                 return [self._tests]
             if system == loop._HIDDEN_SYSTEM:
@@ -281,8 +287,34 @@ def test_agent_stops_clean_when_docker_missing(monkeypatch):
     assert "```python" not in md                          # never a fabricated code answer
 
 
-def test_verified_run_surfaces_real_captured_stdout(monkeypatch):
-    """A code-intent deliverable carries the REAL sandbox stdout, not a 'when executed' claim."""
+def test_print_request_returns_real_captured_stdout(monkeypatch):
+    """A 'print/show the result' request must surface the REAL stdout from RUNNING the solution
+    (the actual values via a demo driver), not test-runner noise or a 'when executed' claim."""
+    provider = _FakeProvider(
+        requirements="- implement bubble_sort(a)", tests=_fence(_TESTS_SRC),
+        first=[_fence("def bubble_sort(a):\n    return sorted(a)")],
+        hidden=_HIDDEN_SRC, invariants=_INV_SRC,
+        driver=_fence("print('sorted:', bubble_sort([3, 1, 2]))"),
+    )
+    monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
+    monkeypatch.setattr(loop, "docker_available", lambda: True)
+
+    def fake_run(code, **k):
+        if "=== demo run ===" in code:                    # the demo driver execution
+            return RunResult(True, 0, "sorted: [1, 2, 3]\n", "", 0.1)
+        return _ok(2, 2)                                   # tests (visible + held-out)
+
+    monkeypatch.setattr(loop, "run_python_auto", fake_run)
+
+    res = loop.run_agent("Sort a list and print the sorted result", use_search=False)
+    assert res.verification == "verified"
+    assert res.best_output == "sorted: [1, 2, 3]"         # REAL values from running the solution
+    assert "TESTS_PASSED" not in res.best_output          # not the test-runner noise
+    assert "**Output:**" in loop.result_to_markdown(res)  # shown to the user
+
+
+def test_non_output_request_has_no_stdout_noise(monkeypatch):
+    """A task that doesn't ask to print/show a result carries no test-runner noise as 'output'."""
     provider = _FakeProvider(
         requirements="- implement bubble_sort(a)", tests=_fence(_TESTS_SRC),
         first=[_fence("def bubble_sort(a):\n    return sorted(a)")],
@@ -290,13 +322,10 @@ def test_verified_run_surfaces_real_captured_stdout(monkeypatch):
     )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
-    monkeypatch.setattr(loop, "run_python_auto",
-                        lambda code, **k: RunResult(True, 0, "sorted ok\nTESTS_PASSED 2/2\n", "", 0.1))
+    monkeypatch.setattr(loop, "run_python_auto", lambda code, **k: _ok(2, 2))
 
     res = loop.run_agent("Implement bubble sort", use_search=False)
-    assert res.verification == "verified"
-    assert "TESTS_PASSED 2/2" in res.best_output          # captured from the sandbox run
-    assert "**Output:**" in loop.result_to_markdown(res)  # shown to the user
+    assert res.verification == "verified" and res.best_output == ""   # no demo intent -> no output
 
 
 # ---- test-gate, best-of-N, relevance gate, escalation ---------------

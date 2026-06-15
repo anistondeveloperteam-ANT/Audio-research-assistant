@@ -166,6 +166,14 @@ _REFERENCE_SYSTEM = (
     "network, no file access, no input(). Output ONLY the Python code — no explanation, no markdown."
 )
 
+_DRIVER_SYSTEM = (
+    "You write a SHORT driver snippet that DEMONSTRATES a finished solution: it calls the solution's "
+    "already-defined functions on representative inputs taken from the task and PRINTS the results "
+    "with clear labels (e.g. print('period (s):', period)). The solution is ALREADY DEFINED above "
+    "your snippet — do NOT redefine it, do NOT write tests, add an import only if truly needed. Keep "
+    "it under ~15 lines and a couple of seconds to run. Output ONLY the snippet code."
+)
+
 _TESTS_SYSTEM = (
     "You write rigorous but ROBUST unit tests as plain Python (no pytest, no unittest). Given a "
     "task and its requirements, write 5-7 focused test functions named test_<name>() that:\n"
@@ -320,6 +328,29 @@ def _generate_reference(provider, task: str, requirements: str, task_type: str =
             "Write the reference implementation now — the SAME functions the task requires.")
     try:
         return _extract_code(_complete(provider, _REFERENCE_SYSTEM, user, GEN_MAX_TOKENS))
+    except Exception:
+        return ""
+
+
+_OUTPUT_INTENT = re.compile(
+    r"\b(print|show|display|report|return|output|result|compute|calculate|simulate|find|"
+    r"estimate|measure|benchmark|value|price|how\s+many|what\s+is)\b", re.I)
+
+
+def _wants_output(task: str) -> bool:
+    """True if the request asks to print/show/return/report a RESULT — then the final answer must
+    include the real captured stdout from running the solution, not just code."""
+    return bool(_OUTPUT_INTENT.search(task or ""))
+
+
+def _generate_demo_driver(provider, task: str, requirements: str, solution_code: str) -> str:
+    """A short snippet that calls the finished solution on representative inputs and prints the
+    real results, so the user sees actual values. '' on failure (no demo run)."""
+    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\nSOLUTION (already defined — call it, "
+            f"do not redefine):\n```python\n{solution_code[:3000]}\n```\n\n"
+            "Write the driver snippet now (call the solution + print the real result(s)).")
+    try:
+        return _extract_code(_complete(provider, _DRIVER_SYSTEM, user, REFLECT_MAX_TOKENS))
     except Exception:
         return ""
 
@@ -912,11 +943,26 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                   "(partially verified).")
         present = final
 
+    # (5) Execution output: if the request asks to print/show/return a result, RUN the finished
+    # solution with a small driver and capture its REAL stdout — the actual values, not test noise.
+    best_output = ""
+    if present is not None and _wants_output(task):
+        try:
+            emit({"type": "status", "message": "Running the solution to capture its output…"})
+            driver = _generate_demo_driver(provider, task, requirements, present.code)
+            if (driver or "").strip():
+                dres = run_python_auto(present.code + "\n\n# === demo run ===\n" + driver)
+                if dres.ok and (dres.stdout or "").strip():
+                    best_output = (dres.stdout or "").strip()[:4000]
+                    emit({"type": "output", "text": best_output})
+        except Exception:                           # noqa: BLE001 - output is a bonus; never break
+            best_output = ""
+
     res = AgentResult(
         task=task,
         success=(verification == "verified"),
         best_code=present.code if present else "",
-        best_output=present.result.stdout if present else "",
+        best_output=best_output,
         answer=answer,
         attempts=attempts,
         tests_passed=bpassed,
