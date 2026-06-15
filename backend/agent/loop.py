@@ -187,6 +187,40 @@ _INVARIANTS_SYSTEM = (
     "define the solution or a runner. Output ONLY the Python test functions."
 )
 
+# Task-type-specific guidance appended to the test/invariant generation USER prompts (the system
+# prompts above stay fixed) so verification matches the KIND of task. The model DERIVES 2-4
+# concrete properties appropriate to the type — a single "expected output" is meaningless for a
+# stochastic simulation, so those are checked by invariants instead.
+_TASK_TYPE_GUIDANCE = {
+    "deterministic": (
+        "\n\nTASK TYPE = DETERMINISTIC: a single correct output exists. Assert EXACT expected "
+        "outputs on small concrete inputs (use math.isclose / numpy.allclose only for floats), "
+        "PLUS 2-4 general properties any correct solution must satisfy (e.g. output length and "
+        "ordering, idempotence, boundary/empty cases)."
+    ),
+    "simulation": (
+        "\n\nTASK TYPE = SIMULATION / STOCHASTIC: there is NO single fixed output — do NOT assert "
+        "one magic number. DERIVE 2-4 INVARIANTS / PROPERTIES on the REAL output: correct output "
+        "shape/type; conservation laws (energy / mass / probability sums); values within physical "
+        "or range bounds; expected convergence or a monotonic trend (e.g. a damped system's "
+        "amplitude decreases over time); and seeded REPRODUCIBILITY (same seed -> identical "
+        "output). Use tolerances generous enough for discretization/noise."
+    ),
+    "numeric_algorithm": (
+        "\n\nTASK TYPE = NUMERIC ALGORITHM: assert DOMAIN INVARIANTS, not one value. DERIVE 2-4 "
+        "mathematical properties that hold for ANY correct implementation, e.g. a beamformer's "
+        "distortionless constraint w^H d ~= 1 and output noise power <= input; FFT / Parseval "
+        "energy conservation; Black-Scholes put-call parity C - P ~= S - K*exp(-rT), price >= 0 "
+        "and monotonic in volatility. Compare with tolerances."
+    ),
+}
+
+
+def _task_type_hint(task_type: str) -> str:
+    """Verification guidance for a task_type (deterministic | simulation | numeric_algorithm)."""
+    return _TASK_TYPE_GUIDANCE.get((task_type or "").strip().lower(), "")
+
+
 # Appended after (solution + generated tests): runs every test_* and prints a parseable tally.
 _TEST_FOOTER = (
     "\n\n# === auto-appended test runner ===\n"
@@ -249,10 +283,11 @@ def _restate_requirements(provider, task: str, conversation: str, reference: str
     return out or f"- Implement the task: {task}"
 
 
-def _generate_tests(provider, task: str, requirements: str) -> str:
-    """(b) Generate 5-8 concrete test_* functions that target THIS task (derived, not hardcoded)."""
-    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\n"
-            "Write the test_* functions now (they call the solution's functions directly).")
+def _generate_tests(provider, task: str, requirements: str, task_type: str = "") -> str:
+    """(b) Generate 5-8 concrete test_* functions that target THIS task (derived, not hardcoded),
+    shaped by the task_type (exact outputs vs invariants)."""
+    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}" + _task_type_hint(task_type) +
+            "\n\nWrite the test_* functions now (they call the solution's functions directly).")
     return _extract_code(_complete(provider, _TESTS_SYSTEM, user, GEN_MAX_TOKENS))
 
 
@@ -284,19 +319,23 @@ def _generate_solution(provider, task: str, requirements: str, tests: str, refer
                                    temperature=temperature))
 
 
-def _generate_hidden_tests(provider, task: str, requirements: str, strict: bool = False) -> str:
+def _generate_hidden_tests(provider, task: str, requirements: str, strict: bool = False,
+                           task_type: str = "") -> str:
     """(C1) Held-out tests on DIFFERENT randomized inputs — never shown to the solver."""
     extra = " Generate MORE tests than usual and use WIDER input ranges." if strict else ""
-    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\n"
-            "Write the held-out test_hidden_* functions now (fresh random inputs)." + extra)
+    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}" + _task_type_hint(task_type) +
+            "\n\nWrite the held-out test_hidden_* functions now (fresh random inputs)." + extra)
     return _extract_code(_complete(provider, _HIDDEN_SYSTEM, user, GEN_MAX_TOKENS))
 
 
-def _generate_invariants(provider, task: str, requirements: str, strict: bool = False) -> str:
-    """(C3) Invariant-property checks on random inputs — never shown to the solver."""
+def _generate_invariants(provider, task: str, requirements: str, strict: bool = False,
+                         task_type: str = "") -> str:
+    """(C3) Invariant-property checks on random inputs — never shown to the solver. The task_type
+    steers WHICH invariants to derive (physical/conservation for simulations, math identities for
+    numeric algorithms)."""
     extra = " Add more invariants and widen the random input ranges." if strict else ""
-    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\n"
-            "Write the test_invariant_* functions now (random inputs, assert properties)." + extra)
+    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}" + _task_type_hint(task_type) +
+            "\n\nWrite the test_invariant_* functions now (random inputs, assert properties)." + extra)
     return _extract_code(_complete(provider, _INVARIANTS_SYSTEM, user, GEN_MAX_TOKENS))
 
 
@@ -500,10 +539,17 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         _sp.set(chars=len(requirements))
     emit({"type": "requirements", "text": requirements[:1500]})
 
+    # Classify HOW this task must be verified (deterministic exact-output vs simulation/stochastic
+    # invariants vs numeric-algorithm domain invariants). Cached from routing; falls back to a
+    # regex heuristic offline. Steers test/invariant generation below.
+    from backend.answering.task_classifier import infer_task_type
+    task_type = infer_task_type(task)
+    emit({"type": "task_type", "task_type": task_type})
+
     # (b) Generate concrete correctness tests for THIS task — the acceptance criteria.
     emit({"type": "status", "message": "Writing correctness tests…"})
     with agent_trace.span("tests") as _sp:
-        tests = _generate_tests(provider, task, requirements)
+        tests = _generate_tests(provider, task, requirements, task_type=task_type)
         _sp.set(count=_count_tests(tests))
     test_n = _count_tests(tests)
     emit({"type": "tests", "iteration": 0, "code": tests, "count": test_n})
@@ -530,8 +576,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
             if hstate["code"] is not None and hstate["strict"] == strict:
                 return hstate["code"]
             emit({"type": "status", "message": "Building held-out hidden tests + invariants…"})
-            hidden = _generate_hidden_tests(hp, task, requirements, strict=strict)
-            invariants = _generate_invariants(hp, task, requirements, strict=strict)
+            hidden = _generate_hidden_tests(hp, task, requirements, strict=strict, task_type=task_type)
+            invariants = _generate_invariants(hp, task, requirements, strict=strict, task_type=task_type)
             combined = ((hidden or "") + "\n\n" + (invariants or "")).strip()
             hstate["code"], hstate["strict"] = combined, strict
             emit({"type": "heldout", "count": _count_tests(combined), "strict": strict})
