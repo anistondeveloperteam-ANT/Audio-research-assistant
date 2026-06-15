@@ -10,10 +10,10 @@ Everything runs on your machine: a FastAPI backend, a dependency‑free HTML/JS 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-259%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-356%20passing-2ea44f)
 [![License](https://img.shields.io/badge/license-MIT-555)](LICENSE)
 
-**[Quick start](#-quick-start-5-minutes) · [What you can ask](#-what-you-can-ask) · [Fast vs Deep](#-fast-vs-deep) · [Trust](#-why-you-can-trust-the-answers) · [Features](#-features) · [Code map](#-code-map-where-everything-lives) · [Config](#-configuration)**
+**[Quick start](#-quick-start-5-minutes) · [What you can ask](#-what-you-can-ask) · [How it works](docs/HOW_IT_WORKS.md) · [Fast vs Deep](#-fast-vs-deep) · [Trust](#-why-you-can-trust-the-answers) · [Features](#-features) · [Code map](#-code-map-where-everything-lives) · [Config](#-configuration)**
 
 </div>
 
@@ -21,6 +21,9 @@ Everything runs on your machine: a FastAPI backend, a dependency‑free HTML/JS 
 
 Most "chat with AI" tools answer from the model's memory and hope it's right. **This one doesn't.**
 It searches real sources first — the open web, research papers, Wikipedia, patents, GitHub, and any PDFs you add — answers **only** from what it found, **cites every claim**, and checks the draft against that evidence before you see it. When the sources come up short, it says so instead of inventing an answer. And when a question is really a coding task, it writes the program, runs it in a locked‑down sandbox, and fixes it until it works.
+
+> [!NOTE]
+> **New: [📊 How It Works — Interactive Pipeline Guide](docs/HOW_IT_WORKS.md).** Every pipeline explained the easy way — *what it does, why it's the best choice, the real accuracy + latency numbers, and clickable diagrams* of how it all fits together.
 
 ---
 
@@ -247,16 +250,16 @@ flowchart TD
 | **`backend/maintenance/`** | One‑shot factory reset (wipe all local data) | `factory_reset.py` |
 | **`backend/evaluation/`** | Retrieval + LLM answer‑quality scoring | `evaluate_retrieval.py` |
 | **`backend/observability/`** | Optional Langfuse request tracing (off by default) | `tracing.py` |
-| **`tests/`** | 259 offline tests — Docker / LLM / network all mocked | `test_*.py` |
+| **`tests/`** | 356 offline tests — Docker / LLM / network all mocked | `test_*.py` |
 
-> 🧭 Deeper dives: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** (full diagrams) · **[docs/PIPELINE.md](docs/PIPELINE.md)** (step‑by‑step flow) · **[docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)** (every folder & naming rules).
+> 🧭 Deeper dives: **[docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)** (interactive pipeline guide + numbers) · **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** (full diagrams) · **[docs/PIPELINE.md](docs/PIPELINE.md)** (step‑by‑step flow) · **[docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)** (every folder & naming rules).
 
 ---
 
 ## 🛠️ Development
 
 ```bash
-.venv\Scripts\python.exe -m pytest -q          # 259 passing, fully offline/mocked
+.venv\Scripts\python.exe -m pytest -q          # 356 passing, fully offline/mocked
 .venv\Scripts\pyflakes backend webapp          # lint
 python pipeline.py --status                    # what's indexed + which device (GPU/CPU)
 python pipeline.py --corpus-report             # coverage + gaps report
