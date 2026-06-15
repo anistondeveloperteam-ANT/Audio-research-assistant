@@ -14,7 +14,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterator, List
+from typing import Any, Dict, Iterator, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -478,10 +478,16 @@ def _deep_queries(question: str) -> List[str]:
 # ----------------------------------------------------------------------
 # Code-intent route: run the autonomous code agent and stream its events
 # ----------------------------------------------------------------------
-def _run_code_agent(question: str, session_id: str, mem) -> Iterator[Dict[str, Any]]:
+def _run_code_agent(question: str, session_id: str, mem,
+                    q_version_id: Optional[int] = None,
+                    node_id: Optional[str] = None) -> Iterator[Dict[str, Any]]:
     """Stream a code-agent run (write -> run in sandbox -> verify against generated tests) for a
-    code-intent query. The caller has already saved the user turn; here we save the assistant
-    turn (final code) when the run finishes. Runs the agent off-thread so events stream live."""
+    code-intent query. The final code is saved as an ANSWER VERSION under the question version
+    `q_version_id` (created here if not supplied, so the function also works standalone). Runs the
+    agent off-thread so events stream live."""
+    if q_version_id is None:
+        _info = mem.start_question(session_id, question)
+        q_version_id, node_id = _info["turn_id"], _info["node_id"]
     import queue
     import threading
     from backend.agent.loop import run_agent, result_to_markdown
@@ -512,11 +518,17 @@ def _run_code_agent(question: str, session_id: str, mem) -> Iterator[Dict[str, A
 
     res = box.get("res")
     content = result_to_markdown(res) if res is not None else "_(the code agent produced no result)_"
+    av = None
     try:
-        mem.append_turn(session_id, "assistant", content)
+        av = mem.add_answer_version(q_version_id, content)
     except Exception:
         pass
-    yield {"type": "done", "answer": content, "code_agent": True}
+    done = {"type": "done", "answer": content, "code_agent": True}
+    if av:
+        done.update({"node_id": node_id, "qversion_id": q_version_id,
+                     "answer_turn_id": av["turn_id"], "answer_version_index": av["version_index"],
+                     "answer_total": av["total"]})
+    yield done
 
 
 # ----------------------------------------------------------------------
@@ -528,14 +540,32 @@ def stream_chat_events(
     mode: str = "Default",
     top_k: int = 8,
     web_search: bool = True,
+    *,
+    edit_node_id: Optional[str] = None,
+    regen_qversion_id: Optional[int] = None,
 ) -> Iterator[Dict[str, Any]]:
-    """Yield event dicts: sanity | status | sources | token | warning | done | error.
+    """Yield event dicts: sanity | status | sources | token | warning | version | done | error.
+
+    Versioning (ChatGPT-style): `edit_node_id` adds a new question version under an existing
+    node (edit / re-ask, keeping the old one); `regen_qversion_id` adds a new answer version
+    under an existing question version (regenerate); neither set = a brand-new question node.
 
     Web search is the PRIMARY knowledge source. The local Oracle/PDF RAG is
     optional and off unless ENABLE_LOCAL_RAG=true, so the app runs in production
     with no Oracle database and no uploaded papers — just a web-search key + LLM.
     """
     q = (question or "").strip()
+    mem = memory()
+    user_id = mem.session_owner(session_id) or "local"
+
+    # Regenerate reuses the existing question version's text (the client need not resend it).
+    _regen_qv = None
+    if regen_qversion_id is not None:
+        _regen_qv = mem.get_version(regen_qversion_id)
+        if not _regen_qv or _regen_qv.get("role") != "user":
+            yield {"type": "error", "message": "That question version is no longer available."}
+            return
+        q = (_regen_qv.get("content") or "").strip()
 
     sanity = check_query_sanity(q)
     if not sanity.ok:
@@ -552,14 +582,30 @@ def stream_chat_events(
                 profile["mode"], profile["deep_search_subqueries"], profile["external_top_k"],
                 profile["agentic_max_verify_rounds"], profile["auto_review"])
 
-    mem = memory()
-    user_id = mem.session_owner(session_id) or "local"
-    mem.append_turn(session_id, "user", q)
+    # Resolve the question version this answer belongs to (ChatGPT-style versioning). The stored
+    # question keeps the user's EXACT text; only the search query below is refined.
+    if regen_qversion_id is not None:                       # new answer under the same question
+        q_version_id = int(regen_qversion_id)
+        node_id = _regen_qv.get("node_id")
+    elif edit_node_id:                                      # edit / re-ask -> new question version
+        _info = mem.add_question_version(session_id, edit_node_id, q)
+        q_version_id, node_id = _info["turn_id"], _info["node_id"]
+        yield {"type": "version", "scope": "question", "node_id": node_id,
+               "qversion_id": q_version_id, "version_index": _info["version_index"],
+               "total": _info["total"]}
+    else:                                                   # brand-new question node (version 1)
+        _info = mem.start_question(session_id, q)
+        q_version_id, node_id = _info["turn_id"], _info["node_id"]
+
+    def _ans_meta(av: Dict[str, Any]) -> Dict[str, Any]:
+        """Answer-version fields attached to the `done` event so the UI updates its switcher."""
+        return {"node_id": node_id, "qversion_id": q_version_id,
+                "answer_turn_id": av["turn_id"], "answer_version_index": av["version_index"],
+                "answer_total": av["total"]}
 
     # Silently fix spelling/grammar BEFORE search so typos don't poison retrieval.
-    # The turn stored above keeps the user's exact words; everything downstream
-    # (intent, embedding, retrieval, external search, the LLM) uses the corrected
-    # text. refine_query never raises and falls back to the original on any error.
+    # The question version stored above keeps the user's exact words; everything downstream
+    # (intent, embedding, retrieval, external search, the LLM) uses the corrected text.
     from backend.answering.query_refine import refine_query
     q = refine_query(q)
 
@@ -571,7 +617,7 @@ def stream_chat_events(
     # unavailable (or CODE_INTENT_SEMANTIC=false) and never raises.
     from backend.answering.task_classifier import classify
     if classify(q).code_task:
-        yield from _run_code_agent(q, session_id, mem)
+        yield from _run_code_agent(q, session_id, mem, q_version_id, node_id)
         return
 
     # One trace per chat request (no-op unless LANGFUSE_ENABLED=true). Carries only
@@ -603,14 +649,14 @@ def stream_chat_events(
         pct = int(float(cached.get("similarity", 0.0)) * 100)
         kind = cached.get("match_kind", "lexical")
         mem.record_answer_cache_hit(int(cached["id"]))
-        mem.append_turn(session_id, "assistant", answer, sources=sources)
+        _av = mem.add_answer_version(q_version_id, answer, sources=sources)
         trace.set(cached=True).end()
         yield {"type": "status", "message":
                f"Reusing a saved answer from memory ({pct}% {kind} match)."}
         yield {"type": "sources", "sources": sources}
         yield {"type": "token", "text": answer}
         yield {"type": "done", "answer": answer, "cached": True,
-               "similarity": pct, "match_kind": kind}
+               "similarity": pct, "match_kind": kind, **_ans_meta(_av)}
         return
 
     items: List[Dict[str, Any]] = []
@@ -693,9 +739,9 @@ def stream_chat_events(
             msg = "I couldn't find relevant information for that question in the available sources."
         yield {"type": "sources", "sources": []}
         yield {"type": "token", "text": msg}
-        mem.append_turn(session_id, "assistant", msg, sources=[])
+        _av = mem.add_answer_version(q_version_id, msg, sources=[])
         trace.set(n_sources=0).end()
-        yield {"type": "done", "answer": msg}
+        yield {"type": "done", "answer": msg, **_ans_meta(_av)}
         return
 
     with trace.span("source_selection") as _sp:
@@ -704,8 +750,14 @@ def stream_chat_events(
     yield {"type": "sources", "sources": sources}
 
     recent = mem.get_recent_turns(session_id, n_messages=6)
-    # Replace the just-stored bare question with the evidence-augmented version.
-    history = recent[:-1] if recent and recent[-1]["role"] == "user" else recent
+    # Drop the CURRENT question (and, when regenerating, its existing answer) from the context —
+    # it's re-added below as the evidence-augmented user message. The trailing turn is this
+    # question for a new/edited ask, or this question's prior answer for a regenerate.
+    history = list(recent)
+    if history and history[-1]["role"] == "assistant":
+        history = history[:-1]      # regenerate: drop the answer being replaced
+    if history and history[-1]["role"] == "user":
+        history = history[:-1]      # drop the current question itself
 
     answer_parts: List[str] = []
     verdict: Dict[str, Any] = {}
@@ -938,7 +990,7 @@ def stream_chat_events(
         # so the saved/cached answer's citations always match the actual sources. (The
         # frontend strips out-of-range [n] from the live display too.)
         answer, removed_citations = repair_citations(answer, len(sources))
-        mem.append_turn(session_id, "assistant", answer, sources=sources)
+        _av = mem.add_answer_version(q_version_id, answer, sources=sources)
 
         # Save for reuse ONLY when the generation truly succeeded: provider worked, no
         # exception, the agentic answer passed verification AND its code didn't fail, and
@@ -965,4 +1017,4 @@ def stream_chat_events(
         logger.info("citation guard: removed out-of-range %s (only %d sources)",
                     removed_citations, len(sources))
         yield {"type": "citation_warning", "removed": removed_citations, "n_sources": len(sources)}
-    yield {"type": "done", "answer": answer}
+    yield {"type": "done", "answer": answer, **_ans_meta(_av)}

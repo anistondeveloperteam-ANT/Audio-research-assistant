@@ -403,6 +403,51 @@ def truncate_turns(session_id: str, turn_index: int, request: Request):
 
 
 # ----------------------------------------------------------------------
+# Message versions (ChatGPT-style ‹ k/n › switching)
+# ----------------------------------------------------------------------
+@app.get("/api/sessions/{session_id}/tree")
+def get_tree(session_id: str, request: Request):
+    """The full version tree for rendering: ordered question slots, each with its question
+    versions and (per version) answer versions; content on the active path, refs elsewhere."""
+    _require_owner(request, session_id)
+    return chat_logic.memory().get_conversation_tree(session_id)
+
+
+@app.get("/api/sessions/{session_id}/versions/{turn_id}")
+def get_version(session_id: str, turn_id: int, request: Request):
+    """Fetch one version's content + sources (lazy-loaded when the user switches ‹ ›)."""
+    _require_owner(request, session_id)
+    v = chat_logic.memory().get_version(turn_id)
+    if not v or v.get("session_id") != session_id:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return v
+
+
+@app.post("/api/sessions/{session_id}/versions/active")
+def set_active_version(session_id: str, request: Request, body: dict = Body(...)):
+    """Persist which version the user is viewing so it's restored on reload.
+    body: {scope: 'question', node_id, version_index} or {scope: 'answer', qversion_id, version_index}."""
+    _require_owner(request, session_id)
+    mem = chat_logic.memory()
+    scope = (body.get("scope") or "").strip()
+    try:
+        version_index = int(body.get("version_index"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "version_index is required"}, status_code=400)
+    if scope == "question":
+        ok = mem.set_active_question_version(session_id, str(body.get("node_id") or ""), version_index)
+    elif scope == "answer":
+        qv = body.get("qversion_id")
+        v = mem.get_version(int(qv)) if qv is not None else None
+        if not v or v.get("session_id") != session_id:   # ownership: the qversion must be in this session
+            return JSONResponse({"error": "not found"}, status_code=404)
+        ok = mem.set_active_answer_version(int(qv), version_index)
+    else:
+        return JSONResponse({"error": "scope must be 'question' or 'answer'"}, status_code=400)
+    return {"ok": bool(ok)}
+
+
+# ----------------------------------------------------------------------
 # Library: upload a PDF + stream ingestion (shared knowledge base)
 # ----------------------------------------------------------------------
 @app.get("/api/library")
@@ -482,10 +527,16 @@ def chat(request: Request, body: dict = Body(...)):
         return JSONResponse({"error": "session_id is required"}, status_code=400)
     _require_owner(request, session_id)   # raises before streaming if not the user's
 
+    # Versioning intent: edit/re-ask (new question version under a node) or regenerate (new
+    # answer version under a question version). Absent both = a brand-new question.
+    edit_node_id = body.get("edit_node_id") or None
+    regen_qversion_id = body.get("regen_qversion_id")
+
     def gen():
         try:
             for event in chat_logic.stream_chat_events(
-                session_id, question, mode=mode, top_k=top_k, web_search=web_search
+                session_id, question, mode=mode, top_k=top_k, web_search=web_search,
+                edit_node_id=edit_node_id, regen_qversion_id=regen_qversion_id,
             ):
                 yield json.dumps(event) + "\n"
         except Exception as exc:  # last-resort guard so the stream always closes cleanly
@@ -528,8 +579,8 @@ def _persist_agent_run(mem, session_id: str, task: str, res) -> None:
     rendered as markdown on reopen. Never raises — persistence must not break the response."""
     try:
         from backend.agent.loop import result_to_markdown
-        mem.append_turn(session_id, "user", task)
-        mem.append_turn(session_id, "assistant", result_to_markdown(res))
+        info = mem.start_question(session_id, task)            # question node, version 1
+        mem.add_answer_version(info["turn_id"], result_to_markdown(res))  # answer version 1
     except Exception:
         pass
 
