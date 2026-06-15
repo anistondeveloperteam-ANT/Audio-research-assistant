@@ -423,6 +423,14 @@ def get_version(session_id: str, turn_id: int, request: Request):
     return v
 
 
+@app.delete("/api/sessions/{session_id}/nodes/{node_id}")
+def delete_node(session_id: str, node_id: str, request: Request):
+    """Delete an entire question slot — all its question versions and all their answers."""
+    _require_owner(request, session_id)
+    deleted = chat_logic.memory().delete_node(session_id, node_id)
+    return {"ok": True, "deleted": deleted}
+
+
 @app.post("/api/sessions/{session_id}/versions/active")
 def set_active_version(session_id: str, request: Request, body: dict = Body(...)):
     """Persist which version the user is viewing so it's restored on reload.

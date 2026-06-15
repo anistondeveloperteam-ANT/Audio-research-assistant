@@ -377,6 +377,21 @@ body {
 .ua-btn.danger:hover { color: #e5484d; border-color: #e5484d; }
 .ua-btn svg { width: 14px; height: 14px; }
 
+/* Version switcher: ‹ k / n › on a question bubble or answer card. */
+.ver-switch {
+  display: inline-flex; align-items: center; gap: 2px; user-select: none;
+  color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.msg.user .ver-switch { align-self: flex-end; }   /* right-aligned above the question bubble */
+.ver-switch .vs-label { min-width: 30px; text-align: center; opacity: .85; }
+.vs-btn {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; line-height: 1;
+  font-size: 15px; color: var(--muted); background: none; border: 1px solid transparent;
+  border-radius: 6px; cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+}
+.vs-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+.vs-btn:disabled { opacity: .35; cursor: default; }
+
 /* Inline edit box for a question */
 .u-edit {
   width: min(640px, 78vw); display: flex; flex-direction: column; gap: 9px;

@@ -27,6 +27,11 @@
       fetch(`/api/sessions/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }),
     deleteSession: (id) => fetch(`/api/sessions/${id}`, { method: "DELETE" }),
     turns: (id) => fetch(`/api/sessions/${id}/turns`).then((r) => r.json()),
+    tree: (id) => fetch(`/api/sessions/${id}/tree`).then((r) => r.json()),
+    getVersion: (id, turnId) => fetch(`/api/sessions/${id}/versions/${turnId}`).then((r) => r.json()),
+    setActiveVersion: (id, payload) =>
+      fetch(`/api/sessions/${id}/versions/active`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).then((r) => r.json()),
+    deleteNode: (id, nodeId) => fetch(`/api/sessions/${id}/nodes/${nodeId}`, { method: "DELETE" }).then((r) => r.json()),
     deleteTurn: (id, idx) => fetch(`/api/sessions/${id}/turns/${idx}`, { method: "DELETE" }).then((r) => r.json()),
     truncateTurns: (id, idx) => fetch(`/api/sessions/${id}/turns/${idx}/truncate`, { method: "POST" }).then((r) => r.json()),
     library: () => fetch("/api/library").then((r) => r.json()),
@@ -322,6 +327,11 @@
     fillUserWrap(m, text);
     // Delegated so the handler survives the wrap being re-rendered (edit mode).
     m.addEventListener("click", (e) => {
+      const vb = e.target.closest(".vs-btn");
+      if (vb && m.contains(vb)) {
+        switchQuestionVersion(m, vb.classList.contains("vs-next") ? 1 : -1);
+        return;
+      }
       const b = e.target.closest(".ua-btn");
       if (!b || !m.contains(b)) return;
       if (b.dataset.act === "copy") copyUserMessage(m);
@@ -355,31 +365,23 @@
 
   async function deleteUserMessage(m) {
     if (state.streaming) { toast("Please wait for the answer to finish."); return; }
-    const idx = m.dataset.turnIndex;
+    const node = m.dataset.nodeId;
     try {
-      if (idx != null) await api.deleteTurn(state.currentId, idx);
+      if (node) await api.deleteNode(state.currentId, node);   // removes ALL versions + answers
     } catch { toast("Couldn't delete the question.", "error"); return; }
-    await reloadTurns();   // re-render from the DB so turn indices + sources stay correct
+    await reloadTree();
     toast("Question deleted");
   }
 
-  // "Ask again" — re-run this exact question, regenerating its answer in place
-  // (drops this Q + everything after it, then re-sends the same text).
+  // "Ask again" — re-ask this exact question as a NEW question version (keeps the old one).
   async function repeatUserMessage(m) {
     if (state.streaming) { toast("Please wait for the answer to finish."); return; }
+    const node = m.dataset.nodeId;
     const text = (m.querySelector(".bubble") || {}).textContent || "";
-    if (!text.trim()) return;
-    const idx = m.dataset.turnIndex;
-    try {
-      if (idx != null) await api.truncateTurns(state.currentId, idx);
-    } catch { toast("Couldn't reprocess the question.", "error"); return; }
-    let n = m.nextElementSibling;
-    while (n) { const after = n.nextElementSibling; n.remove(); n = after; }
-    m.remove();
-    if (idx != null) state.nextTurnIndex = parseInt(idx, 10);
+    if (!node || !text.trim()) return;
     $("input").value = text;
     autosize();
-    send();
+    send({ editNodeId: node });
   }
 
   function startEditUserMessage(m) {
@@ -416,18 +418,12 @@
     const edited = (ta ? ta.value : "").trim();
     if (!edited) { toast("The question can't be empty."); return; }
     if (edited === originalText) { fillUserWrap(m, originalText); return; }
-    const idx = m.dataset.turnIndex;
-    try {
-      if (idx != null) await api.truncateTurns(state.currentId, idx);   // drop this Q + everything after
-    } catch { toast("Couldn't edit the question.", "error"); fillUserWrap(m, originalText); return; }
-    // Remove this message and all later ones from the view; send() re-adds the edited one.
-    let n = m.nextElementSibling;
-    while (n) { const after = n.nextElementSibling; n.remove(); n = after; }
-    m.remove();
-    if (idx != null) state.nextTurnIndex = parseInt(idx, 10);
+    const node = m.dataset.nodeId;
+    if (!node) { toast("Couldn't edit the question.", "error"); fillUserWrap(m, originalText); return; }
+    fillUserWrap(m, originalText);            // close the inline editor; reloadTree reconciles after
     $("input").value = edited;
     autosize();
-    send();
+    send({ editNodeId: node });               // NEW question version, keeping the old one
   }
 
   // Returns handles to drive a streaming assistant message.
@@ -448,7 +444,7 @@
       </div>`;
     inner().appendChild(m);
     scrollToBottom(true);
-    return {
+    const handle = {
       el: m,
       statusEl: m.querySelector(".statusline"),
       statusText: m.querySelector(".status-text"),
@@ -459,6 +455,8 @@
       md: m.querySelector(".md"),
       tools: m.querySelector(".msg-tools"),
     };
+    m._h = handle;   // backref so version-switching can re-render this card in place
+    return handle;
   }
 
   function revealThinking(h) {
@@ -546,7 +544,185 @@
       navigator.clipboard.writeText(h.md.innerText).then(() => toast("Answer copied"));
     });
     h.tools.appendChild(copy);
+    // Regenerate -> a NEW answer version under the same question (keeps the current one).
+    const regen = document.createElement("button");
+    regen.className = "tool-btn";
+    regen.innerHTML = `${ICON_REPEAT} Regenerate`;
+    regen.addEventListener("click", () => regenerateAnswer(h.el));
+    h.tools.appendChild(regen);
     // The answer is peer-reviewed automatically (AUTO_REVIEW) — no manual button.
+  }
+
+  // ---------- Message versioning (ChatGPT-style ‹ k / n ›) ----------
+  function _verSwitch(scope) {
+    const d = document.createElement("div");
+    d.className = "ver-switch";
+    d.dataset.scope = scope;
+    d.innerHTML =
+      '<button class="vs-btn vs-prev" title="Previous version" aria-label="Previous version">‹</button>'
+      + '<span class="vs-label"></span>'
+      + '<button class="vs-btn vs-next" title="Next version" aria-label="Next version">›</button>';
+    return d;
+  }
+
+  // Question switcher: above the bubble in the user .u-wrap. Hidden for single-version questions.
+  function updateQuestionSwitcher(um) {
+    const wrap = um.querySelector(".u-wrap");
+    if (!wrap) return;
+    const slot = um._slot;
+    const total = slot ? slot.version_total : 1;
+    let sw = wrap.querySelector(".ver-switch[data-scope='question']");
+    if (!slot || total <= 1) { if (sw) sw.remove(); return; }
+    if (!sw) { sw = _verSwitch("question"); wrap.insertBefore(sw, wrap.firstChild); }
+    sw.querySelector(".vs-label").textContent = um._qIndex + " / " + total;
+    sw.querySelector(".vs-prev").disabled = um._qIndex <= 1;
+    sw.querySelector(".vs-next").disabled = um._qIndex >= total;
+  }
+
+  // Answer switcher: first item in the assistant .msg-tools row. Hidden for single-version answers.
+  function updateAnswerSwitcher(answerEl) {
+    const h = answerEl._h;
+    if (!h) return;
+    const qv = answerEl._qv;
+    const total = qv ? qv.answer_total : 1;
+    let sw = h.tools.querySelector(".ver-switch[data-scope='answer']");
+    if (!qv || total <= 1) { if (sw) sw.remove(); return; }
+    if (!sw) {
+      sw = _verSwitch("answer");
+      sw.addEventListener("click", (e) => {
+        const b = e.target.closest(".vs-btn"); if (!b) return;
+        switchAnswerVersion(answerEl, b.classList.contains("vs-next") ? 1 : -1);
+      });
+      h.tools.insertBefore(sw, h.tools.firstChild);
+    }
+    sw.querySelector(".vs-label").textContent = answerEl._aIndex + " / " + total;
+    sw.querySelector(".vs-prev").disabled = answerEl._aIndex <= 1;
+    sw.querySelector(".vs-next").disabled = answerEl._aIndex >= total;
+  }
+
+  // Render the full version tree (replaces the flat turn list).
+  function renderTree(tree) {
+    inner().innerHTML = "";
+    state.tree = tree || [];
+    if (!state.tree.length) {
+      showWelcome();
+      state.currentSources = []; renderSources([]);
+      state.nextTurnIndex = 0;
+      return;
+    }
+    state.tree.forEach(renderSlot);
+    let lastSrc = [];
+    for (const slot of state.tree) {
+      const qv = slot.versions.find((v) => v.version_index === slot.active_version_index);
+      const a = qv && qv.answers.find((x) => x.version_index === qv.active_answer_index);
+      if (a && a.sources) lastSrc = a.sources;
+    }
+    renderSources(lastSrc);
+    applyScrollReveal();
+    scrollToBottom(true);
+  }
+
+  function renderSlot(slot) {
+    const qv = slot.versions.find((v) => v.version_index === slot.active_version_index)
+            || slot.versions[slot.versions.length - 1];
+    const um = addUserMessage((qv && qv.content) || "", null);
+    um.dataset.nodeId = slot.node_id;
+    um._slot = slot;
+    um._qIndex = slot.active_version_index;
+    updateQuestionSwitcher(um);
+    if (!qv) return;
+    const a = qv.answers.find((x) => x.version_index === qv.active_answer_index)
+           || qv.answers[qv.answers.length - 1];
+    if (!a) return;
+    const h = addAssistantMessage();
+    h.statusEl.style.display = "none";
+    h.md.style.display = "";
+    h.el._sources = a.sources || [];
+    renderMarkdown(h.md, a.content || "");
+    finalizeTools(h, a.sources || []);
+    h.el._qv = qv;
+    h.el._aIndex = qv.active_answer_index;
+    h.el.dataset.qversionId = String(qv.turn_id);
+    um._answerEl = h.el;
+    updateAnswerSwitcher(h.el);
+  }
+
+  async function reloadTree() {
+    if (!state.currentId) return;
+    renderTree(await api.tree(state.currentId));
+  }
+
+  function setQuestionContent(um, content, qIndex) {
+    const b = um.querySelector(".bubble");
+    if (b) b.textContent = content;
+    um._qIndex = qIndex;
+    updateQuestionSwitcher(um);
+  }
+
+  // Show a specific answer version in an existing assistant card (lazy-loads its content).
+  async function showAnswerVersion(answerEl, qv, aIndex) {
+    const h = answerEl._h;
+    const a = qv && qv.answers.find((x) => x.version_index === aIndex);
+    if (!h || !a) return;
+    let content = a.content, sources = a.sources;
+    if (content == null) {
+      try {
+        const v = await api.getVersion(state.currentId, a.turn_id);
+        content = v.content || ""; sources = v.sources || [];
+        a.content = content; a.sources = sources;       // cache so re-switching is instant
+      } catch { toast("Couldn't load that answer.", "error"); return; }
+    }
+    answerEl._qv = qv;
+    answerEl._aIndex = aIndex;
+    answerEl.dataset.qversionId = String(qv.turn_id);
+    answerEl._sources = sources || [];
+    answerEl._h.md.style.display = "";
+    renderMarkdown(answerEl._h.md, content || "");
+    finalizeTools(h, sources || []);
+    updateAnswerSwitcher(answerEl);
+    qv.active_answer_index = aIndex;
+  }
+
+  async function switchQuestionVersion(um, delta) {
+    const slot = um._slot;
+    if (!slot || state.streaming) return;
+    const total = slot.version_total;
+    const next = Math.min(total, Math.max(1, um._qIndex + delta));
+    if (next === um._qIndex) return;
+    const qv = slot.versions.find((v) => v.version_index === next);
+    if (!qv) return;
+    let content = qv.content;
+    if (content == null) {
+      try { content = (await api.getVersion(state.currentId, qv.turn_id)).content || ""; qv.content = content; }
+      catch { toast("Couldn't load that version.", "error"); return; }
+    }
+    setQuestionContent(um, content, next);
+    slot.active_version_index = next;
+    if (um._answerEl) {
+      const ai = qv.active_answer_index
+        || (qv.answers.length ? qv.answers[qv.answers.length - 1].version_index : 0);
+      if (ai) await showAnswerVersion(um._answerEl, qv, ai);
+    }
+    api.setActiveVersion(state.currentId,
+      { scope: "question", node_id: slot.node_id, version_index: next }).catch(() => {});
+  }
+
+  async function switchAnswerVersion(answerEl, delta) {
+    const qv = answerEl._qv;
+    if (!qv || state.streaming) return;
+    const total = qv.answer_total;
+    const next = Math.min(total, Math.max(1, answerEl._aIndex + delta));
+    if (next === answerEl._aIndex) return;
+    await showAnswerVersion(answerEl, qv, next);
+    api.setActiveVersion(state.currentId,
+      { scope: "answer", qversion_id: qv.turn_id, version_index: next }).catch(() => {});
+  }
+
+  function regenerateAnswer(answerEl) {
+    if (state.streaming) { toast("Please wait for the answer to finish."); return; }
+    const qvId = answerEl.dataset.qversionId;
+    if (!qvId) { toast("Can't regenerate this answer yet."); return; }
+    send({ regenQversionId: parseInt(qvId, 10) });
   }
 
   // ----- per-query source navigation -----
@@ -729,7 +905,7 @@
     state.currentId = id;
     try { localStorage.setItem("ara-session", id); } catch {}   // survive page refresh
     renderSessions();
-    renderTurns(await api.turns(id));
+    renderTree(await api.tree(id));
     if (window.innerWidth <= 880) $("sidebar").classList.remove("open");
   }
 
@@ -846,22 +1022,32 @@
     "context", "directive", "think", "code", "run", "run_result", "reflect", "blocked", "final",
   ]);
 
-  async function send() {
-    const text = $("input").value.trim();
-    if (!text || state.streaming || !state.currentId) return;
-    if (looksLikeCodingTask(text)) { sendAgent(text); return; }
+  async function send(opts) {
+    opts = opts || {};
+    const editNodeId = opts.editNodeId || null;                 // edit / re-ask -> new question version
+    const regenQversionId = (opts.regenQversionId != null) ? opts.regenQversionId : null;  // -> new answer version
+    const isRegen = regenQversionId != null;
+    const isVersionOp = isRegen || !!editNodeId;
+
+    let text = "";
+    if (!isRegen) {
+      text = $("input").value.trim();
+      if (!text) return;
+    }
+    if (state.streaming || !state.currentId) return;
+    // New questions may fast-path to the agent UI; edit/regenerate always go through /api/chat
+    // (the server routes to the agent internally when the task is code-intent + saves a version).
+    if (!isVersionOp && looksLikeCodingTask(text)) { sendAgent(text); return; }
 
     // First message in a fresh session -> title it from the question.
     const sess = state.sessions.find((s) => s.id === state.currentId);
-    const wasEmpty = sess && (sess.title === "New conversation" || !sess.title);
+    const wasEmpty = !isVersionOp && sess && (sess.title === "New conversation" || !sess.title);
 
     if (inner().querySelector(".welcome")) inner().innerHTML = "";
-    $("input").value = ""; autosize();
-    const userIndex = state.nextTurnIndex;
-    addUserMessage(text, userIndex);
-    state.nextTurnIndex = userIndex + 2;   // server appends user(+0) then assistant(+1)
+    if (!isRegen) { $("input").value = ""; autosize(); addUserMessage(text, null); }
     setStreaming(true);
     const h = addAssistantMessage();
+    if (isRegen) h.statusText.textContent = "Regenerating…";
 
     // Live elapsed timer so the user always sees it's working (not frozen).
     const genStart = performance.now();
@@ -871,6 +1057,7 @@
 
     let answer = "";
     let agentHandle = null;   // set if the server routes this to the code agent mid-stream
+    let doneMeta = null;      // version metadata from the `done` event
     let renderScheduled = false;
     const scheduleRender = () => {
       if (renderScheduled) return;
@@ -885,11 +1072,14 @@
 
     const controller = new AbortController();
     state.abort = controller;
+    const reqBody = { session_id: state.currentId, question: text, mode: state.mode, top_k: state.topk };
+    if (editNodeId) reqBody.edit_node_id = editNodeId;
+    if (isRegen) reqBody.regen_qversion_id = regenQversionId;
     try {
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: state.currentId, question: text, mode: state.mode, top_k: state.topk }),
+        body: JSON.stringify(reqBody),
         signal: controller.signal,
       });
       const reader = resp.body.getReader();
@@ -905,6 +1095,7 @@
           buf = buf.slice(nl + 1);
           if (!line) continue;
           let ev; try { ev = JSON.parse(line); } catch { continue; }
+          if (ev.type === "done") doneMeta = ev;     // carries node_id / qversion_id / answer_*
           if (agentHandle || AGENT_ONLY_EVENTS.has(ev.type)) {
             // Server routed this to the code agent: render its timeline, not prose.
             if (!agentHandle) {
@@ -946,6 +1137,10 @@
         renderMarkdown(h.md, answer || "_(no answer)_");
         finalizeTools(h, state.currentSources, { seconds: secs, model: currentModelName() });
       }
+      // Tag this answer card with its question version so its Regenerate button works.
+      if (doneMeta && doneMeta.qversion_id != null) {
+        h.el.dataset.qversionId = String(doneMeta.qversion_id);
+      }
       setStreaming(false);
       scrollToBottom();
       $("input").focus();
@@ -955,6 +1150,9 @@
         if (sess) sess.title = title;
         renderSessions();
       }
+      // Edit / regenerate added a version: reconcile to the canonical versioned view (switchers
+      // appear, older versions are kept + reachable). A brand-new question needs no reload.
+      if (isVersionOp) { try { await reloadTree(); } catch {} }
     }
   }
 
@@ -1008,6 +1206,9 @@
       setStreaming(false);
       scrollToBottom();
       $("input").focus();
+      // The agent run is persisted as a versioned node; reconcile so the answer card gets its
+      // version id (Regenerate works) and reloads identically to a refresh.
+      if (state.currentId) { try { await reloadTree(); } catch {} }
     }
   }
 
