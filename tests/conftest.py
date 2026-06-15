@@ -19,3 +19,8 @@ os.environ["EXTERNAL_RERANK_CROSS_ENCODER"] = "false"
 # (no LLM/network). The classifier's own unit tests opt back in and mock the
 # provider, so this never hides a real failure.
 os.environ["CODE_INTENT_SEMANTIC"] = "false"
+
+# Compact-memory summarization makes an LLM call when older turns go stale; disable it suite-wide
+# so chat tests are deterministic + offline. The compact-memory unit tests opt back in and mock
+# the provider, so this never hides a real failure.
+os.environ["COMPACT_MEMORY"] = "false"

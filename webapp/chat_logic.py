@@ -8,6 +8,7 @@ this module only wires the proven pieces together for the new UI.
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
 import os
 import re
@@ -30,7 +31,7 @@ try:
 except ImportError:
     pass
 
-from backend.memory.store import MemoryStore, default_db_path  # noqa: E402
+from backend.memory.store import MemoryStore, default_db_path, estimate_tokens  # noqa: E402
 from backend.answering.query_sanity import check_query_sanity  # noqa: E402
 from backend.answering.agentic_answer import (  # noqa: E402
     agentic_loop_enabled,
@@ -476,6 +477,207 @@ def _deep_queries(question: str) -> List[str]:
 
 
 # ----------------------------------------------------------------------
+# Compact conversation memory (Mem0-style layering): recent turns + a rolling
+# summary of older turns + relevant facts, capped at a token budget. This shapes
+# ONLY what is sent to the LLM — the full raw history is still saved for display +
+# versioning. Falls back to recent-only on any failure; never breaks chat.
+# ----------------------------------------------------------------------
+def compact_memory_enabled() -> bool:
+    return os.getenv("COMPACT_MEMORY", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _int_env(name: str, default: int, lo: int) -> int:
+    try:
+        return max(lo, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def memory_recent_turns() -> int:
+    return _int_env("MEMORY_RECENT_TURNS", 4, 0)
+
+
+def memory_max_tokens() -> int:
+    return _int_env("MEMORY_MAX_TOKENS", 3000, 200)
+
+
+def memory_summary_stale() -> int:
+    return _int_env("MEMORY_SUMMARY_STALE", 2, 1)
+
+
+def memory_max_facts() -> int:
+    return _int_env("MEMORY_MAX_FACTS", 6, 0)
+
+
+_SUMMARY_SYSTEM = (
+    "You maintain a COMPACT running summary of a chat so older turns can be dropped from the "
+    "model's context without losing what matters. Fold the new older messages into the existing "
+    "summary. Keep it under ~150 words: preserve decisions, named entities, the user's goal and "
+    "preferences, and any open threads; drop pleasantries and redundant detail. Also extract 0-5 "
+    "DURABLE facts about the user/project (stable across the chat), each a short key + value. "
+    'Reply with ONLY strict JSON: {"summary": "...", "facts": [{"key": "...", "value": "..."}]}'
+)
+
+
+def _parse_summary_json(raw: str) -> Optional[Dict[str, Any]]:
+    if not raw:
+        return None
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+        return obj if isinstance(obj, dict) else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _summarize_older(prev_summary: str, turns: List[Dict[str, str]]):
+    """One timeout-bounded LLM call: fold `turns` into `prev_summary` and extract a few durable
+    facts. Returns (summary, facts) or (None, []) on any unavailability/timeout/parse error, so
+    the caller keeps the previous summary and chat never breaks."""
+    from backend.llm.streaming_provider import get_provider
+    try:
+        provider = get_provider()
+        if not provider.is_available:
+            return None, []
+        convo = "\n".join(f"{t['role']}: {t['content']}" for t in turns if t.get("content"))[:6000]
+        user = (f"EXISTING SUMMARY (may be empty):\n{prev_summary or '(none)'}\n\n"
+                f"NEW OLDER MESSAGES to fold in:\n{convo}")
+
+        def _run() -> str:
+            parts: List[str] = []
+            total = 0
+            for tok in provider.stream_chat([{"role": "user", "content": user}],
+                                            system=_SUMMARY_SYSTEM,
+                                            max_tokens=_int_env("MEMORY_SUMMARY_MAX_TOKENS", 400, 64),
+                                            temperature=0.2):
+                if not isinstance(tok, str):
+                    continue
+                parts.append(tok)
+                total += len(tok)
+                if total > 4000:
+                    break
+            return "".join(parts)
+
+        import concurrent.futures as cf
+        timeout = float(os.getenv("MEMORY_SUMMARY_TIMEOUT", "8") or 8)
+        with cf.ThreadPoolExecutor(max_workers=1) as ex:
+            raw = ex.submit(_run).result(timeout=timeout)
+    except Exception:                               # noqa: BLE001 - never break chat on summarize
+        return None, []
+
+    obj = _parse_summary_json(raw)
+    if not obj:
+        return None, []
+    summary = (obj.get("summary") or "").strip()
+    if not summary:
+        return None, []
+    facts = [f for f in (obj.get("facts") or []) if isinstance(f, dict)][:8]
+    return summary, facts
+
+
+def _hist_tokens(history: List[Dict[str, str]]) -> int:
+    return sum(estimate_tokens(m.get("content", "")) for m in history)
+
+
+def _truncate_to_tokens(text: str, max_tokens: int) -> str:
+    if max_tokens <= 0:
+        return ""
+    cap = max_tokens * 4
+    return text if len(text) <= cap else text[: max(0, cap - 1)].rstrip() + "…"
+
+
+def _format_memory_block(facts: List[Dict[str, Any]], summary: str) -> str:
+    parts: List[str] = []
+    if facts:
+        lines = ["Relevant facts about the user / project:"]
+        lines += [f"- {f['key']}: {f['value']}" for f in facts]
+        parts.append("\n".join(lines))
+    if summary:
+        parts.append("Summary of earlier conversation (older turns, condensed):\n" + summary)
+    if not parts:
+        return ""
+    return "\n\n[Conversation memory]\n" + "\n\n".join(parts)
+
+
+def _build_compact_context(mem, session_id: str, question: str) -> Dict[str, Any]:
+    """Assemble compact LLM context: recent N turns verbatim + a rolling summary of older turns
+    (refreshed only when stale) + relevant facts, capped at MEMORY_MAX_TOKENS. Returns
+    {system_extra, history, tokens, summary}. Shapes ONLY the LLM context; never raises."""
+    recent_n = memory_recent_turns()
+    try:
+        all_turns = mem.get_turns(session_id)
+    except Exception:
+        all_turns = []
+    # Drop the current question (and, on regenerate, its prior answer) from the tail — the
+    # question is re-added by the caller as the evidence-augmented user message.
+    trimmed = list(all_turns)
+    if trimmed and trimmed[-1].get("role") == "assistant":
+        trimmed = trimmed[:-1]
+    if trimmed and trimmed[-1].get("role") == "user":
+        trimmed = trimmed[:-1]
+    recent = trimmed[len(trimmed) - recent_n:] if recent_n > 0 else []
+    older = trimmed[: len(trimmed) - len(recent)]
+    history = [{"role": t["role"], "content": t["content"]} for t in recent]
+
+    if not compact_memory_enabled():
+        return {"system_extra": "", "history": history, "tokens": _hist_tokens(history), "summary": ""}
+
+    # SUMMARY — refresh only when enough new OLDER turns have accumulated (else reuse the cache).
+    summ = mem.get_session_summary(session_id)
+    summary, upto = summ["summary"], summ["upto"]
+    unsummarized = older[upto:] if upto <= len(older) else older
+    if older and len(unsummarized) >= memory_summary_stale():
+        new_summary, facts = _summarize_older(summary, unsummarized)
+        if new_summary is not None:                 # success -> persist; failure -> keep old summary
+            summary = new_summary
+            try:
+                mem.set_session_summary(session_id, summary, len(older))
+            except Exception:
+                pass
+            for f in facts:
+                k = str(f.get("key") or "").strip()[:60]
+                v = str(f.get("value") or "").strip()[:300]
+                if k and v:
+                    try:
+                        mem.upsert_fact("session", k, v, session_id=session_id)
+                    except Exception:
+                        pass
+
+    # FACTS — only the ones relevant to THIS question.
+    try:
+        facts_rel = mem.relevant_facts(session_id, question, limit=memory_max_facts())
+    except Exception:
+        facts_rel = []
+
+    # TOKEN BUDGET — assembled (facts + summary + recent) <= MEMORY_MAX_TOKENS. Recent turns are
+    # the freshest, so keep them; if recent alone is over, drop the oldest; then COMPRESS the older
+    # summary to fit; only if still over (large facts) drop facts. Always keeps >= 1 recent turn.
+    budget = memory_max_tokens()
+    if _hist_tokens(history) > budget:
+        while len(history) > 1 and _hist_tokens(history) > budget:
+            history.pop(0)
+
+    def _assemble(_facts, _summary):
+        se = _format_memory_block(_facts, _summary)
+        return se, estimate_tokens(se) + _hist_tokens(history)
+
+    system_extra, total = _assemble(facts_rel, summary)
+    while summary and total > budget:               # compress the older summary first
+        over = total - budget
+        summary = _truncate_to_tokens(summary, max(0, estimate_tokens(summary) - over - 1))
+        system_extra, total = _assemble(facts_rel, summary)
+    if total > budget and facts_rel:                # last resort: drop the (small) facts block
+        facts_rel = []
+        system_extra, total = _assemble(facts_rel, summary)
+    logger.info("compact memory: recent=%d turn(s), older=%d, summary=%d tok, facts=%d, "
+                "assembled=%d tok (budget=%d)", len(history), len(older),
+                estimate_tokens(summary), len(facts_rel), total, budget)
+    return {"system_extra": system_extra, "history": history, "tokens": total, "summary": summary}
+
+
+# ----------------------------------------------------------------------
 # Code-intent route: run the autonomous code agent and stream its events
 # ----------------------------------------------------------------------
 def _run_code_agent(question: str, session_id: str, mem,
@@ -492,9 +694,13 @@ def _run_code_agent(question: str, session_id: str, mem,
     import threading
     from backend.agent.loop import run_agent, result_to_markdown
 
-    recent = mem.get_recent_turns(session_id, n_messages=6)
-    conversation = "\n".join(
-        f"{t['role']}: {t['content']}" for t in recent if t.get("content"))[:3000]
+    # Compact memory for the code agent too: rolling summary of older turns + recent turns.
+    _ctx = _build_compact_context(mem, session_id, question)
+    _convo_parts: List[str] = []
+    if _ctx["summary"]:
+        _convo_parts.append("Summary of earlier conversation:\n" + _ctx["summary"])
+    _convo_parts += [f"{t['role']}: {t['content']}" for t in _ctx["history"] if t.get("content")]
+    conversation = "\n".join(_convo_parts)[:3000]
 
     ev: "queue.Queue" = queue.Queue()
     DONE = object()
@@ -749,15 +955,12 @@ def stream_chat_events(
         _sp.set(n_sources=len(sources))
     yield {"type": "sources", "sources": sources}
 
-    recent = mem.get_recent_turns(session_id, n_messages=6)
-    # Drop the CURRENT question (and, when regenerating, its existing answer) from the context —
-    # it's re-added below as the evidence-augmented user message. The trailing turn is this
-    # question for a new/edited ask, or this question's prior answer for a regenerate.
-    history = list(recent)
-    if history and history[-1]["role"] == "assistant":
-        history = history[:-1]      # regenerate: drop the answer being replaced
-    if history and history[-1]["role"] == "user":
-        history = history[:-1]      # drop the current question itself
+    # Compact memory: recent turns verbatim + a rolling summary of older turns + relevant facts,
+    # capped at a token budget (Mem0-style). This is the ONLY conversation context sent to the LLM;
+    # the full raw history stays saved for display + versioning. sys_prompt carries facts+summary.
+    _ctx = _build_compact_context(mem, session_id, q)
+    history = _ctx["history"]
+    sys_prompt = SYSTEM_PROMPT + _ctx["system_extra"]
 
     answer_parts: List[str] = []
     verdict: Dict[str, Any] = {}
@@ -807,7 +1010,7 @@ def stream_chat_events(
                         try:
                             parts = []
                             for piece in provider.stream_chat(
-                                    _messages_for(evidence), system=SYSTEM_PROMPT,
+                                    _messages_for(evidence), system=sys_prompt,
                                     max_tokens=_answer_max_tokens(), temperature=0.3, yield_reasoning=True):
                                 if isinstance(piece, dict):
                                     yield {"type": "thinking", "text": piece.get("reasoning", "")}
@@ -928,7 +1131,7 @@ def stream_chat_events(
                             try:
                                 improved = complete_text(
                                     provider, history + [{"role": "user", "content": rmsg}],
-                                    system=SYSTEM_PROMPT, max_tokens=_answer_max_tokens(), temperature=0.3)
+                                    system=sys_prompt, max_tokens=_answer_max_tokens(), temperature=0.3)
                                 if improved.strip():
                                     answer = improved
                                     answer_rewritten = True
@@ -966,7 +1169,7 @@ def stream_chat_events(
             messages = history + [{"role": "user", "content": user_msg}]
             with trace.span("llm_stream") as _sp:
                 for chunk in provider.stream_chat(
-                    messages, system=SYSTEM_PROMPT, max_tokens=_answer_max_tokens(),
+                    messages, system=sys_prompt, max_tokens=_answer_max_tokens(),
                     temperature=0.3, yield_reasoning=True
                 ):
                     if isinstance(chunk, dict):
