@@ -53,7 +53,9 @@ from backend.answering.evidence_grader import (  # noqa: E402
     PARTIAL,
     STRONG,
     crag_enabled,
+    extract_algorithm_spec,
     grade_evidence,
+    paper_is_thin,
 )
 
 
@@ -779,11 +781,19 @@ def _build_compact_context(mem, session_id: str, question: str) -> Dict[str, Any
 # ----------------------------------------------------------------------
 def _run_code_agent(question: str, session_id: str, mem,
                     q_version_id: Optional[int] = None,
-                    node_id: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+                    node_id: Optional[str] = None, *,
+                    paper_spec: str = "", paper_citation: str = "",
+                    supplement_github: bool = True) -> Iterator[Dict[str, Any]]:
     """Stream a code-agent run (write -> run in sandbox -> verify against generated tests) for a
     code-intent query. The final code is saved as an ANSWER VERSION under the question version
     `q_version_id` (created here if not supplied, so the function also works standalone). Runs the
-    agent off-thread so events stream live."""
+    agent off-thread so events stream live.
+
+    CRAG code-from-paper: when `paper_spec` is given (an algorithm description extracted from the
+    user's PDFs), it is passed to the agent as the `brief` (the spec to implement), and the saved
+    answer is annotated with the source paper(s). `supplement_github` controls whether the agent
+    also fetches GitHub reference implementations — set False when the paper alone is a complete
+    spec, True (default) when it is thin or no paper is involved."""
     if q_version_id is None:
         _info = mem.start_question(session_id, question)
         q_version_id, node_id = _info["turn_id"], _info["node_id"]
@@ -805,7 +815,7 @@ def _run_code_agent(question: str, session_id: str, mem,
 
     def worker():
         try:
-            box["res"] = run_agent(question, use_search=True,
+            box["res"] = run_agent(question, brief=paper_spec, use_search=supplement_github,
                                    conversation=conversation, on_event=ev.put)
         except Exception as exc:
             ev.put({"type": "error", "message": str(exc)})
@@ -821,6 +831,8 @@ def _run_code_agent(question: str, session_id: str, mem,
 
     res = box.get("res")
     content = result_to_markdown(res) if res is not None else "_(the code agent produced no result)_"
+    if paper_citation:                       # cite the paper the algorithm was implemented from
+        content = f"> 📄 Implemented from your research library: {paper_citation}\n\n" + content
     av = None
     try:
         av = mem.add_answer_version(q_version_id, content)
@@ -912,6 +924,11 @@ def stream_chat_events(
     from backend.answering.query_refine import refine_query
     q = refine_query(q)
 
+    # One trace per chat request (no-op unless LANGFUSE_ENABLED=true). Carries only
+    # coarse settings — never the question text.
+    trace = tracing.start_trace("chat_request", mode=mode, top_k=top_k,
+                                web_search=bool(web_search))
+
     # Code-intent queries go straight to the autonomous code agent — never the prose/citation
     # pipeline (which would wrongly refuse for "sources lack code" and ship a toy demo). The agent
     # proves correctness by running tests. Routing is SEMANTIC (task_classifier): it recognizes any
@@ -920,13 +937,33 @@ def stream_chat_events(
     # unavailable (or CODE_INTENT_SEMANTIC=false) and never raises.
     from backend.answering.task_classifier import classify
     if classify(q).code_task:
-        yield from _run_code_agent(q, session_id, mem, q_version_id, node_id)
+        # CRAG code-from-paper: if the requested algorithm lives in the user's PDFs, extract its
+        # description and hand it to the code agent as the spec (cited in the answer). GitHub
+        # references supplement only when the paper is thin; otherwise the paper alone is the spec.
+        # When the algorithm is not in the PDFs, fall back to the GitHub-reference code path.
+        paper_spec = paper_citation = ""
+        supplement = True
+        if crag_enabled() and local_rag_enabled():
+            yield {"type": "status", "message": "Checking your papers for the algorithm..."}
+            code_local, _cw, _ct = _gather_pass(
+                [q], _gather_local_items, lambda i, x: mode,
+                trace=trace, span_name="local_rag")
+            code_grade = grade_evidence(code_local)
+            if code_grade in (STRONG, PARTIAL):
+                paper_spec, paper_citation = extract_algorithm_spec(code_local, q)
+            if paper_spec:
+                supplement = (code_grade == PARTIAL) or paper_is_thin(code_local)
+                note = f"Found the algorithm in your PDFs ({paper_citation or 'your library'}) — implementing and testing it"
+                if supplement:
+                    note += ", with GitHub references to fill gaps"
+                yield {"type": "status", "message": note + "..."}
+            else:
+                yield {"type": "status",
+                       "message": "Not in your PDFs — writing it with GitHub references..."}
+        yield from _run_code_agent(q, session_id, mem, q_version_id, node_id,
+                                   paper_spec=paper_spec, paper_citation=paper_citation,
+                                   supplement_github=supplement)
         return
-
-    # One trace per chat request (no-op unless LANGFUSE_ENABLED=true). Carries only
-    # coarse settings — never the question text.
-    trace = tracing.start_trace("chat_request", mode=mode, top_k=top_k,
-                                web_search=bool(web_search))
 
     # Embed the question ONCE (if semantic reuse is on); reused for lookup AND save.
     query_emb, query_meta = (None, None)

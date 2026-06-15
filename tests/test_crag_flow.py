@@ -3,6 +3,8 @@
 Fully offline — local/external retrieval and the deep-query planner are mocked, and we stop
 consuming the event stream at the `sources` event (the grade + external decision is complete by
 then, before any LLM generation)."""
+import types
+
 import webapp.chat_logic as cl
 from backend.memory.store import MemoryStore
 
@@ -120,3 +122,82 @@ def test_crag_disabled_uses_legacy_concurrent_sweep(tmp_path, monkeypatch):
     assert external_calls, "legacy sweep always runs external when web search is on"
     titles = [s["title"] for s in sources]
     assert "MVDR Paper" in titles and "WebResult" in titles
+
+
+# ======================================================================
+# Code-from-paper: a code-intent query whose algorithm is in the PDFs is
+# implemented from the paper (cited), with GitHub refs only when thin.
+# ======================================================================
+CODE_Q = "write python code for the MVDR beamformer"
+
+
+def _drive_code(monkeypatch, tmp_path, local_items, *, crag=True):
+    """Run the code-intent route with mocked local retrieval + a captured run_agent."""
+    mem = MemoryStore(tmp_path / "m.db")
+    sid = mem.create_session(user_id="local")
+    monkeypatch.setattr(cl, "_memory", mem)
+    monkeypatch.setenv("ENABLE_LOCAL_RAG", "true")
+    monkeypatch.setenv("CRAG_ENABLED", "true" if crag else "false")
+    monkeypatch.setattr(cl, "_gather_local_items", lambda q, mode: (list(local_items), []))
+
+    captured = {}
+
+    def fake_run_agent(task, *, brief="", use_search=True, conversation="", on_event=None):
+        captured.update(task=task, brief=brief, use_search=use_search)
+        if on_event:
+            on_event({"type": "status", "message": "agent working"})
+        return types.SimpleNamespace(answer="ok", best_code="print(1)", best_output="1",
+                                     success=True, tests_total=2, tests_passed=2)
+
+    monkeypatch.setattr("backend.agent.loop.run_agent", fake_run_agent)
+    events = list(cl.stream_chat_events(sid, CODE_Q))
+    return events, captured, mem, sid
+
+
+def _code_statuses(events):
+    return " ".join(e.get("message", "") for e in events if e["type"] == "status").lower()
+
+
+def test_code_from_paper_strong_uses_paper_as_spec(tmp_path, monkeypatch):
+    # 3 strong relevant chunks -> STRONG and not thin: the paper alone is the spec (no GitHub).
+    local = [_local(0.80), _local(0.70), _local(0.60)]
+    events, cap, mem, sid = _drive_code(monkeypatch, tmp_path, local)
+
+    assert cap["brief"], "the extracted algorithm spec should be passed as the agent brief"
+    assert "local PDF passage" in cap["brief"]
+    assert cap["use_search"] is False                # strong + enough chunks -> no GitHub supplement
+    content = mem.get_turns(sid)[-1]["content"]
+    assert "Implemented from your research library" in content and "MVDR Paper" in content
+    assert "found the algorithm in your pdfs" in _code_statuses(events)
+
+
+def test_code_from_paper_thin_supplements_with_github(tmp_path, monkeypatch):
+    # one relevant chunk -> PARTIAL (and thin): still build a spec, but supplement with GitHub.
+    local = [_local(0.80)]
+    events, cap, mem, sid = _drive_code(monkeypatch, tmp_path, local)
+
+    assert cap["brief"]                               # spec extracted from the single chunk
+    assert cap["use_search"] is True                 # thin -> GitHub references fill the gaps
+    assert "github references to fill gaps" in _code_statuses(events)
+
+
+def test_code_not_in_papers_falls_back_to_github_only(tmp_path, monkeypatch):
+    # nothing relevant -> NONE: no paper spec, GitHub-reference code path as before.
+    local = [_local(0.20, "Irrelevant")]
+    events, cap, mem, sid = _drive_code(monkeypatch, tmp_path, local)
+
+    assert cap["brief"] == ""                         # no spec
+    assert cap["use_search"] is True
+    content = mem.get_turns(sid)[-1]["content"]
+    assert "Implemented from your research library" not in content
+    assert "not in your pdfs" in _code_statuses(events)
+
+
+def test_code_crag_disabled_skips_paper_lookup(tmp_path, monkeypatch):
+    # CRAG off: the paper lookup is skipped entirely; GitHub-reference code path.
+    local = [_local(0.90)]                            # would be relevant, but never consulted
+    events, cap, mem, sid = _drive_code(monkeypatch, tmp_path, local, crag=False)
+
+    assert cap["brief"] == ""
+    assert cap["use_search"] is True
+    assert "checking your papers" not in _code_statuses(events)
