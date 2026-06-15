@@ -563,11 +563,14 @@ def stream_chat_events(
     from backend.answering.query_refine import refine_query
     q = refine_query(q)
 
-    # Code-intent queries ("give me X code", "implement X", "simulate X") go straight to the
-    # autonomous code agent — never the prose/citation pipeline (which would wrongly refuse for
-    # "sources lack code" and ship a toy demo). The agent proves correctness by running tests.
-    from backend.answering.code_intent import is_code_intent
-    if is_code_intent(q):
+    # Code-intent queries go straight to the autonomous code agent — never the prose/citation
+    # pipeline (which would wrongly refuse for "sources lack code" and ship a toy demo). The agent
+    # proves correctness by running tests. Routing is SEMANTIC (task_classifier): it recognizes any
+    # request to write/run/simulate/benchmark/model/compute in any domain or phrasing, and unions
+    # with the regex is_code_intent for high recall. It degrades to pure regex when the LLM is
+    # unavailable (or CODE_INTENT_SEMANTIC=false) and never raises.
+    from backend.answering.task_classifier import classify
+    if classify(q).code_task:
         yield from _run_code_agent(q, session_id, mem)
         return
 

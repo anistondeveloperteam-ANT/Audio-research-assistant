@@ -58,7 +58,11 @@ def _patch(monkeypatch, provider):
     monkeypatch.setattr("backend.llm.streaming_provider.get_provider", lambda *a, **k: provider)
 
 
-def setup_function(_):
+@pytest.fixture(autouse=True)
+def _enable_semantic(monkeypatch):
+    # conftest disables the semantic classifier suite-wide for deterministic routing;
+    # these unit tests exercise the LLM path, so opt back in (tests mock the provider).
+    monkeypatch.setenv("CODE_INTENT_SEMANTIC", "true")
     tc.clear_cache()
 
 

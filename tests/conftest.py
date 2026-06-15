@@ -13,3 +13,9 @@ if str(ROOT) not in sys.path:
 # Force the lexical scorer here (rerank_sources already supports that fallback). Set before any
 # backend module imports source_ranker so its module-level USE_CROSS_ENCODER reads this value.
 os.environ["EXTERNAL_RERANK_CROSS_ENCODER"] = "false"
+
+# Routing must be deterministic and offline in the suite: disable the semantic
+# code-intent classifier so routing falls back to the pure-regex is_code_intent
+# (no LLM/network). The classifier's own unit tests opt back in and mock the
+# provider, so this never hides a real failure.
+os.environ["CODE_INTENT_SEMANTIC"] = "false"

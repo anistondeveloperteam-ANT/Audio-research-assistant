@@ -839,6 +839,13 @@
   let _currentModel = "";
   function currentModelName() { return _currentModel; }
 
+  // Unambiguous code-agent event types. The server may semantically route a coding
+  // task to the agent on the /api/chat path (when the UI regex fast-path missed it);
+  // when one of these arrives we switch this message to the agent timeline UI.
+  const AGENT_ONLY_EVENTS = new Set([
+    "context", "directive", "think", "code", "run", "run_result", "reflect", "blocked", "final",
+  ]);
+
   async function send() {
     const text = $("input").value.trim();
     if (!text || state.streaming || !state.currentId) return;
@@ -863,6 +870,7 @@
     }, 100);
 
     let answer = "";
+    let agentHandle = null;   // set if the server routes this to the code agent mid-stream
     let renderScheduled = false;
     const scheduleRender = () => {
       if (renderScheduled) return;
@@ -897,27 +905,47 @@
           buf = buf.slice(nl + 1);
           if (!line) continue;
           let ev; try { ev = JSON.parse(line); } catch { continue; }
-          handleEvent(ev, h, () => answer, (v) => { answer = v; }, scheduleRender);
+          if (agentHandle || AGENT_ONLY_EVENTS.has(ev.type)) {
+            // Server routed this to the code agent: render its timeline, not prose.
+            if (!agentHandle) {
+              agentHandle = makeAgentUI(h.md);
+              h.statusText.textContent = "Agent working…";
+              h.statusEl.style.display = "none"; h.md.style.display = "";
+            }
+            if (ev.type !== "done") agentHandle(ev);   // 'done' is the prose terminator; 'final' already rendered
+          } else {
+            handleEvent(ev, h, () => answer, (v) => { answer = v; }, scheduleRender);
+          }
         }
       }
     } catch (err) {
-      if (err.name === "AbortError") {
-        answer = (answer || "").trim() + "\n\n_⏹ Stopped._";
+      const msg = err.name === "AbortError" ? "Stopped." : ("Connection error: " + (err.message || ""));
+      if (agentHandle) {
+        agentHandle({ type: "error", message: msg });
       } else {
-        toast("Connection error: " + err.message, "error");
-        if (!answer) answer = "_Something went wrong. Please try again._";
+        if (err.name === "AbortError") {
+          answer = (answer || "").trim() + "\n\n_⏹ Stopped._";
+        } else {
+          toast("Connection error: " + err.message, "error");
+          if (!answer) answer = "_Something went wrong. Please try again._";
+        }
+        h.statusEl.style.display = "none";
+        h.md.style.display = "";
+        renderMarkdown(h.md, answer);
       }
-      h.statusEl.style.display = "none";
-      h.md.style.display = "";
-      renderMarkdown(h.md, answer);
     } finally {
       state.abort = null;
       clearInterval(timer);
       const secs = (performance.now() - genStart) / 1000;
-      // Final clean render (drop the streaming caret).
-      h.md.style.display = ""; h.statusEl.style.display = "none";
-      renderMarkdown(h.md, answer || "_(no answer)_");
-      finalizeTools(h, state.currentSources, { seconds: secs, model: currentModelName() });
+      if (agentHandle) {
+        // The agent timeline already rendered into h.md; don't overwrite it with prose.
+        finalizeTools(h, [], { seconds: secs, model: "agent" });
+      } else {
+        // Final clean render (drop the streaming caret).
+        h.md.style.display = ""; h.statusEl.style.display = "none";
+        renderMarkdown(h.md, answer || "_(no answer)_");
+        finalizeTools(h, state.currentSources, { seconds: secs, model: currentModelName() });
+      }
       setStreaming(false);
       scrollToBottom();
       $("input").focus();
