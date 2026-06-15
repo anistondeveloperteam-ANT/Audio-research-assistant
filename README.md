@@ -10,10 +10,11 @@ Everything runs on your machine: a FastAPI backend, a dependency‑free HTML/JS 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-356%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-438%20passing-2ea44f)
+![Corrective RAG](https://img.shields.io/badge/retrieval-Corrective%20RAG-8A2BE2)
 [![License](https://img.shields.io/badge/license-MIT-555)](LICENSE)
 
-**[Quick start](#-quick-start-5-minutes) · [What you can ask](#-what-you-can-ask) · [How it works](docs/HOW_IT_WORKS.md) · [Fast vs Deep](#-fast-vs-deep) · [Trust](#-why-you-can-trust-the-answers) · [Features](#-features) · [Code map](#-code-map-where-everything-lives) · [Config](#-configuration)**
+**[Quick start](#-quick-start-5-minutes) · [What you can ask](#-what-you-can-ask) · [How it works](docs/HOW_IT_WORKS.md) · [Corrective RAG](#-corrective-rag-grade-then-act) · [Fast vs Deep](#-fast-vs-deep) · [Trust](#-why-you-can-trust-the-answers) · [Features](#-features) · [Code map](#-code-map-where-everything-lives) · [Config](#-configuration)**
 
 </div>
 
@@ -81,18 +82,57 @@ The accuracy bar is **identical** in both — Fast just skips the *expensive* wo
 flowchart LR
     Q([Your question]) --> M{Seen it<br/>before?}
     M -- yes --> C[Answer from cache]
-    M -- no --> S[Search everywhere<br/>web · papers · patents · GitHub · your PDFs]
-    S --> W[Write a cited answer]
+    M -- no --> L[Search your PDFs first]
+    L --> G{Grade the<br/>evidence}
+    G -- STRONG --> W[Write a cited answer]
+    G -- PARTIAL --> S[Also search the web<br/>papers · patents · GitHub]
+    G -- NONE --> S
+    S --> W
     W -- code task? --> D[Run in Docker sandbox]
     D --> V
     W --> V{Verify vs. evidence}
-    V -- gaps --> S
     V -- holds up --> A([Answer])
+    V -- gaps / STRONG fell short --> S
 ```
 
+- **It grades its own evidence before answering** (Corrective RAG). Strong match in your library → answer from it. Thin or missing → it goes to the web to fill the gap. See [Corrective RAG](#-corrective-rag-grade-then-act).
 - **Citations always point to real sources.** Every claim is tagged `[1] [2]`; a citation that points to a source number that doesn't exist is **automatically removed** — the model can't cite `[15]` when only 8 sources were found.
-- **It checks its own work.** A *draft → verify → refine* loop compares the answer against the retrieved evidence and rewrites until it holds up.
+- **It checks its own work.** A *draft → verify → refine* loop compares the answer against the retrieved evidence and rewrites until it holds up — and if a library-only answer fails, it **escalates to the web and tries again** (Self-RAG).
 - **It admits gaps.** If the sources don't cover something, it says so plainly instead of guessing.
+
+---
+
+## 🧠 Corrective RAG (grade-then-act)
+
+Most RAG tools always do the same thing: search everything, every time. This one is **adaptive** — it
+borrows the [Corrective RAG / Self‑RAG](https://arxiv.org/abs/2401.15884) idea (no LangGraph dependency):
+**retrieve your PDFs first, *grade* how well they cover the question, then act on the grade.**
+
+```mermaid
+flowchart TD
+    Q([Question]) --> R[Retrieve local PDFs]
+    R --> GR{Grade the evidence<br/>by reranker score}
+    GR -- STRONG<br/>≥2 strong chunks --> A1[Answer from your library<br/>· skip the web · cite the PDFs]
+    GR -- PARTIAL<br/>some relevant --> A2[Keep the PDFs +<br/>search the web, merge]
+    GR -- NONE<br/>nothing relevant --> A3[Drop local ·<br/>answer from the web]
+    A1 --> V{Verify}
+    V -- fails --> A2
+```
+
+| Grade | Meaning | What happens | Badge |
+|---|---|---|---|
+| **STRONG** | your PDFs clearly cover it | answer from the library, **skip external search** (faster, no web/API spend) | 🟢 *From your library* |
+| **PARTIAL** | some relevant, but thin | keep the PDFs **and** search the web/papers/GitHub, merge | 🟡 *Library + web* |
+| **NONE** | not in your PDFs | drop local, answer from the web | 🔵 *From the web* |
+
+- **Code‑from‑paper** — ask for code whose algorithm is in your PDFs and it extracts the algorithm
+  from the paper, hands it to the code agent as the spec, and returns **tested code that cites the paper**.
+- **Self‑RAG correction** — if a library‑only (STRONG) answer fails verification, it escalates to the
+  web and regenerates once, flipping the badge to *Library + web*.
+- **Measured** — the grader scores **83.3%** on a labeled set with a transparent confusion matrix and
+  external‑skip rate: `python -m backend.evaluation.measure_evidence_grader` → [docs/CRAG_GRADING.md](docs/CRAG_GRADING.md).
+- **Tunable & safe** — thresholds and toggles live in `.env` (`CRAG_STRONG_MIN`, `CRAG_PARTIAL_MIN`, …);
+  `CRAG_ENABLED=false` falls back to the classic always‑search behavior.
 
 ---
 
@@ -250,16 +290,16 @@ flowchart TD
 | **`backend/maintenance/`** | One‑shot factory reset (wipe all local data) | `factory_reset.py` |
 | **`backend/evaluation/`** | Retrieval + LLM answer‑quality scoring | `evaluate_retrieval.py` |
 | **`backend/observability/`** | Optional Langfuse request tracing (off by default) | `tracing.py` |
-| **`tests/`** | 356 offline tests — Docker / LLM / network all mocked | `test_*.py` |
+| **`tests/`** | 438 offline tests — Docker / LLM / network all mocked | `test_*.py` |
 
-> 🧭 Deeper dives: **[docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)** (interactive pipeline guide + numbers) · **[docs/MEASUREMENT.md](docs/MEASUREMENT.md)** (classifier metrics + confusion matrices) · **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** (full diagrams) · **[docs/PIPELINE.md](docs/PIPELINE.md)** (step‑by‑step flow) · **[docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)** (every folder & naming rules).
+> 🧭 Deeper dives: **[docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md)** (the full picture — pipeline · tech · measurements · roadmap, PDF‑ready) · **[docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)** (interactive pipeline guide + numbers) · **[docs/MEASUREMENT.md](docs/MEASUREMENT.md)** (classifier metrics) · **[docs/CRAG_GRADING.md](docs/CRAG_GRADING.md)** (CRAG grader metrics) · **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** (full diagrams) · **[docs/PIPELINE.md](docs/PIPELINE.md)** (step‑by‑step flow).
 
 ---
 
 ## 🛠️ Development
 
 ```bash
-.venv\Scripts\python.exe -m pytest -q          # 356 passing, fully offline/mocked
+.venv\Scripts\python.exe -m pytest -q          # 438 passing, fully offline/mocked
 .venv\Scripts\pyflakes backend webapp          # lint
 python pipeline.py --status                    # what's indexed + which device (GPU/CPU)
 python pipeline.py --corpus-report             # coverage + gaps report
