@@ -537,6 +537,15 @@
       mem.title = "Reused a saved answer" + (h._cachedKind ? " (" + h._cachedKind + " match)" : "");
       h.tools.appendChild(mem);
     }
+    // CRAG grade badge — at a glance, where the answer's evidence came from
+    // (your library / library + web / the web). Set by the streamed "grade" event.
+    if (h._grade) {
+      const g = document.createElement("span");
+      g.className = "speed-badge grade-badge grade-" + h._grade.toLowerCase();
+      g.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> ${esc(h._gradeLabel || h._grade)}`;
+      g.title = h._gradeMsg || "";
+      h.tools.appendChild(g);
+    }
     const copy = document.createElement("button");
     copy.className = "tool-btn";
     copy.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg> Copy`;
@@ -1334,6 +1343,14 @@
         }
         break;
       }
+      case "grade":
+        // CRAG decision: where the answer's evidence came from. Stored on the handle so
+        // finalizeTools can render the badge once the answer is complete.
+        h._grade = ev.grade || "";
+        h._gradeLabel = ev.label || "";
+        h._gradeMsg = ev.message || "";
+        if (ev.message) appendProcess(h, ev.message);
+        break;
       case "token":
         finishThinking(h);
         setAns(getAns() + (ev.text || ""));

@@ -27,7 +27,7 @@ def _ext(title="WebResult"):
             "url": "http://example.com/" + title}
 
 
-def _drive(monkeypatch, tmp_path, local_items, *, web=True, crag=True):
+def _drive(monkeypatch, tmp_path, local_items, *, web=True, crag=True, queries=None):
     """Run the chat stream with mocked retrieval; return (events, external_calls, sources)."""
     mem = MemoryStore(tmp_path / "m.db")
     sid = mem.create_session(user_id="local")
@@ -36,7 +36,8 @@ def _drive(monkeypatch, tmp_path, local_items, *, web=True, crag=True):
     monkeypatch.setenv("ENABLE_LOCAL_RAG", "true")
     monkeypatch.setenv("ENABLE_WEB_SEARCH", "true" if web else "false")
     monkeypatch.setenv("CRAG_ENABLED", "true" if crag else "false")
-    monkeypatch.setattr(cl, "_deep_queries", lambda q: [q])
+    monkeypatch.setattr(cl, "_deep_queries",
+                        (lambda q: list(queries)) if queries else (lambda q: [q]))
     monkeypatch.setattr(cl, "_gather_local_items", lambda q, mode: (list(local_items), []))
 
     external_calls = []
@@ -59,6 +60,45 @@ def _drive(monkeypatch, tmp_path, local_items, *, web=True, crag=True):
 
 def _statuses(events):
     return " ".join(e.get("message", "") for e in events if e["type"] == "status").lower()
+
+
+def _grade_events(events):
+    return [e for e in events if e["type"] == "grade"]
+
+
+# ----------------------------------------------------------------------
+# Structured grade event (drives the UI badge) + deep-research angle listing
+# ----------------------------------------------------------------------
+def test_grade_event_helper_maps_each_grade():
+    assert cl._grade_event(cl.STRONG)["label"] == "From your library"
+    assert cl._grade_event(cl.PARTIAL)["label"] == "Library + web"
+    assert cl._grade_event(cl.NONE)["label"] == "From the web"
+    assert cl._grade_event(cl.STRONG)["type"] == "grade"
+    # web-off changes the message, not the grade/label
+    assert "web" not in cl._grade_event(cl.PARTIAL, web_on=False)["message"].lower()
+
+
+def test_grade_event_emitted_in_flow_for_each_grade(tmp_path, monkeypatch):
+    cases = [
+        ([_local(0.80), _local(0.72)], cl.STRONG, "From your library"),
+        ([_local(0.62), _local(0.34)], cl.PARTIAL, "Library + web"),
+        ([_local(0.21), _local(0.10)], cl.NONE, "From the web"),
+    ]
+    for local, grade, label in cases:
+        events, _ext, _src = _drive(monkeypatch, tmp_path, local, web=True)
+        ge = _grade_events(events)
+        assert ge, f"a grade event should be emitted for {grade}"
+        assert ge[0]["grade"] == grade and ge[0]["label"] == label
+
+
+def test_deep_research_lists_angles(tmp_path, monkeypatch):
+    local = [_local(0.80), _local(0.72)]   # STRONG so external is skipped; we only probe statuses
+    events, _ext, _src = _drive(
+        monkeypatch, tmp_path, local, web=True,
+        queries=["main question", "angle one query", "angle two query"])
+    statuses = _statuses(events)
+    assert "exploring 3 angles" in statuses
+    assert "angle 1:" in statuses and "angle 2:" in statuses
 
 
 # ----------------------------------------------------------------------

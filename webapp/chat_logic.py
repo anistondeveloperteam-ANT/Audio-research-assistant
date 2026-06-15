@@ -467,6 +467,28 @@ def _public_sources(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return sources
 
 
+# UI badge text per CRAG grade — the frontend renders {"type":"grade",...} as a small chip on
+# the answer so the user can see, at a glance, where the answer came from.
+_GRADE_BADGE = {
+    STRONG: "From your library",
+    PARTIAL: "Library + web",
+    NONE: "From the web",
+}
+
+
+def _grade_event(grade: str, web_on: bool = True) -> Dict[str, Any]:
+    """Structured CRAG-grade event for the UI badge (distinct from the human-readable status)."""
+    if grade == STRONG:
+        msg = "Answered entirely from your PDF library."
+    elif grade == PARTIAL:
+        msg = ("Your PDFs partially covered this — combined with web results."
+               if web_on else "Your PDFs partially covered this.")
+    else:
+        msg = ("Not found in your PDFs — answered from the web."
+               if web_on else "Not found in your PDFs.")
+    return {"type": "grade", "grade": grade, "label": _GRADE_BADGE.get(grade, ""), "message": msg}
+
+
 def _traced_span(trace, span_name: str, fn, *fn_args):
     """Run `fn(*fn_args)` inside a trace span, recording the result count. The trace handle is
     passed explicitly so nesting stays correct across the worker-thread hop."""
@@ -1010,6 +1032,10 @@ def stream_chat_events(
     if len(queries) > 1:
         yield {"type": "status", "message":
                f"Planning the research — exploring {len(queries)} angles..."}
+        # List the angles so the user sees WHAT is being explored (they run concurrently, so
+        # per-angle "now searching X" progress isn't meaningful — naming them up front is).
+        for i, sub in enumerate(queries[1:], 1):
+            yield {"type": "status", "message": f"  • angle {i}: {sub[:80]}"}
 
     seen_warnings: set = set()
 
@@ -1031,6 +1057,7 @@ def stream_chat_events(
         trace.set(crag_grade=crag_grade)
         web_on = is_web_search_enabled()
         logger.info("CRAG grade=%s (%d local chunks)", crag_grade, len(local_items))
+        yield _grade_event(crag_grade, web_on)            # UI badge: where the answer comes from
 
         if crag_grade == STRONG:
             items.extend(local_items)
