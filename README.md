@@ -252,7 +252,7 @@ flowchart TD
 | **`backend/observability/`** | Optional Langfuse request tracing (off by default) | `tracing.py` |
 | **`tests/`** | 356 offline tests — Docker / LLM / network all mocked | `test_*.py` |
 
-> 🧭 Deeper dives: **[docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)** (interactive pipeline guide + numbers) · **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** (full diagrams) · **[docs/PIPELINE.md](docs/PIPELINE.md)** (step‑by‑step flow) · **[docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)** (every folder & naming rules).
+> 🧭 Deeper dives: **[docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)** (interactive pipeline guide + numbers) · **[docs/MEASUREMENT.md](docs/MEASUREMENT.md)** (classifier metrics + confusion matrices) · **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** (full diagrams) · **[docs/PIPELINE.md](docs/PIPELINE.md)** (step‑by‑step flow) · **[docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)** (every folder & naming rules).
 
 ---
 

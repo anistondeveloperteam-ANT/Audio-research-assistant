@@ -366,4 +366,4 @@ python pipeline.py --corpus-report               # retrieval coverage + gaps
 python -m backend.evaluation.evaluate_retrieval  # retrieval quality vs the eval set
 ```
 
-> 🧭 **See also:** [README](../README.md) (overview) · [docs/ARCHITECTURE.md](ARCHITECTURE.md) (full diagrams) · [docs/PIPELINE.md](PIPELINE.md) (step-by-step) · [docs/RAG_BASELINE.md](RAG_BASELINE.md) (retrieval benchmark) · [.env.example](../.env.example) (every knob).
+> 🧭 **See also:** [README](../README.md) (overview) · [docs/MEASUREMENT.md](MEASUREMENT.md) (classifier metrics + confusion matrices) · [docs/ARCHITECTURE.md](ARCHITECTURE.md) (full diagrams) · [docs/PIPELINE.md](PIPELINE.md) (step-by-step) · [docs/RAG_BASELINE.md](RAG_BASELINE.md) (retrieval benchmark) · [.env.example](../.env.example) (every knob).
