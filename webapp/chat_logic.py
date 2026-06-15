@@ -48,6 +48,13 @@ from backend.llm.streaming_provider import get_provider  # noqa: E402
 from backend.external_search import gather_external_evidence, is_web_search_enabled  # noqa: E402
 from backend.observability import tracing  # noqa: E402  (no-op unless LANGFUSE_ENABLED=true)
 from backend.answering.citations import repair_citations  # noqa: E402
+from backend.answering.evidence_grader import (  # noqa: E402
+    NONE,
+    PARTIAL,
+    STRONG,
+    crag_enabled,
+    grade_evidence,
+)
 
 
 def local_rag_enabled() -> bool:
@@ -456,6 +463,96 @@ def _public_sources(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         pub["text"] = (it.get("text") or "")[:600]
         sources.append(pub)
     return sources
+
+
+def _traced_span(trace, span_name: str, fn, *fn_args):
+    """Run `fn(*fn_args)` inside a trace span, recording the result count. The trace handle is
+    passed explicitly so nesting stays correct across the worker-thread hop."""
+    with trace.span(span_name) as sp:
+        result = fn(*fn_args)
+        try:
+            sp.set(count=len(result[0]))
+        except Exception:
+            pass
+        return result
+
+
+def _gather_pass(queries: List[str], gather_fn, arg_for, *, trace, span_name: str,
+                 timeout: Optional[float] = None) -> tuple[List[Dict[str, Any]], List[str], bool]:
+    """Run `gather_fn(query, arg_for(idx, query))` for every query concurrently and merge the
+    results uniquely in query order (deterministic, best angle first). Each gather returns
+    (items, warnings). Returns (merged_items, warnings, timed_out)."""
+    items: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    timed_out = False
+    workers = max(1, min(4, len(queries)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        ordered = [ex.submit(_traced_span, trace, span_name, gather_fn, q, arg_for(i, q))
+                   for i, q in enumerate(queries)]
+        for fut in ordered:                     # iterate in submission order -> stable merge
+            try:
+                got_items, got_warnings = fut.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                timed_out = True
+                continue
+            except Exception as exc:
+                logger.info("%s retrieval failed: %s", span_name, type(exc).__name__)
+                continue
+            _extend_unique(items, got_items)
+            warnings.extend(got_warnings)
+    return items, warnings, timed_out
+
+
+def _legacy_sweep(queries: List[str], *, local_on: bool, mode: str, trace,
+                  items: List[Dict[str, Any]], seen_warnings: set) -> Iterator[Dict[str, Any]]:
+    """The original concurrent local+external sweep, used when CRAG is off (or local RAG is off).
+    Local and external run together per query so the stage takes max(local, external), not their
+    sum. Appends merged evidence to `items` in place and yields status/warning events."""
+    for idx, query in enumerate(queries):
+        tag = "your question" if idx == 0 else f"angle {idx}: {query[:64]}"
+        t_stage = time.time()
+        futures: Dict[str, concurrent.futures.Future] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            if local_on:
+                yield {"type": "status", "message": f"Searching your papers — {tag}..."}
+                futures["local"] = ex.submit(_traced_span, trace, "local_rag",
+                                             _gather_local_items, query, mode)
+            if is_web_search_enabled():
+                yield {"type": "status", "message":
+                       f"Searching the web, research papers, patents & GitHub — {tag}..."}
+                k = _external_top_k() if idx == 0 else _deep_subquery_top_k()
+                futures["external"] = ex.submit(_traced_span, trace, "external_search",
+                                                _gather_external_items, query, k)
+            results: Dict[str, Any] = {}
+            for name, fut in futures.items():
+                try:
+                    # Hard backstop on external search so a stalled channel can't block the
+                    # chat — local retrieval still returns a partial answer. Local retrieval has
+                    # no timeout: it must finish for there to be a local answer.
+                    timeout = None
+                    if name == "external":
+                        timeout = float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0
+                    results[name] = fut.result(timeout=timeout)
+                except concurrent.futures.TimeoutError:
+                    logger.info("external search exceeded its timeout; partial local answer")
+                    yield {"type": "warning",
+                           "message": "External search timed out — answering from local sources."}
+                    results[name] = ([], [])
+                except Exception as exc:
+                    logger.info("%s retrieval failed: %s", name, type(exc).__name__)
+                    results[name] = ([], [])
+        # Merge deterministically (local first) so ordering/citations stay stable.
+        for name in ("local", "external"):
+            if name not in results:
+                continue
+            got_items, got_warnings = results[name]
+            _extend_unique(items, got_items)
+            for w in got_warnings:
+                if w not in seen_warnings:
+                    seen_warnings.add(w)
+                    yield {"type": "warning", "message": w}
+        logger.info("retrieval stage (%s): %d sources in %.1fs",
+                    tag, len(items), time.time() - t_stage)
 
 
 def _deep_queries(question: str) -> List[str]:
@@ -877,63 +974,62 @@ def stream_chat_events(
         yield {"type": "status", "message":
                f"Planning the research — exploring {len(queries)} angles..."}
 
-    # Records its own span (count metadata) from inside the worker thread; the trace
-    # handle is captured explicitly so nesting is correct despite the thread hop.
-    def _traced(span_name, fn, *fn_args):
-        with trace.span(span_name) as sp:
-            result = fn(*fn_args)
-            try:
-                sp.set(count=len(result[0]))
-            except Exception:
-                pass
-            return result
-
     seen_warnings: set = set()
-    for idx, query in enumerate(queries):
-        tag = "your question" if idx == 0 else f"angle {idx}: {query[:64]}"
-        # Local RAG and external search are independent and both blocking — run them
-        # concurrently so the stage takes max(local, external), not their sum.
-        t_stage = time.time()
-        futures: Dict[str, concurrent.futures.Future] = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-            if local_on:
-                yield {"type": "status", "message": f"Searching your papers — {tag}..."}
-                futures["local"] = ex.submit(_traced, "local_rag", _gather_local_items, query, mode)
-            if is_web_search_enabled():
-                yield {"type": "status", "message":
-                       f"Searching the web, research papers, patents & GitHub — {tag}..."}
-                k = _external_top_k() if idx == 0 else _deep_subquery_top_k()
-                futures["external"] = ex.submit(_traced, "external_search", _gather_external_items, query, k)
-            results: Dict[str, Any] = {}
-            for name, fut in futures.items():
-                try:
-                    # Hard backstop on external search so a stalled channel can't block the
-                    # chat — local retrieval still returns a partial answer. (The orchestrator
-                    # already caps channels; this guards the gather+rerank tail too.) Local
-                    # retrieval has no timeout: it must finish for there to be a local answer.
-                    timeout = None
-                    if name == "external":
-                        timeout = float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0
-                    results[name] = fut.result(timeout=timeout)
-                except concurrent.futures.TimeoutError:
-                    logger.info("external search exceeded its timeout; partial local answer")
-                    yield {"type": "warning", "message": "External search timed out — answering from local sources."}
-                    results[name] = ([], [])
-                except Exception as exc:
-                    logger.info("%s retrieval failed: %s", name, type(exc).__name__)
-                    results[name] = ([], [])
-        # Merge deterministically (local first) so ordering/citations stay stable.
-        for name in ("local", "external"):
-            if name not in results:
-                continue
-            got_items, got_warnings = results[name]
-            _extend_unique(items, got_items)
-            for w in got_warnings:
+
+    if crag_enabled() and local_on:
+        # --- Corrective RAG: retrieve LOCAL papers first, GRADE the evidence, then ACT on the
+        #     grade. STRONG answers from the PDFs alone (no external spend); PARTIAL keeps the PDF
+        #     evidence and supplements with external search; NONE drops local and goes fully
+        #     external. Grading reuses the reranker scores already on each chunk (no extra LLM). ---
+        yield {"type": "status", "message": "Searching your papers..."}
+        local_items, local_warnings, _ = _gather_pass(
+            queries, _gather_local_items, lambda i, q: mode,
+            trace=trace, span_name="local_rag")
+        for w in local_warnings:
+            if w not in seen_warnings:
+                seen_warnings.add(w)
+                yield {"type": "warning", "message": w}
+
+        crag_grade = grade_evidence(local_items)
+        trace.set(crag_grade=crag_grade)
+        web_on = is_web_search_enabled()
+        logger.info("CRAG grade=%s (%d local chunks)", crag_grade, len(local_items))
+
+        if crag_grade == STRONG:
+            items.extend(local_items)
+            yield {"type": "status", "message":
+                   "Found a strong match in your PDFs — answering from your library."}
+        elif crag_grade == PARTIAL:
+            items.extend(local_items)
+            yield {"type": "status", "message":
+                   ("Your PDFs partially covered this, so I'm also searching the web, "
+                    "research papers, patents & GitHub to fill the gaps...") if web_on else
+                   "Your PDFs partially covered this (web search is off — answering from your library)."}
+        else:  # NONE — drop the local evidence and go fully external
+            yield {"type": "status", "message":
+                   ("Not in your PDFs — searching the web, research papers, patents & GitHub..."
+                    if web_on else
+                    "I couldn't find this in your PDFs, and web search is off.")}
+
+        if crag_grade in (PARTIAL, NONE) and web_on:
+            ext_items, ext_warnings, timed_out = _gather_pass(
+                queries, _gather_external_items,
+                lambda i, q: (_external_top_k() if i == 0 else _deep_subquery_top_k()),
+                trace=trace, span_name="external_search",
+                timeout=float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0)
+            if timed_out:
+                yield {"type": "warning",
+                       "message": "External search timed out — answering from available sources."}
+            _extend_unique(items, ext_items)
+            for w in ext_warnings:
                 if w not in seen_warnings:
                     seen_warnings.add(w)
                     yield {"type": "warning", "message": w}
-        logger.info("retrieval stage (%s): %d sources in %.1fs",
-                    tag, len(items), time.time() - t_stage)
+    else:
+        # CRAG off (or local RAG off): original concurrent sweep — local and external run
+        # together per query so the stage takes max(local, external), not their sum.
+        yield from _legacy_sweep(queries, local_on=local_on, mode=mode, trace=trace,
+                                 items=items, seen_warnings=seen_warnings)
 
     # --- Nothing available at all -> explain instead of guessing ---
     if not items:
