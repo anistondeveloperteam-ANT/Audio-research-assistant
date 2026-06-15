@@ -71,6 +71,13 @@ def parallel_n() -> int:
         return 4
 
 
+def reference_tests_enabled() -> bool:
+    """Live read (AGENT_REFERENCE_TESTS, default on): derive each test's EXPECTED value by RUNNING
+    a reference oracle in the sandbox, instead of letting the test-LLM guess literal outputs. Off
+    falls back to property/legacy tests."""
+    return os.getenv("AGENT_REFERENCE_TESTS", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
 @dataclass
 class Attempt:
     iteration: int
@@ -149,21 +156,42 @@ _REQ_SYSTEM = (
     "given. Output ONLY the bullet list."
 )
 
+_REFERENCE_SYSTEM = (
+    "You write a CLEAR, CORRECT REFERENCE implementation that serves as the trusted ORACLE for "
+    "testing: its EXECUTED outputs are the expected values a separate candidate solution is "
+    "compared against. Correctness matters far more than speed or elegance — use the simplest "
+    "approach you are SURE is right. Implement the SAME function name(s) and signature(s) the task "
+    "/ requirements specify, so the candidate can be called identically. You MAY use numpy / scipy "
+    "/ stdlib. Define ONLY the functions — no __main__, no prints, no tests. At runtime there is no "
+    "network, no file access, no input(). Output ONLY the Python code — no explanation, no markdown."
+)
+
 _TESTS_SYSTEM = (
     "You write rigorous but ROBUST unit tests as plain Python (no pytest, no unittest). Given a "
     "task and its requirements, write 5-7 focused test functions named test_<name>() that:\n"
-    "- call the SOLUTION's functions directly (they are defined in the same file);\n"
+    "- call the SOLUTION's functions directly (they are defined in the test scope);\n"
     "- use SELF-CONSISTENT inputs: the SAME calling convention and array shapes in EVERY test, "
-    "matching ONE function signature — do NOT require the function to accept several different "
-    "input shapes;\n"
+    "matching ONE function signature — do NOT require the function to accept several input shapes;\n"
     "- compare floats with tolerances (math.isclose, or numpy.allclose with explicit rtol/atol), "
     "NEVER exact ==; build small CONCRETE inputs (use numpy if it helps);\n"
-    "- prefer PROPERTIES that hold for ANY correct implementation over hard-coded magic numbers "
-    "(e.g. for an MVDR beamformer: the distortionless constraint w^H d ~= 1, and output noise "
-    "power <= input noise power; for Black-Scholes: put-call parity C - P ~= S - K*exp(-rT), "
-    "monotonicity in volatility, and ONE textbook reference value);\n"
+    "- obtain every EXPECTED value by COMPUTING it — from the reference oracle when one is provided "
+    "(see below), otherwise as a PROPERTY that holds for any correct implementation. NEVER "
+    "hand-write a literal expected number/output you imagined; a guessed expected value is the #1 "
+    "cause of false failures;\n"
     "- each test must `assert` and raise AssertionError on failure.\n"
-    "Do NOT define the solution or any test runner. Output ONLY the Python test functions."
+    "Do NOT define the solution, the reference, or any test runner. Output ONLY the test functions."
+)
+
+# Appended to the test/held-out USER prompt when a reference oracle is available. Tests derive
+# `expected` by calling `ref.*` at runtime — so expected is EXECUTED, never guessed, and the
+# candidate and the expected value share identical inputs/libraries by construction.
+_ORACLE_CLAUSE = (
+    "\n\nA correct REFERENCE ORACLE is available in the test scope as `ref`, exposing the SAME "
+    "functions as the solution. To get an EXPECTED value, CALL THE REFERENCE on the SAME inputs you "
+    "pass the solution — e.g. `expected = ref.fn(x); assert math.isclose(fn(x), expected, "
+    "rel_tol=1e-6, abs_tol=1e-9)` (use numpy.allclose for arrays, == for exact ints/strings/"
+    "containers). NEVER write an expected literal you imagined — the expected value MUST come from "
+    "`ref`. Do NOT call `ref` inside the solution; only the tests use it."
 )
 
 _HIDDEN_SYSTEM = (
@@ -171,10 +199,11 @@ _HIDDEN_SYSTEM = (
     "requirements, write 4-6 functions named test_hidden_<name>() that exercise the SAME required "
     "behavior as ordinary tests but on DIFFERENT, FRESH inputs — generate them with random / "
     "numpy.random (do NOT call seed yourself; the harness seeds globally) so each run uses new "
-    "data, and do NOT reuse any example values. Compare with tolerances (math.isclose / "
-    "numpy.allclose), call the SOLUTION's functions directly, and `assert`. Their purpose is to "
-    "catch code that special-cased or hardcoded the visible examples. Do NOT define the solution "
-    "or a runner. Output ONLY the Python test functions."
+    "data, and do NOT reuse any example values. Get every EXPECTED value by COMPUTING it (the "
+    "reference oracle when provided, else a property) — NEVER a guessed literal. Compare with "
+    "tolerances (math.isclose / numpy.allclose), call the SOLUTION's functions directly, and "
+    "`assert`. Their purpose is to catch code that special-cased or hardcoded the visible examples. "
+    "Do NOT define the solution or a runner. Output ONLY the Python test functions."
 )
 
 _INVARIANTS_SYSTEM = (
@@ -283,11 +312,27 @@ def _restate_requirements(provider, task: str, conversation: str, reference: str
     return out or f"- Implement the task: {task}"
 
 
-def _generate_tests(provider, task: str, requirements: str, task_type: str = "") -> str:
+def _generate_reference(provider, task: str, requirements: str, task_type: str = "") -> str:
+    """(oracle) A clear, correct reference implementation whose EXECUTED outputs become the expected
+    values the tests assert against — so 'expected' is computed, never guessed. Returns '' on any
+    failure, and the caller falls back to property/legacy tests."""
+    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\n"
+            "Write the reference implementation now — the SAME functions the task requires.")
+    try:
+        return _extract_code(_complete(provider, _REFERENCE_SYSTEM, user, GEN_MAX_TOKENS))
+    except Exception:
+        return ""
+
+
+def _generate_tests(provider, task: str, requirements: str, task_type: str = "",
+                    use_reference: bool = False) -> str:
     """(b) Generate 5-8 concrete test_* functions that target THIS task (derived, not hardcoded),
-    shaped by the task_type (exact outputs vs invariants)."""
-    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}" + _task_type_hint(task_type) +
-            "\n\nWrite the test_* functions now (they call the solution's functions directly).")
+    shaped by the task_type. When `use_reference`, expected values are computed by calling the
+    reference oracle `ref.*` at runtime instead of being written as literals."""
+    user = f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}" + _task_type_hint(task_type)
+    if use_reference:
+        user += _ORACLE_CLAUSE
+    user += "\n\nWrite the test_* functions now (they call the solution's functions directly)."
     return _extract_code(_complete(provider, _TESTS_SYSTEM, user, GEN_MAX_TOKENS))
 
 
@@ -320,11 +365,14 @@ def _generate_solution(provider, task: str, requirements: str, tests: str, refer
 
 
 def _generate_hidden_tests(provider, task: str, requirements: str, strict: bool = False,
-                           task_type: str = "") -> str:
-    """(C1) Held-out tests on DIFFERENT randomized inputs — never shown to the solver."""
+                           task_type: str = "", use_reference: bool = False) -> str:
+    """(C1) Held-out tests on DIFFERENT randomized inputs — never shown to the solver. With a
+    reference oracle, expected values for the fresh inputs are computed by `ref.*` (not guessed)."""
     extra = " Generate MORE tests than usual and use WIDER input ranges." if strict else ""
-    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}" + _task_type_hint(task_type) +
-            "\n\nWrite the held-out test_hidden_* functions now (fresh random inputs)." + extra)
+    user = f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}" + _task_type_hint(task_type)
+    if use_reference:
+        user += _ORACLE_CLAUSE
+    user += "\n\nWrite the held-out test_hidden_* functions now (fresh random inputs)." + extra
     return _extract_code(_complete(provider, _HIDDEN_SYSTEM, user, GEN_MAX_TOKENS))
 
 
@@ -343,10 +391,43 @@ def _count_tests(tests_code: str) -> int:
     return len(re.findall(r"^\s*def\s+test_\w+\s*\(", tests_code or "", re.M))
 
 
-def _run_against_tests(solution_code: str, tests_code: str, footer: str = _TEST_FOOTER):
-    """Combine solution + tests + a runner, execute in the sandbox, and return
-    (RunResult, passed, total). A crash before the runner -> 0 passed (stderr feeds the rewrite)."""
-    script = solution_code + "\n\n# === generated tests ===\n" + tests_code + footer
+def _build_script(solution_code: str, tests_code: str, footer: str = _TEST_FOOTER,
+                  reference_src: str = "") -> str:
+    """Assemble the sandbox script. The candidate runs in its OWN module (`_sol`) so its globals do
+    NOT contain the oracle — a candidate that tries `return ref.fn(x)` to cheat hits NameError. The
+    reference oracle runs in module `ref`. The candidate's public names are exposed to the test
+    scope, so tests call `fn(...)` (candidate) and `ref.fn(...)` (expected, computed at runtime)."""
+    parts = [
+        "import types as _types",
+        "# === candidate solution (isolated; cannot see the oracle) ===",
+        "_SOL_SRC = " + repr(solution_code),
+        "_sol = _types.ModuleType('_sol')",
+        "exec(compile(_SOL_SRC, '<solution>', 'exec'), _sol.__dict__)",
+    ]
+    if (reference_src or "").strip():
+        parts += [
+            "# === reference oracle (isolated; computes EXPECTED values) ===",
+            "_REF_SRC = " + repr(reference_src),
+            "ref = _types.ModuleType('ref')",
+            "exec(compile(_REF_SRC, '<reference>', 'exec'), ref.__dict__)",
+        ]
+    parts += [
+        "# expose the candidate's public functions/classes to the tests by name",
+        "for _n in [x for x in vars(_sol) if not x.startswith('_')]:",
+        "    globals()[_n] = getattr(_sol, _n)",
+        "# === generated tests ===",
+        tests_code,
+        footer,
+    ]
+    return "\n".join(parts)
+
+
+def _run_against_tests(solution_code: str, tests_code: str, footer: str = _TEST_FOOTER,
+                       reference_src: str = ""):
+    """Combine candidate + (optional) reference oracle + tests + a runner, execute in the sandbox,
+    and return (RunResult, passed, total). Expected values come from the oracle at runtime — never
+    guessed. A crash before the runner -> 0 passed (stderr feeds the rewrite)."""
+    script = _build_script(solution_code, tests_code, footer, reference_src)
     result = run_python_auto(script)
     m = re.search(r"TESTS_PASSED\s+(\d+)\s*/\s*(\d+)", result.stdout or "")
     passed = int(m.group(1)) if m else 0
@@ -354,16 +435,17 @@ def _run_against_tests(solution_code: str, tests_code: str, footer: str = _TEST_
     return result, passed, total
 
 
-def _verify_heldout(solution_code: str, heldout_code: str, seeds: int):
-    """(C4) Run solution + held-out (hidden + invariant) tests once per random seed. Returns
-    (ok_all_seeds, passed, total, last_result); ok only if EVERY seed fully passes. No held-out
-    available -> (True, 0, 0, None) so we degrade gracefully to visible-only acceptance."""
+def _verify_heldout(solution_code: str, heldout_code: str, seeds: int, reference_src: str = ""):
+    """(C4) Run solution + held-out (hidden + invariant) tests once per random seed, judging the
+    fresh inputs against the SAME reference oracle. Returns (ok_all_seeds, passed, total,
+    last_result); ok only if EVERY seed fully passes. No held-out -> (True, 0, 0, None)."""
     total0 = _count_tests(heldout_code)
     if not total0:
         return True, 0, 0, None
     last = None
     for s in range(max(1, seeds)):
-        result, passed, total = _run_against_tests(solution_code, heldout_code, _seeded_footer(1000 + s))
+        result, passed, total = _run_against_tests(
+            solution_code, heldout_code, _seeded_footer(1000 + s), reference_src=reference_src)
         last = result
         if total == 0 or passed < total:
             return False, passed, (total or total0), result
@@ -550,10 +632,25 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     task_type = infer_task_type(task)
     emit({"type": "task_type", "task_type": task_type})
 
-    # (b) Generate concrete correctness tests for THIS task — the acceptance criteria.
+    # (a2) Reference oracle: a clear, correct implementation we RUN to compute each test's expected
+    # value — so tests never depend on a number the test-LLM imagined. Skipped for simulation (exact
+    # match is meaningless there -> property tests). Falls back to property/legacy tests if it fails.
+    oracle = ""
+    use_reference = reference_tests_enabled() and task_type != "simulation"
+    if use_reference:
+        emit({"type": "status", "message": "Building a reference oracle for expected outputs…"})
+        with agent_trace.span("reference") as _sp:
+            oracle = _generate_reference(provider, task, requirements, task_type)
+            _sp.set(chars=len(oracle))
+        use_reference = bool((oracle or "").strip())   # graceful fallback if generation failed
+        emit({"type": "reference", "chars": len(oracle or ""), "used": use_reference})
+
+    # (b) Generate concrete correctness tests for THIS task — the acceptance criteria. With the
+    # oracle available, the tests compute expected via ref.* at runtime instead of guessing.
     emit({"type": "status", "message": "Writing correctness tests…"})
     with agent_trace.span("tests") as _sp:
-        tests = _generate_tests(provider, task, requirements, task_type=task_type)
+        tests = _generate_tests(provider, task, requirements, task_type=task_type,
+                                use_reference=use_reference)
         _sp.set(count=_count_tests(tests))
     test_n = _count_tests(tests)
     emit({"type": "tests", "iteration": 0, "code": tests, "count": test_n})
@@ -580,7 +677,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
             if hstate["code"] is not None and hstate["strict"] == strict:
                 return hstate["code"]
             emit({"type": "status", "message": "Building held-out hidden tests + invariants…"})
-            hidden = _generate_hidden_tests(hp, task, requirements, strict=strict, task_type=task_type)
+            hidden = _generate_hidden_tests(hp, task, requirements, strict=strict,
+                                            task_type=task_type, use_reference=use_reference)
             invariants = _generate_invariants(hp, task, requirements, strict=strict, task_type=task_type)
             combined = ((hidden or "") + "\n\n" + (invariants or "")).strip()
             hstate["code"], hstate["strict"] = combined, strict
@@ -642,7 +740,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                 cheat = scan_for_cheating(code, tests, task) if anticheat_enabled() else None
                 emit({"type": "run", "iteration": i, "candidate": c + 1,
                       "message": "Running it against the tests in the Docker sandbox…"})
-                result, passed, total = _run_against_tests(code, tests)
+                result, passed, total = _run_against_tests(code, tests, reference_src=oracle)
 
             relevant = _is_relevant_code(task, code, tests)        # (C6) algorithm-match gate
             verdict = _verdict_from_tests(passed, total, relevant, result)
@@ -666,7 +764,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                 try:
                     heldout = _ensure_heldout(gen_provider, strict)
                     if heldout:
-                        ok, hp_pass, hp_tot, hres = _verify_heldout(code, heldout, verify_seeds())
+                        ok, hp_pass, hp_tot, hres = _verify_heldout(
+                            code, heldout, verify_seeds(), reference_src=oracle)
                         verdict["hidden_passed"], verdict["hidden_total"] = hp_pass, hp_tot
                         if ok:
                             verdict["verified"] = True
