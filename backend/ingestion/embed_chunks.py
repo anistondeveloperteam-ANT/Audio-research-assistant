@@ -22,6 +22,7 @@ from tqdm import tqdm
 
 from backend.common.embeddings import (
     embed_documents, provider_label, provider, format_retrieval_document,
+    EmbeddingQuotaError,
 )
 
 load_dotenv()
@@ -71,39 +72,49 @@ def main():
             return ""
         return value.read() if hasattr(value, "read") else str(value)
 
-    for i in tqdm(range(0, len(rows), BATCH_SIZE), desc="Embedding chunks"):
-        batch = rows[i:i + BATCH_SIZE]
-        ids = [row[0] for row in batch]
+    try:
+        for i in tqdm(range(0, len(rows), BATCH_SIZE), desc="Embedding chunks"):
+            batch = rows[i:i + BATCH_SIZE]
+            ids = [row[0] for row in batch]
 
-        texts = []
-        for row in batch:
-            text = _read(row[1])
-            context = _read(row[2]).strip()
-            # Contextual Retrieval: prepend the situating sentence to what we EMBED (better recall).
-            # The stored chunk_text shown to users is unchanged.
-            body = (context + "\n" + text) if context else text
-            if enrich:
-                section = _read(row[3])
-                concepts_raw = _read(row[4])
-                try:
-                    concepts = json.loads(concepts_raw) if concepts_raw else None
-                except Exception:
-                    concepts = concepts_raw or None
-                title = row[5]
-                texts.append(format_retrieval_document(
-                    title=title, section=section, concepts=concepts, text=body))
-            else:
-                texts.append(body)
+            texts = []
+            for row in batch:
+                text = _read(row[1])
+                context = _read(row[2]).strip()
+                # Contextual Retrieval: prepend the situating sentence to what we EMBED (better recall).
+                # The stored chunk_text shown to users is unchanged.
+                body = (context + "\n" + text) if context else text
+                if enrich:
+                    section = _read(row[3])
+                    concepts_raw = _read(row[4])
+                    try:
+                        concepts = json.loads(concepts_raw) if concepts_raw else None
+                    except Exception:
+                        concepts = concepts_raw or None
+                    title = row[5]
+                    texts.append(format_retrieval_document(
+                        title=title, section=section, concepts=concepts, text=body))
+                else:
+                    texts.append(body)
 
-        embeddings = embed_documents(texts)
+            embeddings = embed_documents(texts)
 
-        for chunk_id, emb in zip(ids, embeddings):
-            emb_json = json.dumps([float(x) for x in emb])
-            cur.execute(
-                "UPDATE chunks SET embedding = :embedding WHERE id = :chunk_id",
-                {"embedding": emb_json, "chunk_id": chunk_id},
-            )
+            for chunk_id, emb in zip(ids, embeddings):
+                emb_json = json.dumps([float(x) for x in emb])
+                cur.execute(
+                    "UPDATE chunks SET embedding = :embedding WHERE id = :chunk_id",
+                    {"embedding": emb_json, "chunk_id": chunk_id},
+                )
+            conn.commit()   # commit per DB-batch so a mid-run quota failure keeps progress
+    except EmbeddingQuotaError as exc:
         conn.commit()
+        cur.execute("SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL")
+        done = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        print(f"\n✗ Embedding stopped — {exc}")
+        print(f"  Progress saved: {done} chunk(s) embedded so far; re-run to resume the rest.")
+        raise SystemExit(1)
 
     elapsed = time.time() - start
 

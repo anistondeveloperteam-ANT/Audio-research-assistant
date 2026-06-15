@@ -15,12 +15,16 @@ from __future__ import annotations
 import math
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import List
 
-# The Gemini embedding API returns ONE embedding per request, so we send one
-# text per call and run the calls concurrently for speed.
-EMBED_CONCURRENCY = int(os.getenv("EMBED_CONCURRENCY", "6"))
+# Gemini's embed_content accepts a LIST of contents and returns one embedding each, so we send a
+# whole BATCH per request — far fewer round-trips (faster) and far less rate-limit pressure than
+# one request per chunk (which is what tripped the free-tier 429). Tune with EMBED_BATCH_SIZE.
+EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "100"))
+
+
+class EmbeddingQuotaError(RuntimeError):
+    """The embedding provider's quota / rate limit is exhausted (HTTP 429)."""
 
 
 def provider() -> str:
@@ -81,6 +85,44 @@ def _google_client():
     return _genai_client
 
 
+_TRANSIENT = ("rate", "quota", "429", "resource_exhausted", "deadline",
+              "unavailable", "503", "500", "internal")
+
+
+def _is_transient(msg: str) -> bool:
+    m = (msg or "").lower()
+    return any(k in m for k in _TRANSIENT)
+
+
+def _is_quota(msg: str) -> bool:
+    m = (msg or "").lower()
+    return "quota" in m or "resource_exhausted" in m or "429" in m
+
+
+def _embed_call(client, model, cfg, contents) -> List[List[float]]:
+    """One embed_content request — `contents` may be a single string OR a batch list. Returns one
+    L2-normalized vector per input, in order. Exponential backoff on transient errors; a clear
+    EmbeddingQuotaError when the quota is exhausted (instead of a raw 429 traceback)."""
+    delay = 1.0
+    for attempt in range(6):
+        try:
+            resp = client.models.embed_content(model=model, contents=contents, config=cfg)
+            return [_l2(list(e.values)) for e in resp.embeddings]
+        except Exception as exc:                       # noqa: BLE001 - classify by message
+            msg = str(exc)
+            if _is_transient(msg) and attempt < 5:
+                time.sleep(min(delay, 30))
+                delay *= 2
+                continue
+            if _is_quota(msg):
+                raise EmbeddingQuotaError(
+                    "Gemini embedding quota exhausted (HTTP 429). Either wait for the quota to "
+                    "reset, or set EMBEDDING_PROVIDER=local in .env to embed on your GPU/CPU with "
+                    "no quota, then re-run `python pipeline.py` to (re)build the index."
+                ) from exc
+            raise
+
+
 def _google_embed(texts: List[str], task_type: str) -> List[List[float]]:
     from google.genai import types
     client = _google_client()
@@ -88,30 +130,20 @@ def _google_embed(texts: List[str], task_type: str) -> List[List[float]]:
     dim = int(os.getenv("EMBEDDING_DIM", "768"))
     cfg = types.EmbedContentConfig(task_type=task_type, output_dimensionality=dim)
 
-    def one(text: str) -> List[float]:
-        """Embed a single text (the API returns exactly one embedding per call)."""
-        for attempt in range(6):
-            try:
-                resp = client.models.embed_content(model=model, contents=text, config=cfg)
-                return _l2(list(resp.embeddings[0].values))
-            except Exception as exc:  # rate-limit / transient -> exponential backoff
-                msg = str(exc).lower()
-                transient = any(k in msg for k in (
-                    "rate", "quota", "429", "resource_exhausted",
-                    "deadline", "unavailable", "503", "500", "internal",
-                ))
-                if transient and attempt < 5:
-                    time.sleep(min(2 ** attempt, 30))
-                    continue
-                raise
-
-    if len(texts) <= 1:
-        return [one(t) for t in texts]
-
-    # Fire requests concurrently; ThreadPoolExecutor.map preserves order.
-    workers = max(1, min(EMBED_CONCURRENCY, len(texts)))
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        return list(ex.map(one, texts))
+    bs = max(1, EMBED_BATCH_SIZE)
+    out: List[List[float]] = []
+    for i in range(0, len(texts), bs):
+        batch = texts[i:i + bs]
+        try:
+            vecs = _embed_call(client, model, cfg, batch)       # ONE request for the whole batch
+        except EmbeddingQuotaError:
+            raise
+        except Exception:                                       # noqa: BLE001 - batch rejected? per-text
+            vecs = [_embed_call(client, model, cfg, t)[0] for t in batch]
+        if len(vecs) != len(batch):                            # unexpected partial -> per-text
+            vecs = [_embed_call(client, model, cfg, t)[0] for t in batch]
+        out.extend(vecs)
+    return out
 
 
 # ----------------------------------------------------------------------
