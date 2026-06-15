@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -60,6 +61,16 @@ def verify_seeds() -> int:
         return 3
 
 
+def parallel_n() -> int:
+    """Live read (AGENT_PARALLEL_N, default 4, clamped 1-8): how many candidate solutions to
+    generate + run CONCURRENTLY each round (best-of-N). 1 = serial. The sandbox semaphore
+    (AGENT_MAX_CONCURRENT_SANDBOXES) bounds how many containers actually run at once."""
+    try:
+        return max(1, min(8, int(os.getenv("AGENT_PARALLEL_N", "4"))))
+    except (TypeError, ValueError):
+        return 4
+
+
 @dataclass
 class Attempt:
     iteration: int
@@ -87,10 +98,10 @@ class AgentResult:
 # ----------------------------------------------------------------------
 # LLM helpers
 # ----------------------------------------------------------------------
-def _complete(provider, system: str, user: str, max_tokens: int) -> str:
+def _complete(provider, system: str, user: str, max_tokens: int, temperature: float = 0.2) -> str:
     return "".join(provider.stream_chat(
         [{"role": "user", "content": user}], system=system,
-        max_tokens=max_tokens, temperature=0.2,
+        max_tokens=max_tokens, temperature=temperature,
     )).strip()
 
 
@@ -246,9 +257,12 @@ def _generate_tests(provider, task: str, requirements: str) -> str:
 
 
 def _generate_solution(provider, task: str, requirements: str, tests: str, reference: str,
-                       last_code: str, feedback: str, memory_summary: str = "") -> str:
+                       last_code: str, feedback: str, memory_summary: str = "",
+                       temperature: float = 0.2, variant: str = "") -> str:
     """(c) Write modular solution code so the provided tests pass. The tests are appended by the
-    runner, not by the model. `memory_summary` carries the cross-attempt 'avoid these' notes."""
+    runner, not by the model. `memory_summary` carries the cross-attempt 'avoid these' notes.
+    `temperature`/`variant` diversify parallel best-of-N candidates WITHOUT implying failure —
+    only `feedback` (real test diagnostics from a prior round) signals "fix what failed"."""
     parts = [f"TASK:\n{task}", f"\nREQUIREMENTS:\n{requirements}",
              "\nYour solution MUST define the functions these tests call so they pass. Solve the "
              "GENERAL problem — do NOT hardcode the expected outputs, special-case these specific "
@@ -263,8 +277,11 @@ def _generate_solution(provider, task: str, requirements: str, tests: str, refer
     if feedback:
         parts.append("\nThe tests FAILED last time. Read these PASS/FAIL lines and tracebacks and "
                      f"fix the SPECIFIC failures (do not rewrite from scratch):\n{feedback[:3000]}")
+    if variant:
+        parts.append("\n" + variant)
     parts.append("\nWrite the solution code now (functions only).")
-    return _extract_code(_complete(provider, _GEN_SYSTEM, "\n".join(parts), GEN_MAX_TOKENS))
+    return _extract_code(_complete(provider, _GEN_SYSTEM, "\n".join(parts), GEN_MAX_TOKENS,
+                                   temperature=temperature))
 
 
 def _generate_hidden_tests(provider, task: str, requirements: str, strict: bool = False) -> str:
@@ -501,21 +518,24 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     cheat_count = 0
     mem = _AttemptMemory()
     hstate: Dict[str, Any] = {"code": None, "strict": False}   # lazily-built held-out suite
+    _heldout_lock = threading.Lock()                            # parallel candidates share it
 
     def _ensure_heldout(hp, strict: bool) -> str:
         """(C1/C3) Build (once, cached) the held-out suite = hidden tests + invariants. Rebuilt
-        stricter if escalation flips `strict`. Never shown to the solver."""
+        stricter if escalation flips `strict`. Never shown to the solver. Thread-safe: parallel
+        candidates that all pass the visible tests build it exactly once."""
         if not hidden_tests_enabled():
             return ""
-        if hstate["code"] is not None and hstate["strict"] == strict:
-            return hstate["code"]
-        emit({"type": "status", "message": "Building held-out hidden tests + invariants…"})
-        hidden = _generate_hidden_tests(hp, task, requirements, strict=strict)
-        invariants = _generate_invariants(hp, task, requirements, strict=strict)
-        combined = ((hidden or "") + "\n\n" + (invariants or "")).strip()
-        hstate["code"], hstate["strict"] = combined, strict
-        emit({"type": "heldout", "count": _count_tests(combined), "strict": strict})
-        return combined
+        with _heldout_lock:
+            if hstate["code"] is not None and hstate["strict"] == strict:
+                return hstate["code"]
+            emit({"type": "status", "message": "Building held-out hidden tests + invariants…"})
+            hidden = _generate_hidden_tests(hp, task, requirements, strict=strict)
+            invariants = _generate_invariants(hp, task, requirements, strict=strict)
+            combined = ((hidden or "") + "\n\n" + (invariants or "")).strip()
+            hstate["code"], hstate["strict"] = combined, strict
+            emit({"type": "heldout", "count": _count_tests(combined), "strict": strict})
+            return combined
 
     for i in range(1, max_iters + 1):
         directive = _read_directive(directive_path)
@@ -538,26 +558,30 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         emit({"type": "think", "iteration": i,
               "message": f"Writing code to pass the tests (attempt {i}/{max_iters})…"})
 
-        # (d) Best-of-2: up to two candidates per round; keep the best (verified > passes > ran).
-        round_best: Optional[Attempt] = None
-        round_best_rank: Optional[tuple] = None
-        for c in range(2):
-            cand_feedback = feedback
+        # (d) Best-of-N: generate N candidates CONCURRENTLY, each run + verified in its own
+        # sandbox (the sandbox semaphore bounds how many containers run at once). Keep the best
+        # genuine passer (verified > more visible passes > ran; cheating/off-topic never win). No
+        # early exit — every candidate is an independent, fresh attempt at the task.
+        n_cand = parallel_n()
+
+        def _attempt_candidate(c: int):
+            # Diversify candidates WITHOUT implying failure: vary temperature + add a "different
+            # approach" nudge as a SEPARATE hint, so the round's real failure `feedback` is the
+            # only thing that says "fix what broke last round".
+            variant = ""
             if c > 0:
-                cand_feedback = (feedback + "\n\nYour first attempt this round did not pass — take "
-                                 "a materially different approach.").strip()
-            with agent_trace.span("generate", iteration=i, candidate=c + 1) as _sp:
-                code = _generate_solution(gen_provider, task, requirements, tests, reference,
-                                          last_code, cand_feedback, mem.summary())
-                _sp.set(code_len=len(code or ""))
+                variant = ("Other candidates are solving this in parallel — choose a materially "
+                           "different approach (algorithm, data structure, or library).")
+            temperature = min(0.9, 0.2 + 0.2 * c)   # diversify the best-of-N pool
+            code = _generate_solution(gen_provider, task, requirements, tests, reference,
+                                      last_code, feedback, mem.summary(),
+                                      temperature=temperature, variant=variant)
             if not (code or "").strip():
-                continue
+                return None
             emit({"type": "code", "iteration": i, "candidate": c + 1, "code": code})
 
             # Pre-execution SECURITY gate (kimi-code idea): audit + allow/block. NEVER weakened.
-            with agent_trace.span("prerun_hook", iteration=i, candidate=c + 1) as _sp:
-                gate = pre_run(code, task=task)
-                _sp.set(allowed=bool(gate.allowed), reason=gate.reason)
+            gate = pre_run(code, task=task)
             cheat = None
             if not gate.allowed:
                 emit({"type": "blocked", "iteration": i, "candidate": c + 1, "reason": gate.reason})
@@ -568,10 +592,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                 cheat = scan_for_cheating(code, tests, task) if anticheat_enabled() else None
                 emit({"type": "run", "iteration": i, "candidate": c + 1,
                       "message": "Running it against the tests in the Docker sandbox…"})
-                with agent_trace.span("docker_run", iteration=i, candidate=c + 1) as _sp:
-                    result, passed, total = _run_against_tests(code, tests)
-                    _sp.set(ok=bool(result.ok), passed=passed, total=total,
-                            seconds=round(result.seconds, 2))
+                result, passed, total = _run_against_tests(code, tests)
 
             relevant = _is_relevant_code(task, code, tests)        # (C6) algorithm-match gate
             verdict = _verdict_from_tests(passed, total, relevant, result)
@@ -616,12 +637,32 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
 
             rank = (0 if cheating else 1, 1 if verdict["verified"] else 0, passed,
                     1 if result.ok else 0)
+            return att, rank
+
+        candidates: List[tuple] = []
+        if n_cand == 1:
+            one = _attempt_candidate(0)
+            if one is not None:
+                candidates.append(one)
+        else:
+            import concurrent.futures as _cf
+            with _cf.ThreadPoolExecutor(max_workers=n_cand) as _ex:
+                futs = [_ex.submit(_attempt_candidate, c) for c in range(n_cand)]
+                for fut in _cf.as_completed(futs):
+                    try:
+                        one = fut.result()
+                    except Exception:   # noqa: BLE001 - a dead candidate must not kill the round
+                        one = None
+                    if one is not None:
+                        candidates.append(one)
+
+        round_best: Optional[Attempt] = None
+        round_best_rank: Optional[tuple] = None
+        for att, rank in candidates:
             if round_best is None or rank > round_best_rank:
                 round_best, round_best_rank = att, rank
-            if verdict["verified"]:    # a fully-verified candidate ends the round early
-                break
 
-        if round_best is None:         # both candidates were empty or produced no code
+        if round_best is None:         # all candidates were empty or produced no code
             rounds_failed += 1
             continue
 

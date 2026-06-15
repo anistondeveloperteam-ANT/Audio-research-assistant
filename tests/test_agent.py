@@ -1,5 +1,6 @@
 """Tests for the research agent loop — fully mocked (no Docker, no LLM, no network)."""
 import json
+import threading
 
 import pytest
 
@@ -13,11 +14,13 @@ from backend.agent.memory import TwoTierMemory
 @pytest.fixture(autouse=True)
 def _agent_env(monkeypatch):
     # Deterministic agent env regardless of the dev's shell: review off, hardening on, no escalation
-    # unless a test opts in.
+    # unless a test opts in. AGENT_PARALLEL_N>1 exercises the real best-of-N parallel path.
     monkeypatch.setenv("AUTO_REVIEW", "false")
     monkeypatch.setenv("AGENT_HIDDEN_TESTS", "true")
     monkeypatch.setenv("AGENT_ANTICHEAT_SCAN", "true")
     monkeypatch.setenv("AGENT_VERIFY_SEEDS", "3")
+    monkeypatch.setenv("AGENT_PARALLEL_N", "4")
+    monkeypatch.setenv("AGENT_MAX_CONCURRENT_SANDBOXES", "4")
     monkeypatch.delenv("AGENT_MODEL_STRONG", raising=False)
 
 
@@ -99,22 +102,64 @@ def test_score_running_beats_non_running():
     assert loop._score(ok) > loop._score(bad)
 
 
+def test_parallel_n_reads_and_clamps_env(monkeypatch):
+    monkeypatch.delenv("AGENT_PARALLEL_N", raising=False)
+    assert loop.parallel_n() == 4                 # default
+    monkeypatch.setenv("AGENT_PARALLEL_N", "2")
+    assert loop.parallel_n() == 2
+    monkeypatch.setenv("AGENT_PARALLEL_N", "99")
+    assert loop.parallel_n() == 8                 # clamped to max 8
+    monkeypatch.setenv("AGENT_PARALLEL_N", "0")
+    assert loop.parallel_n() == 1                 # clamped to min 1
+    monkeypatch.setenv("AGENT_PARALLEL_N", "nope")
+    assert loop.parallel_n() == 4                 # bad value -> default
+
+
 # ---- fakes -----------------------------------------------------------
 class _FakeProvider:
-    """Returns queued responses, one per stream_chat call and records (system, user) for each.
-    The hardened flow calls: requirements, visible tests, [per candidate] solution, and — once a
-    candidate passes the visible tests — hidden tests then invariants (held-out, generated lazily)."""
+    """Thread-safe, content-routed mock. Responses are keyed by the agent STEP (inferred from the
+    system prompt) — NOT call order — so parallel best-of-N candidate generation and lazily-built
+    held-out generation are deterministic. Solution responses route by attempt: `first` for a round
+    with no failure feedback, `refined` once the round carries 'FAILED last time' feedback. Each
+    queue hands out FIFO and REPEATS its last entry when exhausted, so N parallel candidates can
+    draw from a 1- or 2-entry pool."""
     name = "openai"
     model = "test"
     is_available = True
 
-    def __init__(self, responses):
-        self._responses = list(responses)
-        self.calls = []      # (system, user) for every stream_chat call
+    def __init__(self, *, requirements="- requirements", tests="", first=None, refined=None,
+                 hidden="", invariants=""):
+        self._req = requirements
+        self._tests = tests
+        self._first = list(first or [])
+        self._refined = list(refined or [])
+        self._hidden = hidden
+        self._invariants = invariants
+        self.calls = []          # (system, user) for every stream_chat call
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _take(lst):
+        if not lst:
+            return ""
+        return lst.pop(0) if len(lst) > 1 else lst[0]
 
     def stream_chat(self, messages, system="", max_tokens=0, temperature=0):
-        self.calls.append((system, messages[-1]["content"] if messages else ""))
-        return [self._responses.pop(0)]
+        user = messages[-1]["content"] if messages else ""
+        with self._lock:
+            self.calls.append((system, user))
+            if system == loop._REQ_SYSTEM:
+                return [self._req]
+            if system == loop._TESTS_SYSTEM:
+                return [self._tests]
+            if system == loop._HIDDEN_SYSTEM:
+                return [self._hidden]
+            if system == loop._INVARIANTS_SYSTEM:
+                return [self._invariants]
+            if system == loop._GEN_SYSTEM:
+                use_refined = ("FAILED last time" in user) and bool(self._refined)
+                return [self._take(self._refined if use_refined else self._first)]
+            return [""]
 
 
 def _fence(code: str) -> str:
@@ -127,7 +172,8 @@ def _ok(passed: int, total: int) -> RunResult:
 
 def _runner(visible_fn, heldout_fn):
     """A run_python_auto mock that returns different results for VISIBLE vs HELD-OUT scripts
-    (the held-out runner is seeded, so its script carries a distinctive marker)."""
+    (the held-out runner is seeded, so its script carries a distinctive marker). Thread-safe:
+    it routes purely by code content, so parallel candidates don't interfere."""
     def run(code, **k):
         return heldout_fn(code) if "held-out runner (seeded)" in code else visible_fn(code)
     return run
@@ -146,15 +192,15 @@ _BS_TESTS = "def test_call():\n    assert abs(black_scholes(100, 100, 1, 0.05, 0
 
 # ---- the test-first loop --------------------------------------------
 def test_agent_succeeds_first_try(monkeypatch):
-    provider = _FakeProvider([
-        "- implement bubble_sort(a) returning a sorted list",       # (a) requirements
-        _fence(_TESTS_SRC),                                         # (b) visible tests
-        _fence("def bubble_sort(a):\n    return sorted(a)"),        # (c) solution: passes all
-        _HIDDEN_SRC, _INV_SRC,                                      # held-out suite (lazy)
-    ])
+    provider = _FakeProvider(
+        requirements="- implement bubble_sort(a) returning a sorted list",
+        tests=_fence(_TESTS_SRC),
+        first=[_fence("def bubble_sort(a):\n    return sorted(a)")],   # every candidate passes
+        hidden=_HIDDEN_SRC, invariants=_INV_SRC,
+    )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
-    monkeypatch.setattr(loop, "run_python_auto", lambda code, **k: _ok(2, 2))   # visible + held-out pass
+    monkeypatch.setattr(loop, "run_python_auto", lambda code, **k: _ok(2, 2))   # visible + held-out
 
     res = loop.run_agent("Implement bubble sort", use_search=False)
     assert res.success is True and res.verification == "verified"
@@ -165,14 +211,13 @@ def test_agent_succeeds_first_try(monkeypatch):
 
 
 def test_agent_refines_after_a_failure(monkeypatch):
-    provider = _FakeProvider([
-        "- implement bubble_sort(a)",                            # requirements
-        _fence(_TESTS_SRC),                                     # visible tests
-        _fence("def bubble_sort(a):\n    return a"),            # round 1, candidate 1 (fails)
-        _fence("def bubble_sort(a):\n    return list(a)"),      # round 1, candidate 2 (fails)
-        _fence("def bubble_sort(a):\n    return sorted(a)"),    # round 2, candidate 1 (passes)
-        _HIDDEN_SRC, _INV_SRC,                                  # held-out suite (lazy, on pass)
-    ])
+    provider = _FakeProvider(
+        requirements="- implement bubble_sort(a)",
+        tests=_fence(_TESTS_SRC),
+        first=[_fence("def bubble_sort(a):\n    return a")],            # round 1: fails
+        refined=[_fence("def bubble_sort(a):\n    return sorted(a)")],  # round 2+: passes
+        hidden=_HIDDEN_SRC, invariants=_INV_SRC,
+    )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
     # Visible passes only for the real (sorted) solution; held-out always passes.
@@ -183,15 +228,16 @@ def test_agent_refines_after_a_failure(monkeypatch):
     res = loop.run_agent("Implement bubble sort", use_search=False, max_iters=3)
     assert res.success is True and res.verification == "verified"
     assert res.tests_passed == 2 and res.tests_total == 2
-    assert len(res.attempts) == 2                       # one accepted attempt per round
+    assert len(res.attempts) == 2                       # round 1 (fail) + round 2 (refined, pass)
     assert "sorted(a)" in res.best_code
 
 
 def test_only_full_pass_is_accepted(monkeypatch):
     """A candidate that merely RAN (some tests fail) is never 'success' — honest partial label."""
+    partial = _fence("def bubble_sort(a):\n    return a")
     provider = _FakeProvider(
-        ["- implement bubble_sort(a)", _fence(_TESTS_SRC)]
-        + [_fence("def bubble_sort(a):\n    return a")] * 8     # partial every round
+        requirements="- implement bubble_sort(a)", tests=_fence(_TESTS_SRC),
+        first=[partial], refined=[partial],            # partial every round
     )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
@@ -204,12 +250,11 @@ def test_only_full_pass_is_accepted(monkeypatch):
 
 
 def test_loop_blocks_without_running(monkeypatch):
-    provider = _FakeProvider([
-        "- requirements",
-        _fence("def test_x():\n    assert True"),
-        _fence("print(1)"),
-        _fence("print(2)"),
-    ])
+    provider = _FakeProvider(
+        requirements="- requirements",
+        tests=_fence("def test_x():\n    assert True"),
+        first=[_fence("print(1)")],
+    )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
     ran = []
@@ -224,7 +269,7 @@ def test_loop_blocks_without_running(monkeypatch):
 
 
 def test_agent_stops_clean_when_docker_missing(monkeypatch):
-    monkeypatch.setattr(loop, "get_provider", lambda *a, **k: _FakeProvider([]))
+    monkeypatch.setattr(loop, "get_provider", lambda *a, **k: _FakeProvider())
     monkeypatch.setattr(loop, "docker_available", lambda: False)
     events = []
     res = loop.run_agent("anything", use_search=False, on_event=events.append)
@@ -232,7 +277,7 @@ def test_agent_stops_clean_when_docker_missing(monkeypatch):
     assert any(e.get("type") == "error" for e in events)
 
 
-# ---- test-gate, best-of-2, relevance gate, escalation ---------------
+# ---- test-gate, best-of-N, relevance gate, escalation ---------------
 def test_verdict_from_tests_gate():
     ok = loop._verdict_from_tests(8, 8, True, RunResult(True, 0, "", "", 0.1))
     assert ok["done"] is True and ok["success"] is True and ok["score"] == 100
@@ -251,14 +296,14 @@ def test_is_relevant_code_matches_requested_algorithm():
     assert loop._is_relevant_code("write some code", "print(1)", "") is True   # no specific term
 
 
-def test_best_of_two_keeps_higher_pass_rate(monkeypatch):
-    provider = _FakeProvider([
-        "- implement widget()",
-        _fence("def test_w():\n    assert widget() == 1"),
-        _fence("def widget(n):\n    return n  # weak"),     # candidate 1: partial
-        _fence("def widget(n):\n    return n + 1  # strong"),    # candidate 2: full pass
-        _HIDDEN_SRC, _INV_SRC,                              # held-out (lazy, on c2 pass)
-    ])
+def test_best_of_n_keeps_higher_pass_rate(monkeypatch):
+    provider = _FakeProvider(
+        requirements="- implement widget()",
+        tests=_fence("def test_w():\n    assert widget() == 1"),
+        first=[_fence("def widget(n):\n    return n  # weak"),       # candidate: partial
+               _fence("def widget(n):\n    return n + 1  # strong")],  # candidate: full pass
+        hidden=_HIDDEN_SRC, invariants=_INV_SRC,
+    )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
     monkeypatch.setattr(loop, "run_python_auto",
@@ -273,9 +318,11 @@ def test_best_of_two_keeps_higher_pass_rate(monkeypatch):
 
 def test_relevance_gate_blocks_offtopic_code(monkeypatch):
     """Code that never mentions the requested algorithm is not 'verified' even if its tests pass."""
+    off = _fence("def unrelated(z):\n    return z + 1")
     provider = _FakeProvider(
-        ["- implement mvdr_beamformer(cov, steering)", _fence("def test_x():\n    assert True")]
-        + [_fence("def unrelated(z):\n    return z + 1")] * 4
+        requirements="- implement mvdr_beamformer(cov, steering)",
+        tests=_fence("def test_x():\n    assert True"),
+        first=[off], refined=[off],
     )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
@@ -288,9 +335,11 @@ def test_relevance_gate_blocks_offtopic_code(monkeypatch):
 def test_escalation_uses_strong_model_after_two_failures(monkeypatch):
     monkeypatch.setenv("AGENT_MODEL_STRONG", "strong-x")
     models = []
+    wrong = _fence("def add(a, b):\n    return a - b")   # uses args (not gaming), wrong result
     provider = _FakeProvider(
-        ["- implement add(a, b)", _fence("def test_a():\n    assert add(1, 1) == 2")]
-        + [_fence("def add(a, b):\n    return a - b")] * 6   # uses args (not gaming), wrong result
+        requirements="- implement add(a, b)",
+        tests=_fence("def test_a():\n    assert add(1, 1) == 2"),
+        first=[wrong], refined=[wrong],
     )
 
     def fake_get_provider(model=None, *a, **k):
@@ -308,11 +357,11 @@ def test_escalation_uses_strong_model_after_two_failures(monkeypatch):
 
 # ---- anti-reward-hacking hardening -----------------------------------
 def test_verified_runs_hidden_tests_and_invariants(monkeypatch):
-    provider = _FakeProvider([
-        "- implement bubble_sort(a)", _fence(_TESTS_SRC),
-        _fence("def bubble_sort(a):\n    return sorted(a)"),
-        _HIDDEN_SRC, _INV_SRC,
-    ])
+    provider = _FakeProvider(
+        requirements="- implement bubble_sort(a)", tests=_fence(_TESTS_SRC),
+        first=[_fence("def bubble_sort(a):\n    return sorted(a)")],
+        hidden=_HIDDEN_SRC, invariants=_INV_SRC,
+    )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
     monkeypatch.setattr(loop, "run_python_auto", lambda code, **k: _ok(2, 2))
@@ -325,12 +374,11 @@ def test_verified_runs_hidden_tests_and_invariants(monkeypatch):
 
 def test_hidden_tests_reject_visible_only_pass(monkeypatch):
     """Passing the VISIBLE tests is not enough: held-out hidden tests on fresh inputs must pass too."""
-    provider = _FakeProvider([
-        "- implement bubble_sort(a)", _fence(_TESTS_SRC),
-        _fence("def bubble_sort(a):\n    return sorted(a)"),    # r1 c1: passes visible
-        _HIDDEN_SRC, _INV_SRC,
-        _fence("def bubble_sort(a):\n    return sorted(a)"),    # r1 c2: passes visible too
-    ])
+    provider = _FakeProvider(
+        requirements="- implement bubble_sort(a)", tests=_fence(_TESTS_SRC),
+        first=[_fence("def bubble_sort(a):\n    return sorted(a)")],    # passes visible
+        hidden=_HIDDEN_SRC, invariants=_INV_SRC,
+    )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
     monkeypatch.setattr(loop, "run_python_auto",
@@ -360,12 +408,12 @@ def test_static_cheat_caught_then_regenerated_to_verified(monkeypatch):
     genuine, verified one — and the cheat flag is carried forward in cross-attempt memory."""
     cheat = "def black_scholes(S, K, T, r, sigma):\n    return 10.4506"      # hardcodes test output
     genuine = "def black_scholes(S, K, T, r, sigma):\n    return S - K + T"  # uses args, not gaming
-    provider = _FakeProvider([
-        "- implement black_scholes(S,K,T,r,sigma)", _fence(_BS_TESTS),
-        _fence(cheat), _fence(cheat),          # round 1: both candidates cheat
-        _fence(genuine),                       # round 2: genuine
-        _HIDDEN_SRC, _INV_SRC,
-    ])
+    provider = _FakeProvider(
+        requirements="- implement black_scholes(S,K,T,r,sigma)", tests=_fence(_BS_TESTS),
+        first=[_fence(cheat)],            # round 1: every candidate cheats
+        refined=[_fence(genuine)],        # round 2: genuine
+        hidden=_HIDDEN_SRC, invariants=_INV_SRC,
+    )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
     monkeypatch.setattr(loop, "run_python_auto", lambda code, **k: _ok(2, 2))
@@ -379,9 +427,10 @@ def test_static_cheat_caught_then_regenerated_to_verified(monkeypatch):
 
 
 def test_all_cheating_is_rejected_never_verified(monkeypatch):
+    cheat = _fence("def black_scholes(S, K, T, r, sigma):\n    return 10.4506")
     provider = _FakeProvider(
-        ["- implement black_scholes(S,K,T,r,sigma)", _fence(_BS_TESTS)]
-        + [_fence("def black_scholes(S, K, T, r, sigma):\n    return 10.4506")] * 4
+        requirements="- implement black_scholes(S,K,T,r,sigma)", tests=_fence(_BS_TESTS),
+        first=[cheat], refined=[cheat],
     )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
@@ -396,9 +445,10 @@ def test_all_cheating_is_rejected_never_verified(monkeypatch):
 def test_escalation_on_two_cheats_uses_strong_model(monkeypatch):
     monkeypatch.setenv("AGENT_MODEL_STRONG", "strong-x")
     models = []
+    cheat = _fence("def black_scholes(S, K, T, r, sigma):\n    return 10.4506")
     provider = _FakeProvider(
-        ["- implement black_scholes(S,K,T,r,sigma)", _fence(_BS_TESTS)]
-        + [_fence("def black_scholes(S, K, T, r, sigma):\n    return 10.4506")] * 6
+        requirements="- implement black_scholes(S,K,T,r,sigma)", tests=_fence(_BS_TESTS),
+        first=[cheat], refined=[cheat],
     )
 
     def fake_get_provider(model=None, *a, **k):
