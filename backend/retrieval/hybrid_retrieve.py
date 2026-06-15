@@ -70,6 +70,9 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 RRF_K = int(os.getenv("RRF_K", "60"))
 MMR_LAMBDA = float(os.getenv("MMR_LAMBDA", "0.7"))
 ENABLE_HYDE = os.getenv("ENABLE_HYDE", "true").lower() == "true"
+# When false (or when the cross-encoder can't load — e.g. a low-memory host that OOMs torch),
+# fall back to a cheap lexical reranker so local retrieval still works without the heavy model.
+LOCAL_RERANK_CROSS_ENCODER = os.getenv("LOCAL_RERANK_CROSS_ENCODER", "true").lower() == "true"
 
 _reranker = None
 _chunks_cache = None
@@ -259,29 +262,50 @@ def keyword_search(query: str, top_k: int = 10):
     return scored[:top_k]
 
 
-def rerank(query: str, candidates, top_k: int = 10):
-    if not candidates:
-        return []
-    reranker = get_reranker()
-    pairs = []
-    for item in candidates:
-        text = " ".join([
-            item.get("title") or "",
-            item.get("section") or "",
-            item.get("concepts") or "",
-            item.get("text") or "",
-        ])
-        pairs.append((query, text[:3000]))
+def _candidate_text(item) -> str:
+    return " ".join([
+        item.get("title") or "",
+        item.get("section") or "",
+        item.get("concepts") or "",
+        item.get("text") or "",
+    ])
 
-    scores = reranker.predict(pairs)
+
+def _lexical_rerank(query: str, candidates, top_k: int):
+    """Cheap lexical reranker (query-token recall, 0..1) used when the cross-encoder is disabled or
+    cannot load. Keeps `rerank_score` on the same ~0..1 scale the pipeline and the CRAG grader
+    expect (SOURCE_MIN_SCORE / CRAG thresholds), so downstream selection stays consistent."""
+    q = set(re.findall(r"[a-z0-9]+", (query or "").lower()))
     reranked = []
-    for item, score in zip(candidates, scores):
+    for item in candidates:
+        t = set(re.findall(r"[a-z0-9]+", _candidate_text(item).lower()))
+        score = (len(q & t) / len(q)) if q else 0.0
         new_item = dict(item)
         new_item["rerank_score"] = float(score)
         reranked.append(new_item)
-
     reranked.sort(key=lambda x: x["rerank_score"], reverse=True)
     return reranked[:top_k]
+
+
+def rerank(query: str, candidates, top_k: int = 10):
+    if not candidates:
+        return []
+    if LOCAL_RERANK_CROSS_ENCODER:
+        try:
+            reranker = get_reranker()
+            pairs = [(query, _candidate_text(item)[:3000]) for item in candidates]
+            scores = reranker.predict(pairs)
+            reranked = []
+            for item, score in zip(candidates, scores):
+                new_item = dict(item)
+                new_item["rerank_score"] = float(score)
+                reranked.append(new_item)
+            reranked.sort(key=lambda x: x["rerank_score"], reverse=True)
+            return reranked[:top_k]
+        except Exception as exc:                    # OOM / load failure / native error -> degrade
+            logger.warning("cross-encoder reranker unavailable (%s) — using lexical fallback",
+                           type(exc).__name__)
+    return _lexical_rerank(query, candidates, top_k)
 
 
 def apply_chunk_type_boost(query: str, results):
