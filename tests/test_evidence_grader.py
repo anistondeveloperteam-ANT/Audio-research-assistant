@@ -94,5 +94,16 @@ def test_extract_algorithm_spec_respects_max_chars():
     big = "x" * 5000
     items = [_item(0.80, text=big), _item(0.70, text=big)]
     spec, _ = eg.extract_algorithm_spec(items, max_chars=2000)
-    # first block alone exceeds the budget, so only one block is kept (plus header)
+    # the WHOLE spec (header + truncated boundary chunk) stays within the budget
+    assert spec
+    assert len(spec) <= 2000
     assert spec.count("[from ") == 1
+
+
+def test_extract_algorithm_spec_empty_text_items_returns_empty():
+    # chunks the reranker scored as relevant but that carry no usable text -> no spec AND no
+    # citation (an empty spec must never be paired with a non-empty citation).
+    items = [_item(0.80, title="MVDR Paper", text=""), _item(0.70, title="MVDR Paper", text="   ")]
+    spec, citation = eg.extract_algorithm_spec(items)
+    assert spec == ""
+    assert citation == ""

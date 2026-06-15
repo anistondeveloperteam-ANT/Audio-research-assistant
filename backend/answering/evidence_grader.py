@@ -121,7 +121,10 @@ def _title_of(item: Dict[str, Any]) -> str:
 def extract_algorithm_spec(items: List[Dict[str, Any]], question: str = "",
                            max_chars: int = 3000) -> Tuple[str, str]:
     """Build a code spec from the most relevant PDF chunks (the algorithm description) plus a
-    citation naming the source paper(s). Returns ("", "") when there is no relevant evidence."""
+    citation naming the source paper(s). The whole returned spec (header included) is kept within
+    `max_chars`: chunk text is packed up to the budget and the boundary chunk is truncated to fit.
+    Returns ("", "") when there is no relevant evidence (or none of it carries usable text), so an
+    empty spec is never paired with a non-empty citation."""
     rel = relevant_items(items)
     if not rel:
         return "", ""
@@ -133,8 +136,12 @@ def extract_algorithm_spec(items: List[Dict[str, Any]], question: str = "",
             titles.append(t)
     citation = "; ".join(titles[:3])
 
+    header = ("Algorithm description extracted from the user's research library"
+              + (f" (source: {citation})" if citation else "")
+              + ". Implement the algorithm EXACTLY as the paper describes it:\n\n")
+    budget = max(0, max_chars - len(header))          # reserve room so header+blocks <= max_chars
+
     parts: List[str] = []
-    used = 0
     for it in rel:
         text = (it.get("text") or it.get("chunk_text") or "").strip()
         if not text:
@@ -142,14 +149,14 @@ def extract_algorithm_spec(items: List[Dict[str, Any]], question: str = "",
         section = (it.get("section") or it.get("section_name") or "").strip()
         head = f"[from {_title_of(it)}" + (f" — {section}" if section else "") + "]"
         block = f"{head}\n{text}"
-        if parts and used + len(block) > max_chars:
+        remaining = budget - len("\n\n".join(parts)) - (2 if parts else 0)
+        if remaining <= 0:
+            break
+        if len(block) > remaining:                    # truncate the boundary chunk to fit the budget
+            parts.append(block[: max(0, remaining - 1)].rstrip() + "…")
             break
         parts.append(block)
-        used += len(block)
 
-    if not parts:
-        return "", citation
-    header = ("Algorithm description extracted from the user's research library"
-              + (f" (source: {citation})" if citation else "")
-              + ". Implement the algorithm EXACTLY as the paper describes it:\n\n")
+    if not parts:                                     # relevant by score, but no usable text
+        return "", ""
     return header + "\n\n".join(parts), citation

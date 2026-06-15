@@ -832,7 +832,7 @@ def _run_code_agent(question: str, session_id: str, mem,
     res = box.get("res")
     content = result_to_markdown(res) if res is not None else "_(the code agent produced no result)_"
     if paper_citation:                       # cite the paper the algorithm was implemented from
-        content = f"> 📄 Implemented from your research library: {paper_citation}\n\n" + content
+        content = f"> **Implemented from your research library:** {paper_citation}\n\n" + content
     av = None
     try:
         av = mem.add_answer_version(q_version_id, content)

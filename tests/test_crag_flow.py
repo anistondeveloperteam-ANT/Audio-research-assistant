@@ -3,10 +3,12 @@
 Fully offline — local/external retrieval and the deep-query planner are mocked, and we stop
 consuming the event stream at the `sources` event (the grade + external decision is complete by
 then, before any LLM generation)."""
+import time
 import types
 
 import webapp.chat_logic as cl
 from backend.memory.store import MemoryStore
+from backend.observability import tracing
 
 QUESTION = "How does MVDR beamforming reduce noise?"
 
@@ -113,6 +115,18 @@ def test_partial_grade_without_web_uses_local_only(tmp_path, monkeypatch):
 
 
 # ----------------------------------------------------------------------
+# NONE with web search OFF -> no sources at all (local dropped, nothing external)
+# ----------------------------------------------------------------------
+def test_none_grade_without_web_yields_no_sources(tmp_path, monkeypatch):
+    local = [_local(0.21), _local(0.10)]             # nothing clears the partial floor -> NONE
+    events, external_calls, sources = _drive(monkeypatch, tmp_path, local, web=False)
+
+    assert external_calls == []                      # web off -> nothing external
+    assert sources == []                             # NONE drops local; nothing left
+    assert "web search is off" in _statuses(events)
+
+
+# ----------------------------------------------------------------------
 # CRAG disabled -> original concurrent sweep still runs (local + external together)
 # ----------------------------------------------------------------------
 def test_crag_disabled_uses_legacy_concurrent_sweep(tmp_path, monkeypatch):
@@ -201,3 +215,39 @@ def test_code_crag_disabled_skips_paper_lookup(tmp_path, monkeypatch):
     assert cap["brief"] == ""
     assert cap["use_search"] is True
     assert "checking your papers" not in _code_statuses(events)
+
+
+# ======================================================================
+# _gather_pass: deterministic multi-angle merge + the external timeout backstop
+# ======================================================================
+def test_gather_pass_times_out_sets_flag():
+    tr = tracing.start_trace("test")
+
+    def slow(q, k):
+        time.sleep(0.3)                              # outlives the timeout below
+        return ([{"source_type": "web", "title": "late", "text": "x", "url": "http://x/late"}], [])
+
+    items, warnings, timed_out = cl._gather_pass(
+        ["q"], slow, lambda i, q: 1, trace=tr, span_name="external_search", timeout=0.02)
+
+    assert timed_out is True
+    assert items == []                               # the slow result is dropped, not awaited
+
+
+def test_gather_pass_multi_query_merges_in_query_order_with_correct_topk():
+    tr = tracing.start_trace("test")
+    calls = []
+
+    def gather(q, k):
+        calls.append((q, k))
+        return ([{"source_type": "web", "title": q, "text": q, "url": "http://x/" + q}], [])
+
+    items, warnings, timed_out = cl._gather_pass(
+        ["q0", "q1", "q2"], gather, lambda i, q: 10 if i == 0 else 5,
+        trace=tr, span_name="external_search")
+
+    assert len(calls) == 3                           # one gather per angle
+    by_q = dict(calls)
+    assert by_q["q0"] == 10 and by_q["q1"] == 5 and by_q["q2"] == 5   # idx-aware top_k
+    assert [it["title"] for it in items] == ["q0", "q1", "q2"]        # stable, query-order merge
+    assert timed_out is False
