@@ -38,10 +38,10 @@ from collections import Counter
 from contextlib import contextmanager
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 # ----------------------------------------------------------------------
@@ -58,13 +58,20 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE TABLE IF NOT EXISTS turns (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    turn_index    INTEGER NOT NULL,
-    role          TEXT NOT NULL,
-    content       TEXT NOT NULL,
-    sources_json  TEXT,
-    created_at    REAL NOT NULL
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id        TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    turn_index        INTEGER NOT NULL,
+    role              TEXT NOT NULL,
+    content           TEXT NOT NULL,
+    sources_json      TEXT,
+    created_at        REAL NOT NULL,
+    -- ChatGPT-style versioning. A user question is a "node" (node_id groups its
+    -- versions); each assistant answer links to the specific question version it
+    -- answers via parent_version_id. is_active marks the selected version in a group.
+    node_id           TEXT,
+    parent_version_id INTEGER,
+    version_index     INTEGER NOT NULL DEFAULT 1,
+    is_active         INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX IF NOT EXISTS idx_turns_session
@@ -134,11 +141,31 @@ def _open_conn(db_path: Path) -> sqlite3.Connection:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     cur = conn.cursor()
+    prior_version = cur.execute("PRAGMA user_version;").fetchone()[0]
     cur.executescript(_SCHEMA_SQL)
     # Add user_id to pre-existing sessions tables (per-user conversation isolation).
     cols = {r[1] for r in cur.execute("PRAGMA table_info(sessions)").fetchall()}
     if "user_id" not in cols:
         cur.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'")
+    # Add message-versioning columns to a pre-existing turns table, then backfill
+    # legacy rows so every existing turn becomes version 1 (idempotent, non-destructive).
+    turn_cols = {r[1] for r in cur.execute("PRAGMA table_info(turns)").fetchall()}
+    if turn_cols and "node_id" not in turn_cols:
+        cur.execute("ALTER TABLE turns ADD COLUMN node_id TEXT")
+    if turn_cols and "parent_version_id" not in turn_cols:
+        cur.execute("ALTER TABLE turns ADD COLUMN parent_version_id INTEGER")
+    if turn_cols and "version_index" not in turn_cols:
+        cur.execute("ALTER TABLE turns ADD COLUMN version_index INTEGER NOT NULL DEFAULT 1")
+    if turn_cols and "is_active" not in turn_cols:
+        cur.execute("ALTER TABLE turns ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+    # Created AFTER the columns exist (a legacy turns table gets them via ALTER above).
+    if turn_cols:
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_turns_node ON turns(session_id, node_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_turns_parent ON turns(parent_version_id)")
+    # Backfill ONLY when upgrading from a pre-versioning schema (< 4). After that, answers
+    # legitimately carry a NULL node_id, so re-running would wrongly re-version them.
+    if prior_version < 4:
+        _backfill_turn_versions(cur)
     # Add semantic-cache columns to a pre-existing answer_cache table.
     ac_cols = {r[1] for r in cur.execute("PRAGMA table_info(answer_cache)").fetchall()}
     if ac_cols and "question_embedding" not in ac_cols:
@@ -155,10 +182,40 @@ def _migrate(conn: sqlite3.Connection) -> None:
                         "ON answer_cache(user_id, normalized_question)")
         except Exception:
             pass
-    current = cur.execute("PRAGMA user_version;").fetchone()[0]
-    if current < SCHEMA_VERSION:
+    if prior_version < SCHEMA_VERSION:
         cur.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
     conn.commit()
+
+
+def _backfill_turn_versions(cur: sqlite3.Cursor) -> None:
+    """Make legacy single-version turns into version 1 of a node. Runs once, when upgrading
+    from a pre-versioning schema (gated on user_version in _migrate). Each user turn becomes
+    its own question node; each assistant/system turn links to the most recent preceding user
+    turn in the same session (reconstructing the old linear Q -> A pairing)."""
+    try:
+        rows = cur.execute(
+            "SELECT id, session_id, role FROM turns WHERE node_id IS NULL "
+            "ORDER BY session_id, turn_index, id"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return  # turns table not present yet (e.g. cache db before any schema)
+    last_user: Dict[str, int] = {}
+    for r in rows:
+        rid, sid, role = r["id"], r["session_id"], r["role"]
+        if role == "user":
+            node = uuid.uuid4().hex[:16]
+            cur.execute(
+                "UPDATE turns SET node_id = ?, parent_version_id = NULL, "
+                "version_index = 1, is_active = 1 WHERE id = ?",
+                (node, rid),
+            )
+            last_user[sid] = rid
+        else:
+            cur.execute(
+                "UPDATE turns SET node_id = NULL, parent_version_id = ?, "
+                "version_index = 1, is_active = 1 WHERE id = ?",
+                (last_user.get(sid), rid),
+            )
 
 
 _STOPWORDS = {
@@ -490,6 +547,45 @@ class MemoryStore:
             return dict(row) if row else None
 
     # ------- Turns ---------------------------------------------------
+    @staticmethod
+    def _new_node_id() -> str:
+        return uuid.uuid4().hex[:16]
+
+    def _insert_turn(self, conn, session_id, role, content, sources,
+                     node_id, parent_version_id, version_index, is_active) -> Dict[str, Any]:
+        """Low-level versioned insert (caller owns the transaction). Returns id/turn_index."""
+        now = time.time()
+        next_idx = conn.execute(
+            "SELECT COALESCE(MAX(turn_index), -1) + 1 FROM turns WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()[0]
+        cur = conn.execute(
+            "INSERT INTO turns (session_id, turn_index, role, content, sources_json, "
+            "created_at, node_id, parent_version_id, version_index, is_active) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (session_id, next_idx, role, content, json.dumps(sources) if sources else None,
+             now, node_id, parent_version_id, version_index, int(is_active)),
+        )
+        conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
+        return {"id": int(cur.lastrowid), "turn_index": int(next_idx), "version_index": version_index}
+
+    @staticmethod
+    def _active_user_version_id(conn, session_id: str) -> Optional[int]:
+        """The id of the most recent ACTIVE user question version in the session."""
+        row = conn.execute(
+            "SELECT id FROM turns WHERE session_id = ? AND role = 'user' AND node_id IS NOT NULL "
+            "AND is_active = 1 ORDER BY turn_index DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        return int(row["id"]) if row else None
+
+    @staticmethod
+    def _next_answer_index(conn, qv_id: int) -> int:
+        return int(conn.execute(
+            "SELECT COALESCE(MAX(version_index), 0) + 1 FROM turns WHERE parent_version_id = ?",
+            (qv_id,),
+        ).fetchone()[0])
+
     def append_turn(
         self,
         session_id: str,
@@ -497,54 +593,265 @@ class MemoryStore:
         content: str,
         sources: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
+        """Append a turn (back-compatible). A 'user' turn starts a fresh question node
+        (version 1); an 'assistant'/'system' turn becomes a new answer version under the
+        session's current active question, so the existing append-user-then-append-assistant
+        flow keeps producing a clean Q -> A pair. Returns the turn_index (as before)."""
         if role not in ("user", "assistant", "system"):
             raise ValueError(f"role must be user/assistant/system, got {role!r}")
-        now = time.time()
         with self._conn() as conn:
-            cur = conn.execute(
-                "SELECT COALESCE(MAX(turn_index), -1) + 1 FROM turns WHERE session_id = ?",
+            if role == "user":
+                info = self._insert_turn(conn, session_id, role, content, None,
+                                         node_id=self._new_node_id(), parent_version_id=None,
+                                         version_index=1, is_active=1)
+            else:
+                qv = self._active_user_version_id(conn, session_id)
+                if qv is None:                         # nothing to answer (e.g. a lone system turn)
+                    info = self._insert_turn(conn, session_id, role, content, sources,
+                                             node_id=None, parent_version_id=None,
+                                             version_index=1, is_active=1)
+                else:
+                    conn.execute("UPDATE turns SET is_active = 0 WHERE parent_version_id = ?", (qv,))
+                    info = self._insert_turn(conn, session_id, role, content, sources,
+                                             node_id=None, parent_version_id=qv,
+                                             version_index=self._next_answer_index(conn, qv),
+                                             is_active=1)
+        return info["turn_index"]
+
+    # ------- Versioning (ChatGPT-style edit / regenerate / re-ask) ---
+    def start_question(self, session_id: str, content: str) -> Dict[str, Any]:
+        """Create a brand-new question node (version 1, active)."""
+        with self._conn() as conn:
+            node = self._new_node_id()
+            info = self._insert_turn(conn, session_id, "user", content, None,
+                                     node_id=node, parent_version_id=None,
+                                     version_index=1, is_active=1)
+        return {"node_id": node, "turn_id": info["id"], "version_index": 1, "total": 1}
+
+    def add_question_version(self, session_id: str, node_id: str, content: str) -> Dict[str, Any]:
+        """Add a new version of an existing question node (edit / re-ask). Becomes active;
+        prior versions are kept but deactivated. Their answers are left untouched."""
+        with self._conn() as conn:
+            vi = int(conn.execute(
+                "SELECT COALESCE(MAX(version_index), 0) + 1 FROM turns "
+                "WHERE session_id = ? AND node_id = ?",
+                (session_id, node_id),
+            ).fetchone()[0])
+            conn.execute("UPDATE turns SET is_active = 0 WHERE session_id = ? AND node_id = ?",
+                         (session_id, node_id))
+            info = self._insert_turn(conn, session_id, "user", content, None,
+                                     node_id=node_id, parent_version_id=None,
+                                     version_index=vi, is_active=1)
+        return {"node_id": node_id, "turn_id": info["id"], "version_index": vi, "total": vi}
+
+    def add_answer_version(self, question_version_id: int, content: str,
+                           sources: Optional[List[Dict[str, Any]]] = None,
+                           role: str = "assistant") -> Dict[str, Any]:
+        """Add a new answer version under a specific question version (regenerate). Becomes
+        active; prior answers are kept but deactivated."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT session_id FROM turns WHERE id = ?",
+                               (question_version_id,)).fetchone()
+            if not row:
+                raise ValueError(f"unknown question_version_id {question_version_id!r}")
+            sid = row["session_id"]
+            vi = self._next_answer_index(conn, question_version_id)
+            conn.execute("UPDATE turns SET is_active = 0 WHERE parent_version_id = ?",
+                         (question_version_id,))
+            info = self._insert_turn(conn, sid, role, content, sources,
+                                     node_id=None, parent_version_id=question_version_id,
+                                     version_index=vi, is_active=1)
+        return {"turn_id": info["id"], "version_index": vi, "total": vi}
+
+    def set_active_question_version(self, session_id: str, node_id: str, version_index: int) -> bool:
+        """Persist which question version the user is viewing (restored on reload)."""
+        with self._conn() as conn:
+            target = conn.execute(
+                "SELECT id FROM turns WHERE session_id = ? AND node_id = ? AND version_index = ?",
+                (session_id, node_id, version_index),
+            ).fetchone()
+            if not target:
+                return False
+            conn.execute("UPDATE turns SET is_active = 0 WHERE session_id = ? AND node_id = ?",
+                         (session_id, node_id))
+            conn.execute("UPDATE turns SET is_active = 1 WHERE id = ?", (target["id"],))
+            conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?",
+                         (time.time(), session_id))
+        return True
+
+    def set_active_answer_version(self, question_version_id: int, version_index: int) -> bool:
+        """Persist which answer version (under a question version) the user is viewing."""
+        with self._conn() as conn:
+            target = conn.execute(
+                "SELECT id, session_id FROM turns WHERE parent_version_id = ? AND version_index = ?",
+                (question_version_id, version_index),
+            ).fetchone()
+            if not target:
+                return False
+            conn.execute("UPDATE turns SET is_active = 0 WHERE parent_version_id = ?",
+                         (question_version_id,))
+            conn.execute("UPDATE turns SET is_active = 1 WHERE id = ?", (target["id"],))
+            conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?",
+                         (time.time(), target["session_id"]))
+        return True
+
+    def get_version(self, turn_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch one version's content + sources (lazy-load when switching in the UI)."""
+        with self._conn() as conn:
+            r = conn.execute(
+                "SELECT id, session_id, role, content, sources_json, node_id, "
+                "parent_version_id, version_index, is_active, created_at "
+                "FROM turns WHERE id = ?",
+                (turn_id,),
+            ).fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        sj = d.pop("sources_json", None)
+        d["sources"] = json.loads(sj) if sj else None
+        return d
+
+    def get_conversation_tree(self, session_id: str) -> List[Dict[str, Any]]:
+        """The full version tree for rendering: ordered question slots, each with all its
+        question versions and (per version) all answer versions. Content is included only
+        for the ACTIVE path; inactive versions carry refs (turn_id/version_index) so the UI
+        lazy-loads them via get_version when switched to."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, turn_index, role, content, sources_json, node_id, "
+                "parent_version_id, version_index, is_active "
+                "FROM turns WHERE session_id = ? ORDER BY turn_index ASC",
                 (session_id,),
-            )
-            next_idx = cur.fetchone()[0]
-            conn.execute(
-                "INSERT INTO turns (session_id, turn_index, role, content, "
-                "sources_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    session_id,
-                    next_idx,
-                    role,
-                    content,
-                    json.dumps(sources) if sources else None,
-                    now,
-                ),
-            )
-            conn.execute(
-                "UPDATE sessions SET updated_at = ? WHERE id = ?",
-                (now, session_id),
-            )
-        return next_idx
+            ).fetchall()
+
+        answers_by_parent: Dict[int, List[Any]] = {}
+        node_versions: Dict[str, List[Any]] = {}
+        node_pos: Dict[str, int] = {}
+        for r in rows:
+            if r["parent_version_id"] is not None:
+                answers_by_parent.setdefault(int(r["parent_version_id"]), []).append(r)
+            if r["role"] == "user" and r["node_id"]:
+                node_versions.setdefault(r["node_id"], []).append(r)
+                node_pos[r["node_id"]] = min(node_pos.get(r["node_id"], r["turn_index"]),
+                                             r["turn_index"])
+
+        def _answer_entry(a, include_content: bool) -> Dict[str, Any]:
+            sj = a["sources_json"]
+            return {
+                "turn_id": int(a["id"]),
+                "version_index": int(a["version_index"]),
+                "is_active": bool(a["is_active"]),
+                "content": a["content"] if include_content else None,
+                "sources": (json.loads(sj) if sj else None) if include_content else None,
+            }
+
+        slots: List[Dict[str, Any]] = []
+        for node_id in sorted(node_pos, key=lambda n: node_pos[n]):
+            qvs = sorted(node_versions[node_id], key=lambda r: r["version_index"])
+            active_q = int(qvs[-1]["version_index"])
+            for qv in qvs:
+                if qv["is_active"]:
+                    active_q = int(qv["version_index"])
+            versions = []
+            for qv in qvs:
+                q_active = bool(qv["is_active"])
+                ans = sorted(answers_by_parent.get(int(qv["id"]), []),
+                             key=lambda r: r["version_index"])
+                active_a = int(ans[-1]["version_index"]) if ans else 0
+                for a in ans:
+                    if a["is_active"]:
+                        active_a = int(a["version_index"])
+                versions.append({
+                    "turn_id": int(qv["id"]),
+                    "version_index": int(qv["version_index"]),
+                    "is_active": q_active,
+                    "content": qv["content"] if q_active else None,
+                    "answer_total": len(ans),
+                    "active_answer_index": active_a,
+                    "answers": [_answer_entry(a, q_active and bool(a["is_active"])) for a in ans],
+                })
+            slots.append({
+                "node_id": node_id,
+                "version_total": len(qvs),
+                "active_version_index": active_q,
+                "versions": versions,
+            })
+        return slots
+
+    def delete_node(self, session_id: str, node_id: str) -> int:
+        """Delete an entire question node — all its versions and all their answers."""
+        with self._conn() as conn:
+            qv_ids = [int(r["id"]) for r in conn.execute(
+                "SELECT id FROM turns WHERE session_id = ? AND node_id = ?",
+                (session_id, node_id),
+            ).fetchall()]
+            deleted = 0
+            if qv_ids:
+                placeholders = ",".join("?" * len(qv_ids))
+                cur = conn.execute(
+                    f"DELETE FROM turns WHERE parent_version_id IN ({placeholders})", qv_ids)
+                deleted += cur.rowcount
+                cur = conn.execute(
+                    "DELETE FROM turns WHERE session_id = ? AND node_id = ?",
+                    (session_id, node_id))
+                deleted += cur.rowcount
+            conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?",
+                         (time.time(), session_id))
+            return deleted
 
     def get_turns(
         self,
         session_id: str,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        sql = (
-            "SELECT turn_index, role, content, sources_json, created_at "
-            "FROM turns WHERE session_id = ? ORDER BY turn_index ASC"
-        )
-        params: Tuple = (session_id,)
-        if limit is not None:
-            sql += " LIMIT ?"
-            params = (session_id, limit)
+        """The ACTIVE linear conversation (currently-selected versions only), ordered by
+        slot position then question/answer. Old single-version chats return exactly as before
+        (every row is active version 1). Shape is unchanged: turn_index/role/content/sources."""
         with self._conn() as conn:
-            rows = conn.execute(sql, params).fetchall()
-        out = []
+            rows = conn.execute(
+                "SELECT id, turn_index, role, content, sources_json, node_id, "
+                "parent_version_id, is_active "
+                "FROM turns WHERE session_id = ? ORDER BY turn_index ASC",
+                (session_id,),
+            ).fetchall()
+
+        node_pos: Dict[str, int] = {}
+        active_q: Dict[str, Any] = {}
+        active_ans: Dict[int, Any] = {}
+        orphans: List[Any] = []
         for r in rows:
-            d = dict(r)
-            sj = d.pop("sources_json", None)
-            d["sources"] = json.loads(sj) if sj else None
-            out.append(d)
+            if r["role"] == "user" and r["node_id"]:
+                node_pos[r["node_id"]] = min(node_pos.get(r["node_id"], r["turn_index"]),
+                                             r["turn_index"])
+                if r["is_active"]:
+                    active_q[r["node_id"]] = r
+            elif r["parent_version_id"] is not None:
+                if r["is_active"]:
+                    active_ans[int(r["parent_version_id"])] = r
+            elif r["is_active"]:
+                orphans.append(r)               # standalone assistant/system (no question)
+
+        # Order each slot by its node's ORIGINAL position (min turn_index), so editing an
+        # earlier question keeps it in place; question before answer within a slot.
+        entries: List[tuple] = []
+        for node_id, qv in active_q.items():
+            pos = node_pos[node_id]
+            entries.append((pos, 0, qv))
+            ans = active_ans.get(int(qv["id"]))
+            if ans is not None:
+                entries.append((pos, 1, ans))
+        for r in orphans:
+            entries.append((int(r["turn_index"]), 0, r))
+        entries.sort(key=lambda e: (e[0], e[1]))
+
+        def _row(r) -> Dict[str, Any]:
+            sj = r["sources_json"]
+            return {"turn_index": int(r["turn_index"]), "role": r["role"],
+                    "content": r["content"], "sources": json.loads(sj) if sj else None}
+
+        out = [_row(e[2]) for e in entries]
+        if limit is not None:
+            out = out[:limit]
         return out
 
     def get_recent_turns(
@@ -552,13 +859,11 @@ class MemoryStore:
         session_id: str,
         n_messages: int = 6,
     ) -> List[Dict[str, str]]:
-        with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT role, content FROM turns WHERE session_id = ? "
-                "ORDER BY turn_index DESC LIMIT ?",
-                (session_id, n_messages),
-            ).fetchall()
-        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        """Recent turns along the ACTIVE path (so the LLM sees the currently-selected
+        conversation, not stale/alternate versions)."""
+        turns = self.get_turns(session_id)
+        recent = turns[-n_messages:] if n_messages else turns
+        return [{"role": t["role"], "content": t["content"]} for t in recent]
 
     def clear_turns(self, session_id: str) -> int:
         with self._conn() as conn:
