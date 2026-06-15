@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 # ----------------------------------------------------------------------
@@ -54,7 +54,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     title         TEXT NOT NULL DEFAULT 'New conversation',
     user_id       TEXT NOT NULL DEFAULT 'local',
     created_at    REAL NOT NULL,
-    updated_at    REAL NOT NULL
+    updated_at    REAL NOT NULL,
+    -- Compact-memory rolling summary of OLDER turns (what's sent to the LLM, never shown to the
+    -- user). mem_summary_upto = how many older active-path turns are already folded in.
+    mem_summary       TEXT,
+    mem_summary_upto  INTEGER NOT NULL DEFAULT 0,
+    mem_summary_at    REAL
 );
 
 CREATE TABLE IF NOT EXISTS turns (
@@ -147,6 +152,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in cur.execute("PRAGMA table_info(sessions)").fetchall()}
     if "user_id" not in cols:
         cur.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'")
+    # Compact-memory rolling-summary columns (additive; safe on pre-existing sessions tables).
+    if cols and "mem_summary" not in cols:
+        cur.execute("ALTER TABLE sessions ADD COLUMN mem_summary TEXT")
+    if cols and "mem_summary_upto" not in cols:
+        cur.execute("ALTER TABLE sessions ADD COLUMN mem_summary_upto INTEGER NOT NULL DEFAULT 0")
+    if cols and "mem_summary_at" not in cols:
+        cur.execute("ALTER TABLE sessions ADD COLUMN mem_summary_at REAL")
     # Add message-versioning columns to a pre-existing turns table, then backfill
     # legacy rows so every existing turn becomes version 1 (idempotent, non-destructive).
     turn_cols = {r[1] for r in cur.execute("PRAGMA table_info(turns)").fetchall()}
@@ -362,6 +374,12 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
     na = sum(x * x for x in a) ** 0.5
     nb = sum(x * x for x in b) ** 0.5
     return dot / max(na * nb, 1e-9)
+
+
+def estimate_tokens(text: str) -> int:
+    """Cheap, dependency-free token estimate (~4 chars/token) for budgeting the assembled
+    LLM context. Good enough to keep memory under a cap without a tokenizer dependency."""
+    return (len(text or "") + 3) // 4
 
 
 # ----------------------------------------------------------------------
@@ -1189,6 +1207,50 @@ class MemoryStore:
             for r in session_rows[:max_facts]:
                 lines.append(f"- {r['key']}: {trunc(r['value'])}")
         return "\n".join(lines)
+
+    def relevant_facts(self, session_id: str, query: str,
+                       limit: int = 6) -> List[Dict[str, Any]]:
+        """Facts (global + this session) ranked by lexical overlap with the question, so only
+        the ones likely relevant to THIS turn are injected — not the whole table. No embeddings
+        or API calls (reuses question_tokens). Returns [{key, value, scope}] best-first."""
+        q_toks = set(question_tokens(query or ""))
+        if not q_toks:
+            return []
+        scored: List[tuple] = []
+        for scope, sid in (("global", None), ("session", session_id)):
+            if scope == "session" and not session_id:
+                continue
+            for r in self.list_facts(scope, sid):
+                f_toks = set(question_tokens(f"{r['key']} {r['value']}"))
+                overlap = len(q_toks & f_toks)
+                if overlap > 0:
+                    scored.append((overlap, float(r.get("updated_at") or 0.0), scope, r))
+        scored.sort(key=lambda x: (-x[0], -x[1]))
+        return [{"key": r["key"], "value": r["value"], "scope": scope}
+                for _ov, _ts, scope, r in scored[: max(0, int(limit))]]
+
+    # ------- Compact-memory rolling summary --------------------------
+    def get_session_summary(self, session_id: str) -> Dict[str, Any]:
+        """The persisted rolling summary of OLDER turns + how many older turns it covers."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT mem_summary, mem_summary_upto, mem_summary_at FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return {"summary": "", "upto": 0, "at": None}
+        return {"summary": row["mem_summary"] or "",
+                "upto": int(row["mem_summary_upto"] or 0),
+                "at": row["mem_summary_at"]}
+
+    def set_session_summary(self, session_id: str, summary: str, upto: int) -> None:
+        """Persist the rolling summary (and how many older turns it now covers) in conversations.db."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE sessions SET mem_summary = ?, mem_summary_upto = ?, mem_summary_at = ? "
+                "WHERE id = ?",
+                (summary or "", int(upto), time.time(), session_id),
+            )
 
     def stats(self) -> Dict[str, int]:
         with self._conn() as conn:
