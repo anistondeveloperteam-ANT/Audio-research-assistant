@@ -185,14 +185,23 @@ def test_crag_disabled_uses_legacy_concurrent_sweep(tmp_path, monkeypatch):
 CODE_Q = "write python code for the MVDR beamformer"
 
 
-def _drive_code(monkeypatch, tmp_path, local_items, *, crag=True):
+def _drive_code(monkeypatch, tmp_path, local_items, *, crag=True, queries=None):
     """Run the code-intent route with mocked local retrieval + a captured run_agent."""
     mem = MemoryStore(tmp_path / "m.db")
     sid = mem.create_session(user_id="local")
     monkeypatch.setattr(cl, "_memory", mem)
     monkeypatch.setenv("ENABLE_LOCAL_RAG", "true")
     monkeypatch.setenv("CRAG_ENABLED", "true" if crag else "false")
-    monkeypatch.setattr(cl, "_gather_local_items", lambda q, mode: (list(local_items), []))
+    if queries:
+        monkeypatch.setattr(cl, "_deep_queries", lambda q: list(queries))
+
+    local_calls = []
+
+    def fake_local(q, mode):
+        local_calls.append(q)
+        return list(local_items), []
+
+    monkeypatch.setattr(cl, "_gather_local_items", fake_local)
 
     captured = {}
 
@@ -205,6 +214,7 @@ def _drive_code(monkeypatch, tmp_path, local_items, *, crag=True):
 
     monkeypatch.setattr("backend.agent.loop.run_agent", fake_run_agent)
     events = list(cl.stream_chat_events(sid, CODE_Q))
+    captured["local_calls"] = local_calls
     return events, captured, mem, sid
 
 
@@ -233,6 +243,20 @@ def test_code_from_paper_thin_supplements_with_github(tmp_path, monkeypatch):
     assert cap["brief"]                               # spec extracted from the single chunk
     assert cap["use_search"] is True                 # thin -> GitHub references fill the gaps
     assert "github references to fill gaps" in _code_statuses(events)
+
+
+def test_code_from_paper_searches_all_deep_angles(tmp_path, monkeypatch):
+    # Deep mode: the PDF lookup covers the question AND each planned angle, so an algorithm spread
+    # across sections is assembled. The local retriever is hit once per angle.
+    local = [_local(0.80), _local(0.70)]
+    events, cap, mem, sid = _drive_code(
+        monkeypatch, tmp_path, local,
+        queries=["write the MVDR beamformer", "MVDR weight computation", "MVDR covariance estimate"])
+
+    assert cap["local_calls"] == [
+        "write the MVDR beamformer", "MVDR weight computation", "MVDR covariance estimate"]
+    assert cap["brief"]                               # spec assembled from the merged angles
+    assert "3 angles" in _code_statuses(events)
 
 
 def test_code_not_in_papers_falls_back_to_github_only(tmp_path, monkeypatch):

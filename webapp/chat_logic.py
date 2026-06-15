@@ -966,9 +966,16 @@ def stream_chat_events(
         paper_spec = paper_citation = ""
         supplement = True
         if crag_enabled() and local_rag_enabled():
-            yield {"type": "status", "message": "Checking your papers for the algorithm..."}
+            # Search the PDFs across the question AND its auto-planned angles (deep mode), so an
+            # algorithm described across several sections/papers is assembled, not just whatever the
+            # single literal query hit. Fast mode -> one query (no planner call), unchanged.
+            code_queries = _deep_queries(q)
+            yield {"type": "status", "message":
+                   ("Checking your papers for the algorithm across "
+                    f"{len(code_queries)} angles...") if len(code_queries) > 1
+                   else "Checking your papers for the algorithm..."}
             code_local, _cw, _ct = _gather_pass(
-                [q], _gather_local_items, lambda i, x: mode,
+                code_queries, _gather_local_items, lambda i, x: mode,
                 trace=trace, span_name="local_rag")
             code_grade = grade_evidence(code_local)
             if code_grade in (STRONG, PARTIAL):
