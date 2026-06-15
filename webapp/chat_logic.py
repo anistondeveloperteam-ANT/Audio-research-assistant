@@ -489,6 +489,81 @@ def _grade_event(grade: str, web_on: bool = True) -> Dict[str, Any]:
     return {"type": "grade", "grade": grade, "label": _GRADE_BADGE.get(grade, ""), "message": msg}
 
 
+# ----------------------------------------------------------------------
+# CRAG latency options (both OFF by default — they don't change results, only timing):
+#   * speculative external prefetch: start the web search concurrently with local retrieval so a
+#     PARTIAL/NONE grade doesn't pay local-then-external sequentially. STRONG discards the prefetch
+#     (trading some web-search spend for latency — hence opt-in).
+#   * grade cache: reuse a recent (items, grade) for the same question in a session (helps
+#     regenerate, which bypasses the answer cache). TTL- and size-bounded.
+# ----------------------------------------------------------------------
+def crag_speculative_external() -> bool:
+    return _env_flag("CRAG_SPECULATIVE_EXTERNAL", False)
+
+
+def crag_grade_cache_enabled() -> bool:
+    return _env_flag("CRAG_GRADE_CACHE", False)
+
+
+def _grade_cache_ttl() -> float:
+    try:
+        return float(os.getenv("CRAG_GRADE_CACHE_TTL", "120"))
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def _ext_arg_for(i: int, query: str) -> int:
+    return _external_top_k() if i == 0 else _deep_subquery_top_k()
+
+
+def _start_speculative_external(queries: List[str], trace):
+    """Kick off the external gather in the background; returns a (executor, future) handle."""
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    fut = ex.submit(_gather_pass, queries, _gather_external_items, _ext_arg_for,
+                    trace=trace, span_name="external_search",
+                    timeout=float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0)
+    return (ex, fut)
+
+
+def _resolve_speculative(spec):
+    ex, fut = spec
+    try:
+        return fut.result()
+    finally:
+        ex.shutdown(wait=False)
+
+
+def _drop_speculative(spec):
+    """STRONG grade: we prefetched external but don't need it — don't block on it."""
+    ex, fut = spec
+    fut.cancel()
+    ex.shutdown(wait=False)
+
+
+_GRADE_CACHE: Dict[tuple, tuple] = {}   # (session_id, mode, normalized_q) -> (ts, items, grade)
+
+
+def _grade_cache_key(session_id: str, mode: str, q: str) -> tuple:
+    return (session_id, mode, " ".join((q or "").lower().split()))
+
+
+def _grade_cache_get(session_id: str, mode: str, q: str):
+    ent = _GRADE_CACHE.get(_grade_cache_key(session_id, mode, q))
+    if not ent:
+        return None
+    ts, cached_items, grade = ent
+    if time.time() - ts > _grade_cache_ttl():
+        _GRADE_CACHE.pop(_grade_cache_key(session_id, mode, q), None)
+        return None
+    return [dict(it) for it in cached_items], grade
+
+
+def _grade_cache_put(session_id: str, mode: str, q: str, items, grade: str) -> None:
+    if len(_GRADE_CACHE) > 256:                      # crude bound; correctness comes from the TTL
+        _GRADE_CACHE.clear()
+    _GRADE_CACHE[_grade_cache_key(session_id, mode, q)] = (time.time(), [dict(it) for it in items], grade)
+
+
 def _traced_span(trace, span_name: str, fn, *fn_args):
     """Run `fn(*fn_args)` inside a trace span, recording the result count. The trace handle is
     passed explicitly so nesting stays correct across the worker-thread hop."""
@@ -1053,17 +1128,29 @@ def stream_chat_events(
         #     evidence and supplements with external search; NONE drops local and goes fully
         #     external. Grading reuses the reranker scores already on each chunk (no extra LLM). ---
         yield {"type": "status", "message": "Searching your papers..."}
-        local_items, local_warnings, _ = _gather_pass(
-            queries, _gather_local_items, lambda i, q: mode,
-            trace=trace, span_name="local_rag")
-        for w in local_warnings:
-            if w not in seen_warnings:
-                seen_warnings.add(w)
-                yield {"type": "warning", "message": w}
-
-        crag_grade = grade_evidence(local_items)
-        trace.set(crag_grade=crag_grade)
         web_on = is_web_search_enabled()
+        cached = _grade_cache_get(session_id, mode, q) if crag_grade_cache_enabled() else None
+
+        # Optionally start the web search in parallel with local retrieval (opt-in; STRONG drops it).
+        spec = None
+        if cached is None and crag_speculative_external() and web_on:
+            spec = _start_speculative_external(queries, trace)
+
+        if cached is not None:
+            local_items, crag_grade = cached
+        else:
+            local_items, local_warnings, _ = _gather_pass(
+                queries, _gather_local_items, lambda i, q: mode,
+                trace=trace, span_name="local_rag")
+            for w in local_warnings:
+                if w not in seen_warnings:
+                    seen_warnings.add(w)
+                    yield {"type": "warning", "message": w}
+            crag_grade = grade_evidence(local_items)
+            if crag_grade_cache_enabled():
+                _grade_cache_put(session_id, mode, q, local_items, crag_grade)
+
+        trace.set(crag_grade=crag_grade)
         logger.info("CRAG grade=%s (%d local chunks)", crag_grade, len(local_items))
         yield _grade_event(crag_grade, web_on)            # UI badge: where the answer comes from
 
@@ -1084,11 +1171,14 @@ def stream_chat_events(
                     "I couldn't find this in your PDFs, and web search is off.")}
 
         if crag_grade in (PARTIAL, NONE) and web_on:
-            ext_items, ext_warnings, timed_out = _gather_pass(
-                queries, _gather_external_items,
-                lambda i, q: (_external_top_k() if i == 0 else _deep_subquery_top_k()),
-                trace=trace, span_name="external_search",
-                timeout=float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0)
+            if spec is not None:                          # use the prefetch started above
+                ext_items, ext_warnings, timed_out = _resolve_speculative(spec)
+                spec = None
+            else:
+                ext_items, ext_warnings, timed_out = _gather_pass(
+                    queries, _gather_external_items, _ext_arg_for,
+                    trace=trace, span_name="external_search",
+                    timeout=float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0)
             if timed_out:
                 yield {"type": "warning",
                        "message": "External search timed out — answering from available sources."}
@@ -1097,6 +1187,8 @@ def stream_chat_events(
                 if w not in seen_warnings:
                     seen_warnings.add(w)
                     yield {"type": "warning", "message": w}
+        if spec is not None:                              # STRONG (or web off): we don't need it
+            _drop_speculative(spec)
     else:
         # CRAG off (or local RAG off): original concurrent sweep — local and external run
         # together per query so the stage takes max(local, external), not their sum.

@@ -285,6 +285,49 @@ def test_self_rag_escalates_to_web_when_strong_answer_fails_verification(tmp_pat
     assert "WebCorroboration" in src_titles            # merged web evidence reached the UI
 
 
+# ======================================================================
+# Latency options (flag-gated, default off): speculative prefetch + grade cache.
+# They change timing, not results — the grade still decides what evidence is used.
+# ======================================================================
+def test_speculative_prefetch_partial_merges_strong_drops(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRAG_SPECULATIVE_EXTERNAL", "true")
+    # PARTIAL -> the prefetched web evidence is merged
+    _ev, _ext, sources = _drive(monkeypatch, tmp_path, [_local(0.62), _local(0.34)], web=True)
+    assert "WebResult" in [s["title"] for s in sources]
+    # STRONG -> the prefetch is discarded; the answer stays library-only
+    _ev2, _ext2, sources2 = _drive(monkeypatch, tmp_path, [_local(0.80), _local(0.72)], web=True)
+    assert "WebResult" not in [s["title"] for s in sources2]
+
+
+def test_grade_cache_skips_re_retrieval_within_session(tmp_path, monkeypatch):
+    mem = MemoryStore(tmp_path / "m.db")
+    sid = mem.create_session(user_id="local")
+    monkeypatch.setattr(cl, "_memory", mem)
+    monkeypatch.setenv("ENABLE_ANSWER_CACHE", "false")
+    monkeypatch.setenv("ENABLE_LOCAL_RAG", "true")
+    monkeypatch.setenv("ENABLE_WEB_SEARCH", "false")
+    monkeypatch.setenv("CRAG_ENABLED", "true")
+    monkeypatch.setenv("CRAG_GRADE_CACHE", "true")
+    monkeypatch.setattr(cl, "_deep_queries", lambda q: [q])
+    cl._GRADE_CACHE.clear()
+
+    calls = {"n": 0}
+
+    def fake_local(q, mode):
+        calls["n"] += 1
+        return [_local(0.85), _local(0.75)], []
+
+    monkeypatch.setattr(cl, "_gather_local_items", fake_local)
+
+    q = "How does MVDR beamforming reduce noise?"
+    for _ in range(2):
+        for ev in cl.stream_chat_events(sid, q):
+            if ev["type"] in ("sources", "done", "error", "sanity"):
+                break
+    assert calls["n"] == 1                            # second request served from the grade cache
+    cl._GRADE_CACHE.clear()
+
+
 def test_self_rag_does_not_escalate_when_strong_answer_verifies(tmp_path, monkeypatch):
     mem = MemoryStore(tmp_path / "m.db")
     sid = mem.create_session(user_id="local")
