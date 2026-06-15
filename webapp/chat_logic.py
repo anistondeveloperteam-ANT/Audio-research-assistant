@@ -1030,6 +1030,7 @@ def stream_chat_events(
 
     items: List[Dict[str, Any]] = []
     local_on = local_rag_enabled()
+    crag_grade = NONE                 # set by the CRAG branch; read later by the Self-RAG escalation
 
     # --- Deep research, automatically: plan a few angles, then search the main
     #     question AND every angle across all sources, merging the evidence so the
@@ -1135,6 +1136,7 @@ def stream_chat_events(
     provider_ok = False
     loop_run_failed = False     # generated Python failed in the sandbox
     answer_rewritten = False    # auto-review replaced the answer post-verification
+    self_rag_escalated = False  # STRONG answer failed verification -> escalated to web once
     clean_body = ""             # the answer body to cache (no review/verify footers)
     try:
         provider = get_provider()
@@ -1245,6 +1247,31 @@ def stream_chat_events(
 
                 if (verification_passed(verdict) and not run_failed) or round_no >= max_verify_rounds():
                     break
+
+                # Self-RAG: a STRONG answer drawn from the PDFs ALONE that fails verification means
+                # the library wasn't enough after all. Escalate to external search ONCE and
+                # regenerate with the merged evidence (the grade badge flips to "Library + web").
+                # PARTIAL/NONE already searched externally, so the generic follow-up below covers them.
+                if (crag_grade == STRONG and not self_rag_escalated
+                        and not verification_passed(verdict)
+                        and round_no < max_verify_rounds() and is_web_search_enabled()):
+                    self_rag_escalated = True
+                    yield {"type": "status", "message":
+                           "Your PDFs didn't fully hold up — searching the web to corroborate "
+                           "and revise the answer..."}
+                    esc_items, esc_warnings, _esc_timed = _gather_pass(
+                        queries, _gather_external_items,
+                        lambda i, qq: (_external_top_k() if i == 0 else _deep_subquery_top_k()),
+                        trace=trace, span_name="external_search",
+                        timeout=float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0)
+                    for w in esc_warnings:
+                        if w not in seen_warnings:
+                            seen_warnings.add(w)
+                            yield {"type": "warning", "message": w}
+                    if _extend_unique(items, esc_items):
+                        yield {"type": "sources", "sources": _public_sources(items)}
+                        yield _grade_event(PARTIAL, True)   # badge: needed the web after all
+                    continue                                 # regenerate with the merged evidence
 
                 added = 0
                 needs_search = bool(

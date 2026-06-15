@@ -222,6 +222,100 @@ def _code_statuses(events):
     return " ".join(e.get("message", "") for e in events if e["type"] == "status").lower()
 
 
+# ======================================================================
+# Self-RAG: a STRONG (PDF-only) answer that fails verification escalates to the
+# web once and regenerates with the merged evidence.
+# ======================================================================
+class _FakeProvider:
+    is_available = True
+    model = "fake"
+
+    def stream_chat(self, messages, system=None, max_tokens=None, temperature=0.0,
+                    yield_reasoning=False):
+        yield ("MVDR beamforming reduces noise by spatial filtering that keeps the target "
+               "direction undistorted while minimizing other directions — a grounded test answer.")
+
+
+def test_self_rag_escalates_to_web_when_strong_answer_fails_verification(tmp_path, monkeypatch):
+    mem = MemoryStore(tmp_path / "m.db")
+    sid = mem.create_session(user_id="local")
+    monkeypatch.setattr(cl, "_memory", mem)
+    monkeypatch.setenv("ENABLE_ANSWER_CACHE", "false")
+    monkeypatch.setenv("ENABLE_LOCAL_RAG", "true")
+    monkeypatch.setenv("ENABLE_WEB_SEARCH", "true")
+    monkeypatch.setenv("CRAG_ENABLED", "true")
+    monkeypatch.setenv("AGENTIC_MIN_VERIFY_SCORE", "80")
+    monkeypatch.setattr(cl, "_deep_queries", lambda q: [q])
+    monkeypatch.setattr(cl, "_gather_local_items",
+                        lambda q, mode: ([_local(0.85), _local(0.75)], []))   # STRONG -> skip web
+
+    ext_calls = {"n": 0}
+
+    def fake_ext(q, k):
+        ext_calls["n"] += 1
+        return ([_ext("WebCorroboration")], [])
+
+    monkeypatch.setattr(cl, "_gather_external_items", fake_ext)
+
+    # Agentic loop: fail verification on round 1, pass on round 2.
+    monkeypatch.setattr(cl, "agentic_loop_enabled", lambda: True)
+    monkeypatch.setattr(cl, "auto_review_enabled", lambda: False)
+    monkeypatch.setattr(cl, "max_verify_rounds", lambda: 2)
+    monkeypatch.setattr(cl, "run_best_python_block", lambda answer: None)
+    monkeypatch.setattr(cl, "get_provider", lambda *a, **k: _FakeProvider())
+
+    verify_calls = {"n": 0}
+
+    def fake_verify(provider, *, question, evidence, answer, run_info):
+        verify_calls["n"] += 1
+        ok = verify_calls["n"] >= 2
+        return {"ok": ok, "score": 92 if ok else 20, "needs_more_search": False, "feedback": "x"}
+
+    monkeypatch.setattr(cl, "verify_answer", fake_verify)
+
+    events = list(cl.stream_chat_events(sid, "How does MVDR beamforming reduce noise?", mode="Default"))
+
+    assert ext_calls["n"] >= 1                         # escalation triggered the web search
+    assert verify_calls["n"] == 2                      # regenerated once after the escalation
+    statuses = " ".join(e.get("message", "") for e in events if e["type"] == "status").lower()
+    assert "didn't fully hold up" in statuses
+    grades = [e["grade"] for e in events if e["type"] == "grade"]
+    assert grades and grades[0] == cl.STRONG and grades[-1] == cl.PARTIAL   # badge flipped
+    src_titles = [s["title"] for e in events if e["type"] == "sources" for s in e["sources"]]
+    assert "WebCorroboration" in src_titles            # merged web evidence reached the UI
+
+
+def test_self_rag_does_not_escalate_when_strong_answer_verifies(tmp_path, monkeypatch):
+    mem = MemoryStore(tmp_path / "m.db")
+    sid = mem.create_session(user_id="local")
+    monkeypatch.setattr(cl, "_memory", mem)
+    monkeypatch.setenv("ENABLE_ANSWER_CACHE", "false")
+    monkeypatch.setenv("ENABLE_LOCAL_RAG", "true")
+    monkeypatch.setenv("ENABLE_WEB_SEARCH", "true")
+    monkeypatch.setenv("CRAG_ENABLED", "true")
+    monkeypatch.setenv("AGENTIC_MIN_VERIFY_SCORE", "80")
+    monkeypatch.setattr(cl, "_deep_queries", lambda q: [q])
+    monkeypatch.setattr(cl, "_gather_local_items",
+                        lambda q, mode: ([_local(0.85), _local(0.75)], []))
+
+    ext_calls = {"n": 0}
+    monkeypatch.setattr(cl, "_gather_external_items",
+                        lambda q, k: (ext_calls.__setitem__("n", ext_calls["n"] + 1), ([_ext()], []))[1])
+    monkeypatch.setattr(cl, "agentic_loop_enabled", lambda: True)
+    monkeypatch.setattr(cl, "auto_review_enabled", lambda: False)
+    monkeypatch.setattr(cl, "max_verify_rounds", lambda: 2)
+    monkeypatch.setattr(cl, "run_best_python_block", lambda answer: None)
+    monkeypatch.setattr(cl, "get_provider", lambda *a, **k: _FakeProvider())
+    monkeypatch.setattr(cl, "verify_answer",
+                        lambda provider, **kw: {"ok": True, "score": 95, "needs_more_search": False})
+
+    events = list(cl.stream_chat_events(sid, "How does MVDR beamforming reduce noise?", mode="Default"))
+
+    assert ext_calls["n"] == 0                         # STRONG answer held up -> no web spend
+    grades = [e["grade"] for e in events if e["type"] == "grade"]
+    assert grades == [cl.STRONG]                       # badge stays "from your library"
+
+
 def test_code_from_paper_strong_uses_paper_as_spec(tmp_path, monkeypatch):
     # 3 strong relevant chunks -> STRONG and not thin: the paper alone is the spec (no GitHub).
     local = [_local(0.80), _local(0.70), _local(0.60)]
