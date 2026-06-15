@@ -413,6 +413,30 @@ def test_hidden_tests_reject_visible_only_pass(monkeypatch):
                for e in events)                          # visible fully passed, held-out ran & failed
 
 
+def test_heldout_error_degrades_to_visible_acceptance(monkeypatch):
+    """If the held-out machinery itself errors (provider hiccup), a genuine visible-passing
+    solution is accepted on the visible tests, not silently discarded."""
+    provider = _FakeProvider(
+        requirements="- implement bubble_sort(a)", tests=_fence(_TESTS_SRC),
+        first=[_fence("def bubble_sort(a):\n    return sorted(a)")],
+        hidden=_HIDDEN_SRC, invariants=_INV_SRC,
+    )
+    monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
+    monkeypatch.setattr(loop, "docker_available", lambda: True)
+    monkeypatch.setattr(loop, "run_python_auto", lambda code, **k: _ok(2, 2))
+
+    def boom(*a, **k):
+        raise RuntimeError("held-out provider down")
+    monkeypatch.setattr(loop, "_verify_heldout", boom)
+
+    events = []
+    res = loop.run_agent("Implement bubble sort", use_search=False, max_iters=1, on_event=events.append)
+    assert res.verification == "verified"               # visible-passing solution preserved
+    assert "sorted(a)" in res.best_code
+    assert any(e.get("type") == "warning" and "Held-out" in (e.get("message") or "")
+               for e in events)
+
+
 def test_multi_seed_rejection(monkeypatch):
     """A solution that passes on one seed but not another is a fluke, not verified."""
     heldout = _HIDDEN_SRC + _INV_SRC

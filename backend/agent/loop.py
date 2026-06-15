@@ -659,24 +659,32 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                     "or fake the functions — solve the GENERAL task.")
             elif verdict.get("done"):
                 # (1/3/4) Passed visible + relevant + clean -> held-out hidden + invariants on
-                # multiple random seeds. Verified only if EVERY layer passes.
-                heldout = _ensure_heldout(gen_provider, strict)
-                if heldout:
-                    ok, hp_pass, hp_tot, hres = _verify_heldout(code, heldout, verify_seeds())
-                    verdict["hidden_passed"], verdict["hidden_total"] = hp_pass, hp_tot
-                    if ok:
-                        verdict["verified"] = True
+                # multiple random seeds. Verified only if EVERY layer passes. The held-out layer is
+                # a BONUS rigor check (an extra LLM generation + sandbox runs): if that machinery
+                # itself errors (provider hiccup, etc.) we degrade gracefully to visible-only
+                # acceptance rather than discarding a genuine, visible-passing solution.
+                try:
+                    heldout = _ensure_heldout(gen_provider, strict)
+                    if heldout:
+                        ok, hp_pass, hp_tot, hres = _verify_heldout(code, heldout, verify_seeds())
+                        verdict["hidden_passed"], verdict["hidden_total"] = hp_pass, hp_tot
+                        if ok:
+                            verdict["verified"] = True
+                        else:
+                            verdict["done"] = False
+                            verdict["hidden_fail"] = True
+                            diag = (((hres.stdout if hres else "") + "\n"
+                                     + (hres.stderr if hres else "")).strip())
+                            verdict["feedback"] = (
+                                "Your code passes the VISIBLE tests but FAILS on unseen inputs "
+                                f"({hp_pass}/{hp_tot} held-out checks) — solve the GENERAL problem, "
+                                "do not special-case the examples.\n" + diag)[:3000]
                     else:
-                        verdict["done"] = False
-                        verdict["hidden_fail"] = True
-                        diag = (((hres.stdout if hres else "") + "\n"
-                                 + (hres.stderr if hres else "")).strip())
-                        verdict["feedback"] = (
-                            "Your code passes the VISIBLE tests but FAILS on unseen inputs "
-                            f"({hp_pass}/{hp_tot} held-out checks) — solve the GENERAL problem, do "
-                            "not special-case the examples.\n" + diag)[:3000]
-                else:
-                    verdict["verified"] = True   # held-out unavailable -> visible-only acceptance
+                        verdict["verified"] = True   # held-out unavailable -> visible-only
+                except Exception as _hx:             # noqa: BLE001 - held-out is a bonus layer
+                    emit({"type": "warning", "message":
+                          f"Held-out verification unavailable ({_hx}); accepting on visible tests."})
+                    verdict["verified"] = True
 
             att = Attempt(i, code, result, verdict)
             emit({"type": "run_result", "iteration": i, "candidate": c + 1, "ok": result.ok,
@@ -691,7 +699,11 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
 
         candidates: List[tuple] = []
         if n_cand == 1:
-            one = _attempt_candidate(0)
+            try:
+                one = _attempt_candidate(0)
+            except Exception as _ex:    # noqa: BLE001 - surface, don't crash the run
+                emit({"type": "warning", "message": f"A candidate failed: {_ex}"})
+                one = None
             if one is not None:
                 candidates.append(one)
         else:
@@ -701,7 +713,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                 for fut in _cf.as_completed(futs):
                     try:
                         one = fut.result()
-                    except Exception:   # noqa: BLE001 - a dead candidate must not kill the round
+                    except Exception as _ex:   # noqa: BLE001 - a dead candidate must not kill the round
+                        emit({"type": "warning", "message": f"A candidate failed: {_ex}"})
                         one = None
                     if one is not None:
                         candidates.append(one)
