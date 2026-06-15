@@ -6,13 +6,17 @@
 
 Everything runs on your machine: a FastAPI backend, a dependency‑free HTML/JS frontend, and whichever LLM you point it at.
 
+> [!IMPORTANT]
+> **Portfolio showcase — not open source.** This repository is public so you can **read the code and see what I built**. It is **not licensed for use**: please don't run, copy, deploy, modify, or redistribute it. See the [LICENSE](LICENSE) (All Rights Reserved). The setup steps below document how the system works — they're for review, not a grant of permission. For any use, please get in touch first.
+
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-438%20passing-2ea44f)
 ![Corrective RAG](https://img.shields.io/badge/retrieval-Corrective%20RAG-8A2BE2)
-[![License](https://img.shields.io/badge/license-MIT-555)](LICENSE)
+![Showcase only](https://img.shields.io/badge/portfolio-showcase%20only-orange)
+[![License](https://img.shields.io/badge/license-All%20Rights%20Reserved-red)](LICENSE)
 
 **[Quick start](#-quick-start-5-minutes) · [What you can ask](#-what-you-can-ask) · [How it works](docs/HOW_IT_WORKS.md) · [Corrective RAG](#-corrective-rag-grade-then-act) · [Fast vs Deep](#-fast-vs-deep) · [Trust](#-why-you-can-trust-the-answers) · [Features](#-features) · [Code map](#-code-map-where-everything-lives) · [Config](#-configuration)**
 
@@ -312,5 +316,5 @@ piece lives, then read **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the 
 
 <div align="center">
 <sub>Python · FastAPI · vanilla JS · Docker · SQLite · CUDA — self‑hosted, no telemetry.</sub>
-<br><sub>Released under the <a href="LICENSE">MIT License</a>.</sub>
+<br><sub>© 2026 Aniston Developer Team — <b>All Rights Reserved</b>. Public for portfolio/showcase only; see the <a href="LICENSE">LICENSE</a>. Not licensed for use.</sub>
 </div>
