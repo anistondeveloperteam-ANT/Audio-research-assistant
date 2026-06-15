@@ -269,12 +269,34 @@ def test_loop_blocks_without_running(monkeypatch):
 
 
 def test_agent_stops_clean_when_docker_missing(monkeypatch):
+    """Execution is mandatory: a sandbox outage yields a clear error, never a prose/fake answer."""
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: _FakeProvider())
     monkeypatch.setattr(loop, "docker_available", lambda: False)
     events = []
-    res = loop.run_agent("anything", use_search=False, on_event=events.append)
-    assert res.success is False
+    res = loop.run_agent("simulate a damped pendulum", use_search=False, on_event=events.append)
+    assert res.success is False and res.best_code == ""
     assert any(e.get("type") == "error" for e in events)
+    md = loop.result_to_markdown(res)
+    assert "Sandbox unavailable" in md                   # explicit, honest error
+    assert "```python" not in md                          # never a fabricated code answer
+
+
+def test_verified_run_surfaces_real_captured_stdout(monkeypatch):
+    """A code-intent deliverable carries the REAL sandbox stdout, not a 'when executed' claim."""
+    provider = _FakeProvider(
+        requirements="- implement bubble_sort(a)", tests=_fence(_TESTS_SRC),
+        first=[_fence("def bubble_sort(a):\n    return sorted(a)")],
+        hidden=_HIDDEN_SRC, invariants=_INV_SRC,
+    )
+    monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
+    monkeypatch.setattr(loop, "docker_available", lambda: True)
+    monkeypatch.setattr(loop, "run_python_auto",
+                        lambda code, **k: RunResult(True, 0, "sorted ok\nTESTS_PASSED 2/2\n", "", 0.1))
+
+    res = loop.run_agent("Implement bubble sort", use_search=False)
+    assert res.verification == "verified"
+    assert "TESTS_PASSED 2/2" in res.best_output          # captured from the sandbox run
+    assert "**Output:**" in loop.result_to_markdown(res)  # shown to the user
 
 
 # ---- test-gate, best-of-N, relevance gate, escalation ---------------

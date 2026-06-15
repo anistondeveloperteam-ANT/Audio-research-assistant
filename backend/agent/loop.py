@@ -511,10 +511,14 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         )()
         emit({"type": "error", "message": message})
         return AgentResult(task, False, "", "", "LLM unavailable.", [])
+    # Execution is MANDATORY for code-intent tasks: the deliverable is real captured output from
+    # the sandbox, never a prose "when executed, this would…" answer. If the sandbox is down we
+    # return a clear error (which result_to_markdown renders as-is) — not a fabricated result.
     if not docker_available():
-        emit({"type": "error", "message": "Docker is not running — start Docker Desktop so the "
-                                          "agent can run and verify its code."})
-        return AgentResult(task, False, "", "", "Docker unavailable.", [])
+        msg = ("⚠ Sandbox unavailable — Docker is not running, so the code could not be executed "
+               "and verified. Start Docker Desktop and try again.")
+        emit({"type": "error", "message": msg})
+        return AgentResult(task, False, "", "", msg, [])
 
     # Reference implementations of the NAMED algorithm (any domain) to ADAPT, never copy.
     reference = ""
