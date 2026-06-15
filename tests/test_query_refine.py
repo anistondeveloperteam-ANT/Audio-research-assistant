@@ -1,5 +1,7 @@
 """Query refinement: silently fix spelling/grammar BEFORE search, without ever
 breaking a request. Pure-unit — the LLM provider is mocked, no network."""
+import pytest
+
 import backend.answering.query_refine as qr
 
 
@@ -33,7 +35,11 @@ def _patch_provider(monkeypatch, provider):
     monkeypatch.setattr("backend.llm.streaming_provider.get_provider", lambda *a, **k: provider)
 
 
-def setup_function(_):
+@pytest.fixture(autouse=True)
+def _enable_refine(monkeypatch):
+    # conftest disables query-refine suite-wide for deterministic offline chat tests; these unit
+    # tests exercise the enabled path (and mock the provider), so opt back in.
+    monkeypatch.setenv("QUERY_REFINE", "true")
     qr.clear_cache()
 
 

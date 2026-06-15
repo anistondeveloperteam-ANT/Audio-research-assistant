@@ -24,3 +24,8 @@ os.environ["CODE_INTENT_SEMANTIC"] = "false"
 # so chat tests are deterministic + offline. The compact-memory unit tests opt back in and mock
 # the provider, so this never hides a real failure.
 os.environ["COMPACT_MEMORY"] = "false"
+
+# Query auto-correct makes a live LLM call when a query has an unrecognized token; disable it
+# suite-wide so the chat path stays fully offline + deterministic. test_query_refine opts back in
+# and mocks the provider.
+os.environ["QUERY_REFINE"] = "false"
