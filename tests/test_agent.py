@@ -146,7 +146,7 @@ class _FakeProvider:
             return ""
         return lst.pop(0) if len(lst) > 1 else lst[0]
 
-    def stream_chat(self, messages, system="", max_tokens=0, temperature=0):
+    def stream_chat(self, messages, system="", max_tokens=0, temperature=0, yield_reasoning=False):
         user = messages[-1]["content"] if messages else ""
         with self._lock:
             self.calls.append((system, user))

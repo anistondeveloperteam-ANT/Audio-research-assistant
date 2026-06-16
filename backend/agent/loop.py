@@ -27,6 +27,7 @@ import json
 import os
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -34,7 +35,7 @@ from typing import Any, Callable, Dict, List, Optional
 from backend.agent.anticheat import anticheat_enabled, scan_for_cheating
 from backend.agent.code_runner import RunResult, docker_available, run_python_auto
 from backend.agent.hooks import pre_run
-from backend.llm.streaming_provider import get_provider
+from backend.llm.streaming_provider import CATALOG, DEFAULT_OPENAI_MODEL, get_provider
 from backend.observability import tracing  # no-op unless LANGFUSE_ENABLED=true
 
 # Budgets are generous because reasoning models (GPT-5 / o-series) spend tokens
@@ -120,6 +121,130 @@ def _complete(provider, system: str, user: str, max_tokens: int, temperature: fl
     )).strip()
 
 
+# ----------------------------------------------------------------------
+# Resilient model selection: respect the user's choice, retry transient provider errors, and fall
+# back to another AVAILABLE model instead of failing the whole request when one is rate-limited.
+# ----------------------------------------------------------------------
+_TRANSIENT_MARKERS = ("rate", "quota", "429", "resource_exhausted", "timeout", "timed out",
+                      "deadline", "unavailable", "503", "502", "500", "overloaded", "connection",
+                      "temporarily", "try again", "apiconnection", "apitimeout")
+
+
+def _is_transient_err(msg: str) -> bool:
+    m = (msg or "").lower()
+    return any(k in m for k in _TRANSIENT_MARKERS)
+
+
+def _user_selected_model() -> bool:
+    """True when the user explicitly chose a model — the agent must NOT override it with a different
+    provider on escalation. Set AGENT_MODEL, or a chat model different from the built-in default."""
+    if (os.getenv("AGENT_MODEL") or "").strip():
+        return True
+    return (os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL) or "").strip() != DEFAULT_OPENAI_MODEL
+
+
+def _model_available(model: str) -> bool:
+    try:
+        return bool(get_provider(model).is_available)
+    except Exception:
+        return False
+
+
+def _agent_model_chain() -> List[str]:
+    """Ordered, deduped list of AVAILABLE model ids, best-first: the user's selection first
+    (AGENT_MODEL or the chat's OPENAI_MODEL), then the configured stronger model, then any other
+    configured catalog model — a resilient fallback chain so a 429/timeout on one model switches to
+    another instead of failing the request."""
+    primary = (os.getenv("AGENT_MODEL") or os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL).strip()
+    chain: List[str] = [primary] if primary else []      # the user's choice ALWAYS comes first
+    strong = (os.getenv("AGENT_MODEL_STRONG") or "").strip()
+    for m in ([strong] if strong else []) + [mid for mid, *_ in CATALOG]:
+        m = (m or "").strip()
+        if m and m not in chain and _model_available(m):
+            chain.append(m)
+    return chain or [primary or DEFAULT_OPENAI_MODEL]
+
+
+def _escalated_chain(primary_chain: List[str]) -> List[str]:
+    """Chain when escalating after failed rounds. RESPECTS the user's choice: if a model was
+    explicitly selected we keep the user's chain (never switch providers). Only with NO selection do
+    we let AGENT_MODEL_STRONG lead, keeping the rest as fallback."""
+    strong = (os.getenv("AGENT_MODEL_STRONG") or "").strip()
+    if not strong or _user_selected_model() or not _model_available(strong):
+        return list(primary_chain)
+    return [strong] + [m for m in primary_chain if m != strong]
+
+
+class ResilientProvider:
+    """Wraps an ordered list of model ids and presents the LLMProvider interface. On any provider
+    error (rate limit, timeout, 5xx, auth, connection) it retries with backoff, then FALLS BACK to
+    the next available model — emitting a clear note — so one rate-limited provider never fails a
+    request when another configured model works. Each model's full response is buffered before
+    yielding, so a fallback never produces partial/duplicated output. (Agent use only — the live
+    chat path streams directly.)"""
+
+    name = "resilient"
+
+    def __init__(self, models: List[str], emit: Optional[OnEvent] = None, max_retries: int = 3):
+        self._models = list(dict.fromkeys(m for m in (models or []) if m)) or [DEFAULT_OPENAI_MODEL]
+        self._emit = emit or (lambda e: None)
+        self._max_retries = max(1, max_retries)
+        self._providers: Dict[str, Any] = {}
+        self._active = 0                                 # index of the last model that worked
+
+    def _provider(self, model: str):
+        if model not in self._providers:
+            self._providers[model] = get_provider(model)
+        return self._providers[model]
+
+    @property
+    def model(self) -> str:
+        return self._models[self._active] if self._models else ""
+
+    @property
+    def is_available(self) -> bool:
+        return any(self._provider(m).is_available for m in self._models)
+
+    def unavailable_message(self) -> str:
+        return ("No configured LLM is available — set a provider API key in .env "
+                "(GEMINI_API_KEY, MISTRAL_API_KEY, or OPENAI_CLOUD_KEY).")
+
+    def stream_chat(self, messages, system="", max_tokens=2048, temperature=0.3,
+                    yield_reasoning=False):
+        # Available models in preference order, starting from the last one that worked.
+        order = list(range(self._active, len(self._models))) + list(range(0, self._active))
+        avail = [self._models[i] for i in order if self._provider(self._models[i]).is_available]
+        if not avail:
+            raise RuntimeError(self.unavailable_message())
+        last_err: Optional[Exception] = None
+        for pos, model in enumerate(avail):
+            prov = self._provider(model)
+            delay = 1.0
+            for attempt in range(self._max_retries):
+                try:
+                    chunks = list(prov.stream_chat(           # buffer fully before yielding
+                        messages, system=system, max_tokens=max_tokens,
+                        temperature=temperature, yield_reasoning=yield_reasoning))
+                    self._active = self._models.index(model)  # prefer this model next time
+                    for c in chunks:
+                        yield c
+                    return
+                except Exception as e:                        # noqa: BLE001 - classify by message
+                    last_err = e
+                    if _is_transient_err(str(e)) and attempt < self._max_retries - 1:
+                        time.sleep(min(delay, 8.0))
+                        delay *= 2
+                        continue
+                    break                                     # non-transient / exhausted -> next model
+            if pos + 1 < len(avail):
+                self._emit({"type": "warning", "message":
+                            f"Model {model} unavailable ({type(last_err).__name__}); "
+                            f"switching to {avail[pos + 1]}…"})
+        if last_err is not None:
+            raise last_err
+        return
+
+
 def _extract_code(text: str) -> str:
     """Pull the Python source out of an LLM reply (handles ``` fences or raw code)."""
     fence = re.search(r"```(?:python|py)?\s*\n(.*?)```", text, re.S | re.I)
@@ -173,7 +298,10 @@ _REQ_SYSTEM = (
     "requirements (3-7 bullets): the function(s) to implement WITH their signatures, the inputs "
     "and outputs, and the key correctness properties to satisfy. List EVERY explicit DELIVERABLE the "
     "request asks for — each value to print/return, each comparison, each property to verify — so "
-    "nothing requested is dropped. Include the INPUT CONTRACT "
+    "nothing requested is dropped. For each deliverable, pin its EXACT DEFINITION: the precise "
+    "quantity, the POINT/INDEX it is taken at (e.g. initial = at the start / t=0 / step 0 / index 0; "
+    "final = at the end), and the units/convention — so a value at the wrong point or under a "
+    "different definition than the request stated is caught as WRONG. Include the INPUT CONTRACT "
     "explicitly — the units, valid ranges, types/shapes, and indexing convention each argument must "
     "satisfy — so the implementation and the tests can ENFORCE it rather than guess. Use the "
     "conversation context if given. Output ONLY the bullet list."
@@ -250,18 +378,23 @@ _HIDDEN_SYSTEM = (
 )
 
 _INVARIANTS_SYSTEM = (
-    "You write SPEC-DERIVED checks: 1-3 functions named test_invariant_<name>() that verify the "
-    "result against FACTS STATED IN THE REQUEST and properties that must hold for ANY correct "
+    "You write SPEC-DERIVED checks: functions named test_invariant_<name>() that verify the result "
+    "against FACTS STATED IN THE REQUEST and properties that must hold for ANY correct "
     "implementation — NOT merely against a same-model reference (a shared wrong assumption could make "
-    "both agree). Derive each check from the SPEC: the given input values and the answer they imply, "
-    "the stated units/conventions, named constraints, and known identities/relationships. Examples: "
-    "if the request gives specific inputs, assert the output those inputs must produce; a beamformer's "
-    "distortionless constraint w^H d ~= 1 and output noise power <= input; Black-Scholes put-call "
-    "parity C - P ~= S - K*exp(-rT), price >= 0, price monotonic in volatility. Use RANDOM inputs "
-    "where a property is general (use random / numpy.random; do NOT seed — the harness seeds "
-    "globally), and the request's own values where the spec pins an answer. Use tolerances, call the "
-    "SOLUTION's functions directly, and `assert`. Do NOT define the solution or a runner. Output ONLY "
-    "the Python test functions."
+    "both agree). FIRST, write one check PER EXPLICITLY REQUESTED OUTPUT that confirms the reported "
+    "value is the EXACT quantity the request names, taken at the EXACT point/index and in the EXACT "
+    "units/convention stated — compute the expected value INDEPENDENTLY from the spec, not from the "
+    "candidate. Concretely: an 'initial'/'starting' value is the value at the START (t=0 / step 0 / "
+    "index 0), a 'final' value at the END; a count is checked for off-by-one; a labelled quantity "
+    "must equal that quantity (not a neighbour). A value that is internally consistent but taken at "
+    "the wrong point or under a different definition than the request stated is WRONG. THEN add "
+    "general properties: the given input values and the answer they imply, stated units/conventions, "
+    "named constraints, and known identities (e.g. a beamformer's distortionless constraint "
+    "w^H d ~= 1; Black-Scholes put-call parity C - P ~= S - K*exp(-rT), price >= 0, monotonic in "
+    "volatility). Use RANDOM inputs where a property is general (use random / numpy.random; do NOT "
+    "seed — the harness seeds globally), and the request's own values where the spec pins an answer. "
+    "Use tolerances, call the SOLUTION's functions directly, and `assert`. Do NOT define the solution "
+    "or a runner. Output ONLY the Python test functions."
 )
 
 # Task-type-specific guidance appended to the test/invariant generation USER prompts (the system
@@ -750,16 +883,13 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     if not task:
         return AgentResult(task, False, "", "", "No task given.", [])
 
-    # Use a dedicated coding model when set (e.g. a local Ollama coder), else the
-    # chat model. API key + base URL are shared, so this works for OpenAI/OpenRouter/Ollama.
-    provider = get_provider(os.getenv("AGENT_MODEL") or None)
+    # Resilient model chain: the user's selection first (AGENT_MODEL or the chat's OPENAI_MODEL),
+    # then configured fallbacks. On a 429/timeout/5xx the provider retries + switches to another
+    # AVAILABLE model rather than failing the request — never overriding the user's choice.
+    model_chain = _agent_model_chain()
+    provider = ResilientProvider(model_chain, emit)
     if not provider.is_available:
-        message = getattr(
-            provider,
-            "unavailable_message",
-            lambda: "LLM not available - set the selected provider API key in .env.",
-        )()
-        emit({"type": "error", "message": message})
+        emit({"type": "error", "message": provider.unavailable_message()})
         return AgentResult(task, False, "", "", "LLM unavailable.", [])
     # Execution is MANDATORY for code-intent tasks: the deliverable is real captured output from
     # the sandbox, never a prose "when executed, this would…" answer. If the sandbox is down we
@@ -831,7 +961,6 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         deliverables = _extract_deliverables(provider, task, requirements)
         emit({"type": "deliverables", "items": deliverables})
 
-    strong_model = os.getenv("AGENT_MODEL_STRONG") or ""
     attempts: List[Attempt] = []
     best: Optional[Attempt] = None
     best_clean: Optional[Attempt] = None      # best NON-cheating attempt — the only thing we return
@@ -867,17 +996,18 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
             emit({"type": "directive", "iteration": i, "text": directive[:300]})
             feedback = (feedback + "\nUSER DIRECTIVE (priority): " + directive).strip()
 
-        # (6) Escalate to a stronger model after two failed rounds OR two cheating catches; two
-        # cheats also strengthens the held-out audit (more tests, wider ranges).
+        # (6) Escalate after two failed rounds OR two cheating catches; two cheats also strengthens
+        # the held-out audit. Escalation RESPECTS the user's selected model — it only lets
+        # AGENT_MODEL_STRONG lead when no model was explicitly selected; otherwise it keeps the
+        # user's chain (the resilient provider still falls back on errors).
         strict = cheat_count >= 2
         gen_provider = provider
-        if (rounds_failed >= 2 or strict) and strong_model:
-            try:
-                gen_provider = get_provider(strong_model)
+        if rounds_failed >= 2 or strict:
+            esc_chain = _escalated_chain(model_chain)
+            if esc_chain != model_chain:
+                gen_provider = ResilientProvider(esc_chain, emit)
                 emit({"type": "status",
-                      "message": f"Escalating to a stronger model ({strong_model})…"})
-            except Exception:
-                gen_provider = provider
+                      "message": f"Escalating to a stronger model ({esc_chain[0]})…"})
 
         emit({"type": "think", "iteration": i,
               "message": f"Writing code to pass the tests (attempt {i}/{max_iters})…"})
