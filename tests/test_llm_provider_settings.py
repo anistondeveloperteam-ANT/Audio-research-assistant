@@ -1,6 +1,29 @@
 """Tests for the OpenAI LLM provider + web model settings. No network/key needed."""
-from backend.llm.streaming_provider import OpenAIProvider, get_provider
+from backend.llm.streaming_provider import (
+    OPENAI_BASE,
+    OpenAIProvider,
+    get_provider,
+    route_model,
+)
 from webapp import settings
+
+
+def test_openai_model_routes_to_openai_base_not_env(monkeypatch):
+    # Regression: even when OPENAI_BASE_URL points at the free Gemini default, a catalog OpenAI model
+    # (GPT-5.5) must hit OpenAI's OWN endpoint — not fall back to that env (which sent the request to
+    # the wrong base and failed with "Request URL is missing an 'http://' or 'https://' protocol").
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+    monkeypatch.setenv("OPENAI_CLOUD_KEY", "sk-test")
+    base, key = route_model("gpt-5.5")
+    assert base == OPENAI_BASE == "https://api.openai.com/v1"
+    assert key == "sk-test"
+    assert get_provider("gpt-5.5").base_url == "https://api.openai.com/v1"
+
+
+def test_each_catalog_model_routes_to_its_own_base():
+    assert route_model("gemini-2.5-flash")[0].startswith("https://generativelanguage.googleapis.com")
+    assert route_model("mistral-large-latest")[0] == "https://api.mistral.ai/v1"
+    assert route_model("gpt-5.5")[0] == "https://api.openai.com/v1"
 
 
 def test_get_provider_is_openai(monkeypatch):
@@ -82,7 +105,8 @@ def test_route_model_resolves_each_provider(monkeypatch):
     assert route_model("gemini-2.5-flash") == (GEMINI_BASE, "k-GEMINI_API_KEY")
     assert route_model("mistral-large-latest")[0] == "https://api.mistral.ai/v1"
     assert route_model("codestral-latest")[0] == "https://api.mistral.ai/v1"
-    assert route_model("gpt-5.5") == ("", "k-OPENAI_CLOUD_KEY")
+    # OpenAI models resolve to OpenAI's EXPLICIT endpoint (not "" -> SDK env fallback).
+    assert route_model("gpt-5.5") == ("https://api.openai.com/v1", "k-OPENAI_CLOUD_KEY")
 
 
 def test_dropdown_marks_missing_keys(monkeypatch):

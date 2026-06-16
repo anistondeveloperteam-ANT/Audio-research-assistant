@@ -27,13 +27,16 @@ from typing import Dict, Iterator, List, Optional
 
 DEFAULT_OPENAI_MODEL = "gemini-2.5-flash"
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
+OPENAI_BASE = "https://api.openai.com/v1"
 
-# Each provider is an OpenAI-compatible endpoint -> (base_url, api_key_env).
-# "" base = api.openai.com.
+# Each provider is an OpenAI-compatible endpoint -> (base_url, api_key_env). The base URL is ALWAYS
+# explicit: a model picked from the catalog must hit ITS provider's endpoint, never fall back to the
+# OPENAI_BASE_URL env var (which configures the default chat model, e.g. the free Gemini endpoint) —
+# otherwise selecting GPT-5.5 would send its requests to the Gemini base and fail to connect.
 PROVIDERS: Dict[str, tuple] = {
     "gemini":  (GEMINI_BASE, "GEMINI_API_KEY"),
     "mistral": ("https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
-    "openai":  ("", "OPENAI_CLOUD_KEY"),
+    "openai":  (OPENAI_BASE, "OPENAI_CLOUD_KEY"),
 }
 
 # Models offered in the picker: (model_id, provider, vendor, display_name, is_free).
