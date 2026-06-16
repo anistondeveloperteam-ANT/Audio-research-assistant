@@ -476,6 +476,15 @@ def delete_paper(paper_id: int):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+@app.post("/api/papers/remove-incomplete")
+def remove_incomplete_papers():
+    """Remove half-done papers (parsed but not fully embedded) so they can be uploaded again."""
+    try:
+        return ingest.remove_incomplete(delete_files=True)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 # ----------------------------------------------------------------------
 # LLM model selection
 # ----------------------------------------------------------------------

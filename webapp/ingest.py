@@ -166,20 +166,25 @@ def list_papers() -> list:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT p.id, p.title, p.file_name, COUNT(c.id)
+            SELECT p.id, p.title, p.file_name, COUNT(c.id),
+                   SUM(CASE WHEN c.embedding IS NULL THEN 1 ELSE 0 END)
             FROM papers p LEFT JOIN chunks c ON c.paper_id = p.id
             GROUP BY p.id, p.title, p.file_name
             ORDER BY p.id DESC
             """
         )
-        for pid, title, fname, n in cur.fetchall():
+        for pid, title, fname, n, n_unembedded in cur.fetchall():
             if hasattr(title, "read"):
                 title = title.read()
+            n = int(n or 0)
+            unembedded = int(n_unembedded or 0)
             out.append({
                 "id": int(pid),
                 "title": str(title or fname or "Untitled"),
                 "file_name": str(fname or ""),
-                "chunks": int(n),
+                "chunks": n,
+                # Half-done: parsed/chunked but not fully embedded (or no chunks at all).
+                "incomplete": (n == 0) or (unembedded > 0),
             })
         conn.close()
     except Exception:
@@ -228,6 +233,17 @@ def delete_paper(paper_id: int) -> Dict[str, Any]:
 
     _clear_retrieval_caches(remove_turbovec_files=True)
     return {"ok": True, "deleted": file_name, "library": library_stats()}
+
+
+def remove_incomplete(delete_files: bool = True) -> Dict[str, Any]:
+    """Remove all HALF-DONE papers (parsed but not fully embedded) so they can be uploaded again.
+    By default the PDF is deleted too, so a fresh upload re-ingests cleanly. Drops the retrieval
+    caches when anything changed."""
+    from backend.ingestion.ingest_papers import remove_incomplete_papers
+    removed = remove_incomplete_papers(delete_files=delete_files)
+    if removed:
+        _clear_retrieval_caches(remove_turbovec_files=True)
+    return {"ok": True, "removed": removed, "count": len(removed), "library": library_stats()}
 
 
 def _purge_parse_cache(file_name: str) -> None:

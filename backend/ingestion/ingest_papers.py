@@ -119,6 +119,60 @@ def coverage_warnings(name: str, parsed: dict) -> list:
     return [f"{name}: {w}" for w in parsed.get("warnings", [])]
 
 
+def find_incomplete_papers(cur):
+    """Papers that are HALF-DONE: parsed/chunked but not fully embedded — any chunk with a NULL
+    embedding, or a paper with zero chunks. Returns [(id, file_name), ...]."""
+    cur.execute(
+        "SELECT p.id, p.file_name FROM papers p "
+        "WHERE EXISTS (SELECT 1 FROM chunks c WHERE c.paper_id = p.id AND c.embedding IS NULL) "
+        "   OR NOT EXISTS (SELECT 1 FROM chunks c WHERE c.paper_id = p.id) "
+        "ORDER BY p.id")
+    out = []
+    for pid, name in cur.fetchall():
+        if hasattr(name, "read"):
+            name = name.read()
+        out.append((int(pid), str(name) if name is not None else ""))
+    return out
+
+
+def purge_paper(cur, paper_id) -> None:
+    """Delete one paper and everything derived from it (concept links, chunks, the paper row). The
+    caller commits. Mirrors the deletion used elsewhere; there is no ON DELETE CASCADE."""
+    try:
+        cur.execute("DELETE FROM chunk_concepts WHERE chunk_id IN "
+                    "(SELECT id FROM chunks WHERE paper_id = :p)", {"p": paper_id})
+    except Exception:
+        pass
+    cur.execute("DELETE FROM chunks WHERE paper_id = :p", {"p": paper_id})
+    cur.execute("DELETE FROM papers WHERE id = :p", {"p": paper_id})
+
+
+def remove_incomplete_papers(delete_files: bool = False) -> list:
+    """Remove half-done papers (parsed but not fully embedded) so they can be re-ingested cleanly,
+    and return the list of removed file names. With delete_files=True the PDF is deleted too, so you
+    can simply upload it again; otherwise the PDF is kept and the next ingest re-processes it.
+
+    Safe to run when no ingest is in progress: it never touches a FULLY-embedded paper, and does NOT
+    run during ingestion (so the embed stage's resume of NULL chunks is preserved)."""
+    conn = connect()
+    cur = conn.cursor()
+    removed = []
+    try:
+        for pid, name in find_incomplete_papers(cur):
+            purge_paper(cur, pid)
+            removed.append(name or str(pid))
+            if delete_files and name:
+                try:
+                    (PAPERS_DIR / name).unlink(missing_ok=True)
+                except Exception:
+                    pass
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+    return removed
+
+
 def main():
     # Hide the GPU from THIS parse process so Docling never attempts it (no std::bad_alloc, no
     # retries). Done inside main() — NOT at import — so merely importing this module (e.g. from a

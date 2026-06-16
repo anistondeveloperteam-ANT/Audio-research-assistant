@@ -37,6 +37,7 @@
     library: () => fetch("/api/library").then((r) => r.json()),
     papers: () => fetch("/api/papers").then((r) => r.json()),
     deletePaper: (id) => fetch(`/api/papers/${id}`, { method: "DELETE" }).then((r) => r.json()),
+    removeIncomplete: () => fetch("/api/papers/remove-incomplete", { method: "POST" }).then((r) => r.json()),
     models: () => fetch("/api/models").then((r) => r.json()),
     setModel: (provider, model) =>
       fetch("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, model }) }).then((r) => r.json()),
@@ -1434,13 +1435,36 @@
       return;
     }
     body.innerHTML = "";
+    // Half-done papers (parsed but not embedded) — surface a banner with a one-click cleanup.
+    const nIncomplete = list.filter((p) => p.incomplete).length;
+    if (nIncomplete) {
+      const banner = document.createElement("div");
+      banner.className = "pm-banner";
+      banner.innerHTML = `<span>⚠ ${nIncomplete} paper${nIncomplete === 1 ? "" : "s"} half-done (parsed but not embedded) — not searchable.</span>`;
+      const rm = document.createElement("button");
+      rm.className = "pr-del";
+      rm.textContent = "Remove half-done";
+      rm.addEventListener("click", async () => {
+        if (!confirm(`Remove ${nIncomplete} half-done paper${nIncomplete === 1 ? "" : "s"}? Their PDFs are deleted so you can upload them again.`)) return;
+        rm.disabled = true; rm.textContent = "Removing…";
+        try {
+          const res = await api.removeIncomplete();
+          if (res.error) { toast(res.error, "error"); rm.disabled = false; rm.textContent = "Remove half-done"; return; }
+          toast(`Removed ${res.count} half-done paper${res.count === 1 ? "" : "s"} — upload again to re-index.`);
+          if (res.library) { const n = res.library.papers != null ? res.library.papers : res.library.pdfs; $("libLabel").textContent = `${n} paper${n === 1 ? "" : "s"} indexed`; }
+          renderPapers(await api.papers().catch(() => []));
+        } catch (e) { toast("Remove failed.", "error"); rm.disabled = false; rm.textContent = "Remove half-done"; }
+      });
+      banner.appendChild(rm);
+      body.appendChild(banner);
+    }
     list.forEach((p) => {
       const row = document.createElement("div");
-      row.className = "paper-row";
+      row.className = "paper-row" + (p.incomplete ? " incomplete" : "");
       row.innerHTML = `
         <div class="pr-main">
           <div class="pr-title">${esc(prettyName(p.title))}</div>
-          <div class="pr-meta">${p.chunks} chunk${p.chunks === 1 ? "" : "s"}</div>
+          <div class="pr-meta">${p.chunks} chunk${p.chunks === 1 ? "" : "s"}${p.incomplete ? ' · <span class="pr-warn">not embedded</span>' : ""}</div>
         </div>
         <button class="pr-del">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>

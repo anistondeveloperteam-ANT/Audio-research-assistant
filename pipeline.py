@@ -250,10 +250,28 @@ def main() -> int:
     parser.add_argument("--reindex", metavar="FILENAME",
                         help="Re-process ONE paper from scratch (delete its rows, keep the PDF, "
                              "re-ingest) — use to repair a paper indexed with missing pages.")
+    parser.add_argument("--remove-incomplete", action="store_true",
+                        help="Remove HALF-DONE papers (parsed but not fully embedded) so they can be "
+                             "re-ingested cleanly. Add --delete-files to also delete the PDFs.")
+    parser.add_argument("--delete-files", action="store_true",
+                        help="With --remove-incomplete: also delete the PDF files (then upload again).")
     args = parser.parse_args()
 
     if args.status:
         return show_status()
+
+    if args.remove_incomplete:
+        from backend.ingestion.ingest_papers import remove_incomplete_papers
+        removed = remove_incomplete_papers(delete_files=args.delete_files)
+        if not removed:
+            print("No half-done papers found — nothing to remove.")
+        else:
+            print(f"Removed {len(removed)} half-done paper(s):")
+            for name in removed:
+                print(f"  - {name}")
+            print("Upload them again" if args.delete_files
+                  else "Re-run `python pipeline.py` (or re-upload) to index them cleanly.")
+        return 0
 
     if args.reindex:
         return reindex_paper(args.reindex)
