@@ -166,6 +166,67 @@ def docling_device() -> str:
     return (os.getenv("DOCLING_DEVICE") or "cpu").strip().lower()
 
 
+def docling_enabled() -> bool:
+    """Docling (the heavy ML layout/table parser) is opt-OUT. On a low-memory host its native
+    models can OOM / segfault the whole ingest process (a crash Python cannot catch), so set
+    ENABLE_DOCLING=false to skip it and use the lightweight PyMuPDF text path — which never crashes
+    and still indexes the text (tables/layout enrichment is the only thing lost). Default on."""
+    return (os.getenv("ENABLE_DOCLING", "true") or "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def docling_min_free_mb() -> int:
+    """Skip Docling for a PDF when LESS than this much system memory is free, so its native models
+    cannot OOM / segfault the ingest process on a memory-starved host. Tune via DOCLING_MIN_FREE_MB;
+    set 0 to never skip on memory grounds."""
+    try:
+        return max(0, int(os.getenv("DOCLING_MIN_FREE_MB", "1500")))
+    except (TypeError, ValueError):
+        return 1500
+
+
+def _available_memory_mb() -> int:
+    """Best-effort FREE system memory in MB, with no external dependency. Returns a very large
+    number when it cannot be determined, so a detection failure never FALSELY disables Docling."""
+    try:
+        if sys.platform.startswith("win"):
+            import ctypes
+
+            class _MS(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+            ms = _MS()
+            ms.dwLength = ctypes.sizeof(_MS)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms)):
+                return int(ms.ullAvailPhys // (1024 * 1024))
+        else:
+            pages = os.sysconf("SC_AVPHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            if pages > 0 and page_size > 0:
+                return int(pages * page_size // (1024 * 1024))
+    except Exception:
+        pass
+    return 1 << 20                                       # ~1e6 MB -> "plenty" when undetectable
+
+
+def _should_run_docling():
+    """(run: bool, reason: str) — whether to enrich this PDF with Docling. Skipped (PyMuPDF text
+    only) when Docling is disabled or free memory is below the safety floor, so its native code can
+    never OOM / segfault the ingest process."""
+    if not docling_enabled():
+        return False, "ENABLE_DOCLING=false"
+    free = _available_memory_mb()
+    need = docling_min_free_mb()
+    if need and free < need:
+        return False, f"low memory ({free} MB free < {need} MB needed)"
+    return True, ""
+
+
 def _is_oom_error(exc: Exception) -> bool:
     """True for GPU/host out-of-memory failures (torch OOM, RapidOCR/onnx std::bad_alloc, etc.)."""
     name = type(exc).__name__.lower()
@@ -324,7 +385,15 @@ def parse_pdf(pdf_path: Path):
     pm = parse_with_pymupdf(pdf_path)
     pages = pm.get("pages", [])
 
-    docling = _docling_safe(pdf_path)
+    # Docling enriches with layout/tables but its native models can OOM / segfault on a low-memory
+    # host (an uncatchable crash). Skip it when memory is low or it is disabled — PyMuPDF text alone
+    # still indexes the document and never crashes.
+    run_docling, why = _should_run_docling()
+    if run_docling:
+        docling = _docling_safe(pdf_path)
+    else:
+        docling = None
+        print(f"  Docling skipped ({why}) — using fast PyMuPDF text (no native crash risk).")
     raw_markdown = (docling or {}).get("raw_markdown", "")
     tables = (docling or {}).get("tables", [])
     equations = (docling or {}).get("equations", [])

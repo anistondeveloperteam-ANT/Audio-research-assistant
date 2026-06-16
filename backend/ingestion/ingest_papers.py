@@ -140,43 +140,56 @@ def main():
     print(f"Found {len(pdfs)} PDFs")
 
     for pdf_path in tqdm(pdfs, desc="Ingesting PDFs"):
-        file_hash = file_sha256(pdf_path)
-        existing_id = paper_exists(cur, file_hash)
+        # Isolate each PDF: a parse failure or an out-of-memory on ONE document is logged and
+        # skipped, so the rest of the batch still indexes instead of the whole run aborting.
+        try:
+            file_hash = file_sha256(pdf_path)
+            existing_id = paper_exists(cur, file_hash)
 
-        if existing_id:
-            print(f"Skipping already ingested: {pdf_path.name}")
+            if existing_id:
+                print(f"Skipping already ingested: {pdf_path.name}")
+                continue
+
+            title = infer_title(pdf_path)
+
+            t0 = time.time()
+            parsed = parse_pdf(pdf_path)
+            parse_secs = time.time() - t0
+            chunks = chunk_parsed_document(parsed)
+
+            # Contextual Retrieval: one situating sentence per chunk (cached; "" if disabled/LLM fails).
+            contexts = contextualize_chunks(full_document_text(parsed), chunks)
+
+            paper_id = insert_paper(
+                cur=cur,
+                title=title,
+                file_path=pdf_path,
+                file_name=pdf_path.name,
+                file_hash=file_hash,
+                page_count=parsed.get("page_count", 0),
+            )
+
+            for i, (chunk, context_text) in enumerate(zip(chunks, contexts), start=1):
+                insert_chunk(cur, paper_id, i, chunk, context_text)
+
+            conn.commit()
+
+            total_new_chunks += len(chunks)
+
+            print(coverage_line(pdf_path.name, parsed, len(chunks), parse_secs))
+            for w in coverage_warnings(pdf_path.name, parsed):
+                print(f"  {w}")
+                overall_warnings.append(w)
+        except Exception as exc:        # incl. MemoryError — never abort the batch on one PDF
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            msg = (f"Skipped {pdf_path.name}: {type(exc).__name__}: "
+                   f"{(str(exc).splitlines() or [''])[0][:160]}")
+            print(f"  ⚠ {msg}")
+            overall_warnings.append(msg)
             continue
-
-        title = infer_title(pdf_path)
-
-        t0 = time.time()
-        parsed = parse_pdf(pdf_path)
-        parse_secs = time.time() - t0
-        chunks = chunk_parsed_document(parsed)
-
-        # Contextual Retrieval: one situating sentence per chunk (cached; "" if disabled/LLM fails).
-        contexts = contextualize_chunks(full_document_text(parsed), chunks)
-
-        paper_id = insert_paper(
-            cur=cur,
-            title=title,
-            file_path=pdf_path,
-            file_name=pdf_path.name,
-            file_hash=file_hash,
-            page_count=parsed.get("page_count", 0),
-        )
-
-        for i, (chunk, context_text) in enumerate(zip(chunks, contexts), start=1):
-            insert_chunk(cur, paper_id, i, chunk, context_text)
-
-        conn.commit()
-
-        total_new_chunks += len(chunks)
-
-        print(coverage_line(pdf_path.name, parsed, len(chunks), parse_secs))
-        for w in coverage_warnings(pdf_path.name, parsed):
-            print(f"  {w}")
-            overall_warnings.append(w)
 
     cur.execute("SELECT COUNT(*) FROM papers")
     paper_count = cur.fetchone()[0]
