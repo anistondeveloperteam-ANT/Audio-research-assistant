@@ -12,15 +12,20 @@ search) is unchanged.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import math
 import os
 import time
-from typing import List
+from typing import List, Optional
 
 # Gemini's embed_content accepts a LIST of contents and returns one embedding each, so we send a
 # whole BATCH per request — far fewer round-trips (faster) and far less rate-limit pressure than
 # one request per chunk (which is what tripped the free-tier 429). Tune with EMBED_BATCH_SIZE.
 EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "100"))
+# How many embedding requests to send CONCURRENTLY (batches + any per-text fallback). The provider,
+# model, and 768-d output are unchanged — only the request pattern goes from sequential to parallel.
+# Set 1 to force the old sequential behavior. Each request keeps its own 429/backoff (see _embed_call).
+EMBED_CONCURRENCY = int(os.getenv("EMBED_CONCURRENCY", "8"))
 
 
 class EmbeddingQuotaError(RuntimeError):
@@ -123,6 +128,28 @@ def _embed_call(client, model, cfg, contents) -> List[List[float]]:
             raise
 
 
+def _try_batch(client, model, cfg, batch: List[str]) -> Optional[List[List[float]]]:
+    """Embed `batch` as ONE request. Returns the vectors, or None to signal the caller should fall
+    back to per-text (the batch was rejected or returned a partial result). Quota errors propagate."""
+    try:
+        vecs = _embed_call(client, model, cfg, batch)
+        if len(vecs) == len(batch):
+            return vecs
+    except EmbeddingQuotaError:
+        raise
+    except Exception:                                          # noqa: BLE001 - batch rejected
+        pass
+    return None
+
+
+def _embed_per_text(client, model, cfg, batch: List[str], ex) -> List[List[float]]:
+    """One request per text, run concurrently on `ex` (or sequentially if ex is None). Order kept."""
+    one = lambda t: _embed_call(client, model, cfg, t)[0]      # noqa: E731 - tiny inline mapper
+    if ex is None:
+        return [one(t) for t in batch]
+    return list(ex.map(one, batch))
+
+
 def _google_embed(texts: List[str], task_type: str) -> List[List[float]]:
     from google.genai import types
     client = _google_client()
@@ -131,18 +158,25 @@ def _google_embed(texts: List[str], task_type: str) -> List[List[float]]:
     cfg = types.EmbedContentConfig(task_type=task_type, output_dimensionality=dim)
 
     bs = max(1, EMBED_BATCH_SIZE)
-    out: List[List[float]] = []
-    for i in range(0, len(texts), bs):
-        batch = texts[i:i + bs]
-        try:
-            vecs = _embed_call(client, model, cfg, batch)       # ONE request for the whole batch
-        except EmbeddingQuotaError:
-            raise
-        except Exception:                                       # noqa: BLE001 - batch rejected? per-text
-            vecs = [_embed_call(client, model, cfg, t)[0] for t in batch]
-        if len(vecs) != len(batch):                            # unexpected partial -> per-text
-            vecs = [_embed_call(client, model, cfg, t)[0] for t in batch]
-        out.extend(vecs)
+    batches = [texts[i:i + bs] for i in range(0, len(texts), bs)]
+    conc = max(1, EMBED_CONCURRENCY)
+
+    # Sequential when concurrency is disabled or there's nothing to parallelize (e.g. one query).
+    if conc == 1 or len(texts) <= 1:
+        out: List[List[float]] = []
+        for batch in batches:
+            vecs = _try_batch(client, model, cfg, batch)
+            out.extend(vecs if vecs is not None else _embed_per_text(client, model, cfg, batch, None))
+        return out
+
+    # Parallel: at most `conc` requests in flight. Phase 1 tries every batch as one request
+    # concurrently; Phase 2 re-embeds any rejected batch's texts concurrently (the real slow path
+    # when the provider won't accept multi-text batches). Results stay in input order.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=conc) as ex:
+        attempts = list(ex.map(lambda b: _try_batch(client, model, cfg, b), batches))
+        out = []
+        for batch, vecs in zip(batches, attempts):
+            out.extend(vecs if vecs is not None else _embed_per_text(client, model, cfg, batch, ex))
     return out
 
 
