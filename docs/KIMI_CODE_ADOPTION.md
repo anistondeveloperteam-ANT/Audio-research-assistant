@@ -8,6 +8,9 @@ else in the project is described or altered here.
 
 ## 1. What Kimi Code is (and why the full repo is the wrong fit)
 
+
+
+
 Kimi Code is a **TypeScript terminal AI‑coding‑agent product** — a pnpm monorepo with
 a TUI framework (`pi‑tui`), a plugin marketplace, ACP/MCP editor integrations, and
 built‑in agent skills. It is a *whole product*, not a library of small liftable files.

@@ -1,0 +1,117 @@
+# One direct PDF URL per line.
+# Lines starting with '#' and blank lines are ignored.
+#
+# Download all with:
+#   python -m scraper.scrape_pdfs -f scraper/urls.txt --skip-existing
+#
+# Source: download_links[1].html — "Research Papers 2024-2026" (100 arXiv PDFs).
+
+# ===== Audio / Noise / Speech (64) =====
+https://arxiv.org/pdf/2505.00550
+https://arxiv.org/pdf/2505.00579
+https://arxiv.org/pdf/2505.00750
+https://arxiv.org/pdf/2505.00839
+https://arxiv.org/pdf/2505.01369
+https://arxiv.org/pdf/2505.01880
+https://arxiv.org/pdf/2505.02180
+https://arxiv.org/pdf/2505.03186
+https://arxiv.org/pdf/2505.03193
+https://arxiv.org/pdf/2505.03228
+https://arxiv.org/pdf/2505.03244
+https://arxiv.org/pdf/2505.03273
+https://arxiv.org/pdf/2505.03314
+https://arxiv.org/pdf/2505.03337
+https://arxiv.org/pdf/2505.03442
+https://arxiv.org/pdf/2505.04113
+https://arxiv.org/pdf/2505.04451
+https://arxiv.org/pdf/2505.04457
+https://arxiv.org/pdf/2505.04621
+https://arxiv.org/pdf/2505.04728
+https://arxiv.org/pdf/2505.04885
+https://arxiv.org/pdf/2505.05055
+https://arxiv.org/pdf/2505.05077
+https://arxiv.org/pdf/2505.05078
+https://arxiv.org/pdf/2505.05335
+https://arxiv.org/pdf/2505.05654
+https://arxiv.org/pdf/2505.05940
+https://arxiv.org/pdf/2505.06042
+https://arxiv.org/pdf/2505.06766
+https://arxiv.org/pdf/2505.06803
+https://arxiv.org/pdf/2505.07235
+https://arxiv.org/pdf/2505.07280
+https://arxiv.org/pdf/2601.00100
+https://arxiv.org/pdf/2601.00827
+https://arxiv.org/pdf/2601.00935
+https://arxiv.org/pdf/2601.01391
+https://arxiv.org/pdf/2601.01852
+https://arxiv.org/pdf/2601.02073
+https://arxiv.org/pdf/2601.02231
+https://arxiv.org/pdf/2601.02753
+https://arxiv.org/pdf/2601.02944
+https://arxiv.org/pdf/2601.03065
+https://arxiv.org/pdf/2601.03443
+https://arxiv.org/pdf/2601.03626
+https://arxiv.org/pdf/2601.03632
+https://arxiv.org/pdf/2601.03712
+https://arxiv.org/pdf/2601.04178
+https://arxiv.org/pdf/2601.04459
+https://arxiv.org/pdf/2601.04654
+https://arxiv.org/pdf/2601.04867
+https://arxiv.org/pdf/2601.06006
+https://arxiv.org/pdf/2601.06094
+https://arxiv.org/pdf/2601.06199
+https://arxiv.org/pdf/2601.06560
+https://arxiv.org/pdf/2601.06621
+https://arxiv.org/pdf/2601.06662
+https://arxiv.org/pdf/2601.06896
+https://arxiv.org/pdf/2601.07014
+https://arxiv.org/pdf/2601.07064
+https://arxiv.org/pdf/2601.07237
+https://arxiv.org/pdf/2601.07481
+https://arxiv.org/pdf/2601.07969
+https://arxiv.org/pdf/2601.08480
+https://arxiv.org/pdf/2601.08537
+
+# ===== AI / LLMs / Vision (14) =====
+https://arxiv.org/pdf/2601.21204
+https://arxiv.org/pdf/2602.00462
+https://arxiv.org/pdf/2602.04705
+https://arxiv.org/pdf/2602.08071
+https://arxiv.org/pdf/2602.10604
+https://arxiv.org/pdf/2602.13367
+https://arxiv.org/pdf/2602.15029
+https://arxiv.org/pdf/2602.15763
+https://arxiv.org/pdf/2605.30343
+https://arxiv.org/pdf/2606.03883
+https://arxiv.org/pdf/2605.19723
+https://arxiv.org/pdf/2605.26414
+https://arxiv.org/pdf/2604.15951
+https://arxiv.org/pdf/2605.28305
+
+# ===== Quantum / Physics (7) =====
+https://arxiv.org/pdf/2606.08592
+https://arxiv.org/pdf/2605.25692
+https://arxiv.org/pdf/2606.04079
+https://arxiv.org/pdf/2602.06202
+https://arxiv.org/pdf/2604.16613
+https://arxiv.org/pdf/2605.30765
+https://arxiv.org/pdf/2511.08493
+
+# ===== Biology / Protein Design (7) =====
+https://arxiv.org/pdf/2511.21476
+https://arxiv.org/pdf/2602.03779
+https://arxiv.org/pdf/2601.19205
+https://arxiv.org/pdf/2603.19473
+https://arxiv.org/pdf/2506.07459
+https://arxiv.org/pdf/2505.04823
+https://arxiv.org/pdf/2408.17241
+
+# ===== Climate / Earth Science (8) =====
+https://arxiv.org/pdf/2403.18864
+https://arxiv.org/pdf/2409.18529
+https://arxiv.org/pdf/2603.05710
+https://arxiv.org/pdf/2509.22359
+https://arxiv.org/pdf/2509.01422
+https://arxiv.org/pdf/2404.13227
+https://arxiv.org/pdf/2408.09627
+https://arxiv.org/pdf/2507.12144
