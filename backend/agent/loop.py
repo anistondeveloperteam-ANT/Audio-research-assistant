@@ -78,6 +78,14 @@ def reference_tests_enabled() -> bool:
     return os.getenv("AGENT_REFERENCE_TESTS", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
+def delivery_gates_enabled() -> bool:
+    """Live read (AGENT_DELIVERY_GATES, default on): for a task that asks to print/show/return a
+    result, enforce the EXECUTION gate (the solution must produce real stdout) and the COMPLETENESS
+    gate (every requested deliverable must appear in that stdout) before labelling a solution
+    'verified'. Off skips these two gates (visible + held-out only)."""
+    return os.getenv("AGENT_DELIVERY_GATES", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
 @dataclass
 class Attempt:
     iteration: int
@@ -153,6 +161,8 @@ _GEN_SYSTEM = (
     "and that are valid for it (empty, zero, negative, single element, min/max); (3) use NO magic "
     "constants that only work for the example — derive everything from the inputs. A function that "
     "returns the right number for the demo value but breaks on another valid input is WRONG. "
+    "Deliver the COMPLETE task: implement EVERY function and compute EVERY result the request asks "
+    "for — never a subset. "
     "At RUNTIME the sandbox has no network, no file access, and no input() — do not use "
     "them (third-party imports are fine). The code must run to completion in a few seconds. "
     "Output ONLY the Python code — no explanation, no markdown."
@@ -161,7 +171,9 @@ _GEN_SYSTEM = (
 _REQ_SYSTEM = (
     "You are a senior engineer. Restate the user's coding task as a short, concrete checklist of "
     "requirements (3-7 bullets): the function(s) to implement WITH their signatures, the inputs "
-    "and outputs, and the key correctness properties to satisfy. Include the INPUT CONTRACT "
+    "and outputs, and the key correctness properties to satisfy. List EVERY explicit DELIVERABLE the "
+    "request asks for — each value to print/return, each comparison, each property to verify — so "
+    "nothing requested is dropped. Include the INPUT CONTRACT "
     "explicitly — the units, valid ranges, types/shapes, and indexing convention each argument must "
     "satisfy — so the implementation and the tests can ENFORCE it rather than guess. Use the "
     "conversation context if given. Output ONLY the bullet list."
@@ -184,9 +196,11 @@ _REFERENCE_SYSTEM = (
 _DRIVER_SYSTEM = (
     "You write a SHORT driver snippet that DEMONSTRATES a finished solution: it calls the solution's "
     "already-defined functions on representative inputs taken from the task and PRINTS the results "
-    "with clear labels (e.g. print('period (s):', period)). The solution is ALREADY DEFINED above "
+    "with clear labels (e.g. print('period (s):', period)). Print EVERY value the request asks for — "
+    "each requested deliverable on its own line with a clear text label — so every one is visible in "
+    "the output. The solution is ALREADY DEFINED above "
     "your snippet — do NOT redefine it, do NOT write tests, add an import only if truly needed. Keep "
-    "it under ~15 lines and a couple of seconds to run. Output ONLY the snippet code."
+    "it under ~20 lines and a couple of seconds to run. Output ONLY the snippet code."
 )
 
 _TESTS_SYSTEM = (
@@ -236,13 +250,18 @@ _HIDDEN_SYSTEM = (
 )
 
 _INVARIANTS_SYSTEM = (
-    "You write INVARIANT checks: 1-3 functions named test_invariant_<name>() that assert "
-    "mathematical PROPERTIES which must hold for ANY correct implementation, on RANDOM inputs "
-    "(use random / numpy.random; do NOT seed — the harness seeds globally). Examples: a "
-    "beamformer's distortionless constraint w^H d ~= 1 and output noise power <= input; "
-    "Black-Scholes put-call parity C - P ~= S - K*exp(-rT), price >= 0, price monotonic in "
-    "volatility. Use tolerances, call the SOLUTION's functions directly, and `assert`. Do NOT "
-    "define the solution or a runner. Output ONLY the Python test functions."
+    "You write SPEC-DERIVED checks: 1-3 functions named test_invariant_<name>() that verify the "
+    "result against FACTS STATED IN THE REQUEST and properties that must hold for ANY correct "
+    "implementation — NOT merely against a same-model reference (a shared wrong assumption could make "
+    "both agree). Derive each check from the SPEC: the given input values and the answer they imply, "
+    "the stated units/conventions, named constraints, and known identities/relationships. Examples: "
+    "if the request gives specific inputs, assert the output those inputs must produce; a beamformer's "
+    "distortionless constraint w^H d ~= 1 and output noise power <= input; Black-Scholes put-call "
+    "parity C - P ~= S - K*exp(-rT), price >= 0, price monotonic in volatility. Use RANDOM inputs "
+    "where a property is general (use random / numpy.random; do NOT seed — the harness seeds "
+    "globally), and the request's own values where the spec pins an answer. Use tolerances, call the "
+    "SOLUTION's functions directly, and `assert`. Do NOT define the solution or a runner. Output ONLY "
+    "the Python test functions."
 )
 
 # Task-type-specific guidance appended to the test/invariant generation USER prompts (the system
@@ -374,6 +393,103 @@ def _generate_demo_driver(provider, task: str, requirements: str, solution_code:
         return _extract_code(_complete(provider, _DRIVER_SYSTEM, user, REFLECT_MAX_TOKENS))
     except Exception:
         return ""
+
+
+# ----------------------------------------------------------------------
+# Completeness + execution gates: every requested output must appear in real stdout.
+# ----------------------------------------------------------------------
+_DELIVERABLES_SYSTEM = (
+    "You extract the explicit DELIVERABLES of a coding request: the distinct things the finished "
+    "program must OUTPUT when it runs — each value to print/return, each comparison, each property "
+    "to report. Output a short PLAIN LIST, one deliverable per line, each a 1-4 word lowercase label "
+    "naming the quantity (e.g. 'period', 'amplitude', 'kinetic energy', 'put-call parity'). No "
+    "numbers, no code, no prose, no bullets — only the labels, one per line. If the request asks for "
+    "nothing to be output, return an empty response."
+)
+
+_DELIVERABLE_STOP = {"the", "a", "an", "of", "and", "or", "for", "to", "in", "value", "values",
+                     "result", "results", "output", "each", "every", "all", "its", "with", "is"}
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _parse_deliverables(text: str) -> List[str]:
+    """Parse the deliverables-extraction output into a clean, deduped list of short labels."""
+    items: List[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip().lstrip("-*•0123456789.) ").strip().strip("`").strip().lower()
+        if not line or len(line) > 40 or line.startswith(("def ", "import ", "#", "print(")):
+            continue
+        if line not in items:
+            items.append(line)
+    return items[:12]
+
+
+def _extract_deliverables(provider, task: str, requirements: str) -> List[str]:
+    """LLM-extracted checklist of the explicit outputs the request asks for (completeness gate).
+    Best-effort: returns [] on any failure, so the gate passes vacuously rather than blocking."""
+    try:
+        user = (f"REQUEST:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\n"
+                "List the deliverables now, one short label per line.")
+        return _parse_deliverables(_complete(provider, _DELIVERABLES_SYSTEM, user, REFLECT_MAX_TOKENS))
+    except Exception:
+        return []
+
+
+def _check_completeness(deliverables: List[str], stdout: str) -> List[str]:
+    """Return the deliverables NOT evidenced in `stdout`. A deliverable is present when all of its
+    significant tokens (stop-words removed) appear in the output, case-insensitively — so a label
+    like 'kinetic energy' matches a line printing 'Kinetic energy: 5.0'. Empty list -> none missing."""
+    out = (stdout or "").lower()
+    out_tokens = set(_WORD.findall(out))
+    missing: List[str] = []
+    for d in deliverables or []:
+        toks = [t for t in _WORD.findall(d.lower()) if len(t) > 2 and t not in _DELIVERABLE_STOP]
+        if not toks:                                    # all-short label -> require the raw substring
+            if d.lower().strip() and d.lower().strip() not in out:
+                missing.append(d)
+        elif not all(t in out_tokens for t in toks):
+            missing.append(d)
+    return missing
+
+
+def _apply_output_gates(verdict: Dict[str, Any], *, wants_output: bool, output: str,
+                        missing: List[str]) -> Dict[str, Any]:
+    """EXECUTION + COMPLETENESS gates on a candidate that already cleared the visible + held-out
+    (robustness/spec) gates. Downgrades verified/done with honest reasons when the task asked for
+    output but produced none, or a requested deliverable is missing from the real stdout. Never
+    resurrects a verdict that already failed an earlier gate."""
+    if not verdict.get("verified"):
+        return verdict
+    reasons: List[str] = []
+    if wants_output and not (output or "").strip():
+        reasons.append("execution: the request asks for output but the solution produced no real stdout")
+    if missing:
+        reasons.append("completeness: requested output(s) missing from stdout: " + ", ".join(missing))
+    if reasons:
+        verdict["verified"] = False
+        verdict["done"] = False
+        verdict["gate_fail"] = "; ".join(reasons)
+        verdict["feedback"] = (
+            "Your solution passed the tests but FAILED a delivery gate — " + "; ".join(reasons)
+            + ". Make the program actually RUN and PRINT every requested value with a clear label.")
+    return verdict
+
+
+def _capture_and_check(provider, task: str, requirements: str, code: str,
+                       deliverables: List[str]):
+    """Run the finished solution with a demo driver in the sandbox, capture real stdout, and check
+    which deliverables are missing. Returns (output, missing_deliverables)."""
+    output = ""
+    try:
+        driver = _generate_demo_driver(provider, task, requirements, code)
+        if (driver or "").strip():
+            dres = run_python_auto(code + "\n\n# === demo run ===\n" + driver)
+            if dres.ok and (dres.stdout or "").strip():
+                output = (dres.stdout or "").strip()[:4000]
+    except Exception:                                   # noqa: BLE001 - capture failures -> empty output
+        output = ""
+    missing = _check_completeness(deliverables, output) if deliverables else []
+    return output, missing
 
 
 def _generate_tests(provider, task: str, requirements: str, task_type: str = "",
@@ -707,6 +823,14 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     test_n = _count_tests(tests)
     emit({"type": "tests", "iteration": 0, "code": tests, "count": test_n})
 
+    # Completeness gate prep: extract the explicit deliverables the request asks for, ONCE (only when
+    # the task asks for output and the gates are on). Checked against the real stdout each round.
+    deliverables: List[str] = []
+    gate_output = delivery_gates_enabled() and _wants_output(task)
+    if gate_output:
+        deliverables = _extract_deliverables(provider, task, requirements)
+        emit({"type": "deliverables", "items": deliverables})
+
     strong_model = os.getenv("AGENT_MODEL_STRONG") or ""
     attempts: List[Attempt] = []
     best: Optional[Attempt] = None
@@ -887,6 +1011,19 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
             if best_clean is None or _score(round_best) > _score(best_clean):
                 best_clean = round_best
 
+        # (1/4) DELIVERY gates: a candidate that passed the visible + held-out gates, on a task that
+        # asks for output, must ACTUALLY RUN and PRINT every requested deliverable. Run its demo once,
+        # capture real stdout, and downgrade it (-> regenerate next round) if it produced nothing
+        # (execution gate) or dropped a requested output (completeness gate).
+        if gate_output and round_best.verdict.get("verified"):
+            emit({"type": "status", "message": "Running the solution to check its real output…"})
+            out, missing = _capture_and_check(provider, task, requirements, round_best.code, deliverables)
+            round_best.verdict["demo_output"] = out
+            _apply_output_gates(round_best.verdict, wants_output=True, output=out, missing=missing)
+            if round_best.verdict.get("gate_fail"):
+                emit({"type": "gate_fail", "iteration": i,
+                      "reason": round_best.verdict["gate_fail"]})
+
         v = round_best.verdict
         emit({"type": "reflect", "iteration": i, "verdict": {
             "done": bool(v.get("done")), "verified": bool(v.get("verified")),
@@ -901,6 +1038,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
             mem.add(f"iter {i}: REJECTED for gaming — {'; '.join(v.get('cheat_reasons') or [])[:160]}")
         elif v.get("hidden_fail"):
             mem.add(f"iter {i}: passed visible but FAILED hidden/unseen inputs — must generalize")
+        elif v.get("gate_fail"):
+            mem.add(f"iter {i}: passed tests but FAILED a delivery gate — {(v.get('gate_fail') or '')[:160]}")
         elif not v.get("verified"):
             mem.add(f"iter {i}: only {v.get('passed')}/{v.get('total')} visible tests passed")
 
@@ -955,29 +1094,39 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         present = None                        # never present the gaming code as a deliverable
     elif final.verdict.get("verified"):
         verification = "verified"
-        answer = (f"Implemented {topic} in Python — passes all {btotal} visible tests plus "
-                  f"{htotal} held-out hidden/invariant checks on {verify_seeds()} random seeds.")
+        gates = (f" plus {htotal} held-out hidden/spec/invariant checks on {verify_seeds()} random seeds"
+                 if htotal else "")
+        outclause = (" and produced every requested output when run"
+                     if (gate_output and (final.verdict.get("demo_output") or "").strip()) else "")
+        answer = f"Implemented {topic} in Python — passes all {btotal} visible tests{gates}{outclause}."
         present = final
     else:
         verification = "partial"
+        why = (final.verdict.get("gate_fail") or (final.verdict.get("feedback") or "").split("\n")[0])
+        why = (" — " + why.strip()[:160]) if (why or "").strip() else ""
         answer = (f"Best effort at {topic} in Python — {bpassed}/{btotal} visible tests pass "
-                  "(partially verified).")
+                  f"(partially verified){why}.")
         present = final
 
     # (5) Execution output: if the request asks to print/show/return a result, RUN the finished
     # solution with a small driver and capture its REAL stdout — the actual values, not test noise.
     best_output = ""
     if present is not None and _wants_output(task):
-        try:
-            emit({"type": "status", "message": "Running the solution to capture its output…"})
-            driver = _generate_demo_driver(provider, task, requirements, present.code)
-            if (driver or "").strip():
-                dres = run_python_auto(present.code + "\n\n# === demo run ===\n" + driver)
-                if dres.ok and (dres.stdout or "").strip():
-                    best_output = (dres.stdout or "").strip()[:4000]
-                    emit({"type": "output", "text": best_output})
-        except Exception:                           # noqa: BLE001 - output is a bonus; never break
-            best_output = ""
+        cached = (present.verdict.get("demo_output") or "").strip()    # captured by the delivery gate
+        if cached:
+            best_output = cached[:4000]
+            emit({"type": "output", "text": best_output})
+        else:
+            try:
+                emit({"type": "status", "message": "Running the solution to capture its output…"})
+                driver = _generate_demo_driver(provider, task, requirements, present.code)
+                if (driver or "").strip():
+                    dres = run_python_auto(present.code + "\n\n# === demo run ===\n" + driver)
+                    if dres.ok and (dres.stdout or "").strip():
+                        best_output = (dres.stdout or "").strip()[:4000]
+                        emit({"type": "output", "text": best_output})
+            except Exception:                       # noqa: BLE001 - output is a bonus; never break
+                best_output = ""
 
     res = AgentResult(
         task=task,

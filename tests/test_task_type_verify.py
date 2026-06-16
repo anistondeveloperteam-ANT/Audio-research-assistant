@@ -15,6 +15,9 @@ def _env(monkeypatch):
     monkeypatch.setenv("AGENT_ANTICHEAT_SCAN", "true")
     monkeypatch.setenv("AGENT_VERIFY_SEEDS", "1")
     monkeypatch.setenv("AGENT_PARALLEL_N", "1")           # deterministic; type-steering is the focus
+    # These tests probe task-type steering, not the delivery gates; the stub sandbox returns no real
+    # demo stdout, so the execution gate (covered by tests/test_agent_gates.py) is out of scope here.
+    monkeypatch.setenv("AGENT_DELIVERY_GATES", "false")
     monkeypatch.delenv("AGENT_MODEL_STRONG", raising=False)
 
 
