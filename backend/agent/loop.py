@@ -87,6 +87,14 @@ def delivery_gates_enabled() -> bool:
     return os.getenv("AGENT_DELIVERY_GATES", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
+def definition_gate_enabled() -> bool:
+    """Live read (AGENT_DEFINITION_GATE, default on): held out alongside the hidden tests, one check
+    PER requested output asserts the REPORTED value is the EXACT quantity the user asked for — right
+    quantity, point/time, aggregation, units — computed independently of the candidate AND the
+    reference oracle (which could share a wrong definition). Catches 'right logic, wrong answer'."""
+    return os.getenv("AGENT_DEFINITION_GATE", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
 @dataclass
 class Attempt:
     iteration: int
@@ -299,9 +307,10 @@ _REQ_SYSTEM = (
     "and outputs, and the key correctness properties to satisfy. List EVERY explicit DELIVERABLE the "
     "request asks for — each value to print/return, each comparison, each property to verify — so "
     "nothing requested is dropped. For each deliverable, pin its EXACT DEFINITION: the precise "
-    "quantity, the POINT/INDEX it is taken at (e.g. initial = at the start / t=0 / step 0 / index 0; "
-    "final = at the end), and the units/convention — so a value at the wrong point or under a "
-    "different definition than the request stated is caught as WRONG. Include the INPUT CONTRACT "
+    "quantity (e.g. median NOT mean, diameter NOT radius), how it is AGGREGATED (sum / mean / max / "
+    "last), the POINT/INDEX it is taken at (e.g. initial = at the start / t=0 / step 0 / index 0; "
+    "final = at the end), and the units/convention — so a related-but-different quantity, a wrong "
+    "aggregation, or a value at the wrong point is caught as WRONG. Include the INPUT CONTRACT "
     "explicitly — the units, valid ranges, types/shapes, and indexing convention each argument must "
     "satisfy — so the implementation and the tests can ENFORCE it rather than guess. Use the "
     "conversation context if given. Output ONLY the bullet list."
@@ -395,6 +404,26 @@ _INVARIANTS_SYSTEM = (
     "seed — the harness seeds globally), and the request's own values where the spec pins an answer. "
     "Use tolerances, call the SOLUTION's functions directly, and `assert`. Do NOT define the solution "
     "or a runner. Output ONLY the Python test functions."
+)
+
+_DEFINITION_SYSTEM = (
+    "You write DEFINITION-MATCH checks: exactly ONE function test_definition_<name>() PER explicitly "
+    "requested output. Each asserts that the value the solution REPORTS for that output is the EXACT "
+    "thing the user asked for — the right QUANTITY, at the right POINT/TIME, with the right "
+    "AGGREGATION, in the right UNITS/CONVENTION — and not a related-but-different quantity. "
+    "Re-read the REQUEST and derive the expected value INDEPENDENTLY from the user's own wording, "
+    "computing it by a DIFFERENT route than the solution uses. Do NOT trust or call any reference "
+    "implementation here — a same-model reference can encode the SAME wrong definition, so 'the code "
+    "matches the reference' must NOT be how you judge this. You MUST catch each of: a related-but-"
+    "different quantity (e.g. mean reported for median, sum for average, radius for diameter, "
+    "variance for std-dev); a wrong AGGREGATION (sum vs mean vs max vs last); a wrong REFERENCE POINT "
+    "(initial vs after-the-first-step, final vs penultimate, inclusive vs exclusive endpoint, "
+    "off-by-one count); a wrong UNIT/CONVENTION (degrees vs radians, fraction vs percent, 0- vs "
+    "1-based); and a LABEL that claims one quantity while the logic returns another. For each output, "
+    "build concrete spec inputs (the request's own values when it gives them), call the SOLUTION's "
+    "function(s), compute the spec-correct expected value YOURSELF, and `assert` they match (use "
+    "math.isclose / numpy.allclose for floats, == for exact). Do NOT define the solution or a runner. "
+    "Output ONLY the Python test functions."
 )
 
 # Task-type-specific guidance appended to the test/invariant generation USER prompts (the system
@@ -688,6 +717,26 @@ def _generate_invariants(provider, task: str, requirements: str, strict: bool = 
     return _extract_code(_complete(provider, _INVARIANTS_SYSTEM, user, GEN_MAX_TOKENS))
 
 
+def _generate_definition_checks(provider, task: str, requirements: str, strict: bool = False,
+                                task_type: str = "") -> str:
+    """DEFINITION-MATCH gate: one held-out check per requested output asserting the REPORTED value is
+    the exact quantity the user asked for (quantity / point / aggregation / units), with the expected
+    computed INDEPENDENTLY from the request — never via the candidate or its reference oracle. Catches
+    'right logic, wrong reported answer'. Returns '' on failure (the held-out then degrades to hidden/
+    invariant checks)."""
+    extra = (" Be especially strict: probe the most likely wrong-quantity / wrong-aggregation / "
+             "wrong-point confusions for these outputs.") if strict else ""
+    user = (f"TASK (the user's exact request):\n{task}\n\nREQUIREMENTS (each deliverable's exact "
+            f"definition):\n{requirements}" + _task_type_hint(task_type) +
+            "\n\nWrite the test_definition_* functions now — one per requested output, each asserting "
+            "the solution's reported value matches that output's EXACT stated definition, computed "
+            "independently from the request (do not call any reference)." + extra)
+    try:
+        return _extract_code(_complete(provider, _DEFINITION_SYSTEM, user, GEN_MAX_TOKENS))
+    except Exception:
+        return ""
+
+
 def _count_tests(tests_code: str) -> int:
     return len(re.findall(r"^\s*def\s+test_\w+\s*\(", tests_code or "", re.M))
 
@@ -973,19 +1022,28 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     _heldout_lock = threading.Lock()                            # parallel candidates share it
 
     def _ensure_heldout(hp, strict: bool) -> str:
-        """(C1/C3) Build (once, cached) the held-out suite = hidden tests + invariants. Rebuilt
-        stricter if escalation flips `strict`. Never shown to the solver. Thread-safe: parallel
-        candidates that all pass the visible tests build it exactly once."""
-        if not hidden_tests_enabled():
+        """(C1/C3) Build (once, cached) the held-out suite = hidden tests + invariants + DEFINITION-
+        MATCH checks (one per requested output, asserting the reported value matches the request's
+        exact definition — independent of the candidate and its reference). Rebuilt stricter if
+        escalation flips `strict`. Never shown to the solver. Thread-safe: parallel candidates that
+        all pass the visible tests build it exactly once. The definition gate runs even when the
+        hidden-tests gate is off, so 'right logic, wrong reported answer' is always caught."""
+        if not (hidden_tests_enabled() or definition_gate_enabled()):
             return ""
         with _heldout_lock:
             if hstate["code"] is not None and hstate["strict"] == strict:
                 return hstate["code"]
-            emit({"type": "status", "message": "Building held-out hidden tests + invariants…"})
-            hidden = _generate_hidden_tests(hp, task, requirements, strict=strict,
-                                            task_type=task_type, use_reference=use_reference)
-            invariants = _generate_invariants(hp, task, requirements, strict=strict, task_type=task_type)
-            combined = ((hidden or "") + "\n\n" + (invariants or "")).strip()
+            emit({"type": "status", "message": "Building held-out hidden / definition checks…"})
+            hidden = invariants = definitions = ""
+            if hidden_tests_enabled():
+                hidden = _generate_hidden_tests(hp, task, requirements, strict=strict,
+                                                task_type=task_type, use_reference=use_reference)
+                invariants = _generate_invariants(hp, task, requirements, strict=strict,
+                                                  task_type=task_type)
+            if definition_gate_enabled():
+                definitions = _generate_definition_checks(hp, task, requirements, strict=strict,
+                                                          task_type=task_type)
+            combined = "\n\n".join(p for p in (hidden, invariants, definitions) if (p or "").strip())
             hstate["code"], hstate["strict"] = combined, strict
             emit({"type": "heldout", "count": _count_tests(combined), "strict": strict})
             return combined
