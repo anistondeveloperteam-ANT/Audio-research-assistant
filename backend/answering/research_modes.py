@@ -37,6 +37,7 @@ FAST_SETTINGS: Dict[str, Any] = {
     "web_max_results": 4,
     "arxiv_read_pdf_count": 0,
     "agentic_max_verify_rounds": 1,
+    "deep_max_loops": 1,
     "agentic_min_verify_score": 80,
     "auto_review": False,
     "evidence_budget_chars": 14000,
@@ -52,6 +53,10 @@ DEEP_SETTINGS: Dict[str, Any] = {
     "web_max_results": 8,
     "arxiv_read_pdf_count": 3,
     "agentic_max_verify_rounds": 3,
+    # Match max_verify_rounds so DEEP keeps its full thoroughness: the loop early-stops when a
+    # verdict has no concrete, fixable gap (waste removal), but a query that genuinely needs 3
+    # gap-filling rounds still gets all 3. Lower this only to trade quality for speed deliberately.
+    "deep_max_loops": 3,
     "agentic_min_verify_score": 80,
     "auto_review": True,
     "evidence_budget_chars": 28000,
@@ -96,6 +101,7 @@ def apply_research_mode(mode: str | None = None) -> Dict[str, Any]:
     os.environ["WEB_MAX_RESULTS"] = str(s["web_max_results"])
     os.environ["ARXIV_READ_PDF_COUNT"] = str(s["arxiv_read_pdf_count"])
     os.environ["AGENTIC_MAX_VERIFY_ROUNDS"] = str(s["agentic_max_verify_rounds"])
+    os.environ["DEEP_MAX_LOOPS"] = str(s["deep_max_loops"])
     os.environ["AGENTIC_MIN_VERIFY_SCORE"] = str(s["agentic_min_verify_score"])
     os.environ["AUTO_REVIEW"] = "true" if s["auto_review"] else "false"
     os.environ["EVIDENCE_BUDGET_CHARS"] = str(s["evidence_budget_chars"])

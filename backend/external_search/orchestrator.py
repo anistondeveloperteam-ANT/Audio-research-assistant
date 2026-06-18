@@ -89,6 +89,10 @@ def gather_external_evidence(query: str, max_results: int = 20) -> Tuple[List[Ex
     def _ch_web() -> Tuple[List[ExternalSource], List[str]]:
         w: List[str] = []
         srcs, pdf_urls = _web_channel(sq, _web_max(), w)
+        # PDFs are read SEQUENTIALLY (and capped at MAX_PDFS) on purpose: PDF parsing is the
+        # memory-heavy step (Docling can OOM/segfault on low-RAM hosts) and the channels already
+        # run concurrently, so each channel's slow part overlaps the others. A nested pool here
+        # would multiply peak memory for little wall-clock gain — not worth the OOM risk.
         for url in pdf_urls[:MAX_PDFS]:
             try:
                 srcs.extend(read_online_pdf(url))

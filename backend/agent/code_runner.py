@@ -104,10 +104,23 @@ def docker_available() -> bool:
     return _docker_ok
 
 
+def clip_keep_ends(text: str, limit: int = OUTPUT_CAP) -> str:
+    """Bound `text` to ~`limit` chars but keep BOTH ENDS — a small head for early context and a
+    LARGER TAIL, with the middle elided. Requested results are typically printed LAST (after any
+    intermediate dump), so head-only truncation drops exactly the values we must preserve; keeping
+    the tail means a final labelled result block always survives. Finite by construction."""
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    head = max(0, limit // 3)            # favour the tail: the requested result is usually last
+    tail = limit - head
+    elided = len(text) - head - tail
+    return text[:head] + f"\n... [truncated, {elided} chars elided] ...\n" + text[-tail:]
+
+
 def _cap(text: str) -> str:
-    if text and len(text) > OUTPUT_CAP:
-        return text[:OUTPUT_CAP] + f"\n... [truncated, {len(text) - OUTPUT_CAP} more chars]"
-    return text or ""
+    return clip_keep_ends(text or "", OUTPUT_CAP)
 
 
 _image_ready: bool | None = None

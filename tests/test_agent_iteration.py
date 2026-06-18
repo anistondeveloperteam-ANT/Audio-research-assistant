@@ -189,3 +189,97 @@ def test_never_games_to_full_pass(monkeypatch):
     # A "2/2 passing" result that was gamed is NEVER labelled verified — honesty over a fake full pass.
     assert res.verification == "rejected_cheating"
     assert res.success is False and res.best_code == ""
+
+
+# ----------------------------------------------------------------------
+# Helpers + (b) FREEZE: verified-correct parts are carried forward, only failures are revised.
+# ----------------------------------------------------------------------
+def _detailed(results: dict) -> RunResult:
+    """A runner result with per-test 'TEST <name> PASS|FAIL' lines (so the freeze logic can read
+    which specific checks passed), plus the TESTS_PASSED tally the loop counts."""
+    lines = "\n".join(f"TEST {n} {'PASS' if ok else 'FAIL'}" for n, ok in results.items())
+    p = sum(1 for ok in results.values() if ok)
+    return RunResult(True, 0, f"{lines}\nTESTS_PASSED {p}/{len(results)}\n", "", 0.1)
+
+
+def test_passing_and_failing_name_helpers():
+    out = "TEST test_a PASS\nTEST test_b FAIL\nTEST test_c PASS\nTESTS_PASSED 2/3\n"
+    assert set(loop._passing_names(out)) == {"test_a", "test_c"}
+    assert loop._failing_names(out) == ["test_b"]
+    assert loop._passing_names("") == [] and loop._failing_names("") == []
+
+
+def test_freeze_clause_freezes_passing_and_flags_regressions():
+    c = loop._freeze_clause(["test_a", "test_b"], regressed=["test_c"])
+    assert "ALREADY-PASSING" in c and "test_a" in c and "test_b" in c
+    assert "KEEP the code that satisfies them UNCHANGED" in c
+    assert "RE-BROKE" in c and "test_c" in c                  # regression is called out to restore
+    assert "Revise ONLY the parts responsible for the FAILING checks" in c
+    assert loop._freeze_clause([], None) == ""               # nothing proven correct yet -> no clause
+
+
+def test_freeze_carries_passing_checks_into_the_next_attempt(monkeypatch):
+    from test_agent import _FakeProvider, _fence, _ok, _runner, _TESTS_SRC, _HIDDEN_SRC, _INV_SRC
+
+    provider = _FakeProvider(
+        requirements="- implement bubble_sort(a)",
+        tests=_fence(_TESTS_SRC),
+        first=[_fence("def bubble_sort(a):\n    return a")],            # round 1: sorted FAIL, empty PASS
+        refined=[_fence("def bubble_sort(a):\n    return sorted(a)")],  # round 2: both pass
+        hidden=_HIDDEN_SRC, invariants=_INV_SRC,
+    )
+    monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
+    monkeypatch.setattr(loop, "docker_available", lambda: True)
+    monkeypatch.setattr(loop, "run_python_auto", _runner(
+        lambda c: (_detailed({"test_sorted": True, "test_empty": True}) if "sorted(a)" in c
+                   else _detailed({"test_sorted": False, "test_empty": True})),
+        lambda c: _ok(2, 2)))
+    monkeypatch.setenv("AGENT_REFERENCE_TESTS", "false")
+    monkeypatch.setenv("AGENT_PARALLEL_N", "1")
+    monkeypatch.setenv("AGENT_VERIFY_SEEDS", "1")
+    monkeypatch.setenv("AUTO_REVIEW", "false")
+    monkeypatch.delenv("AGENT_MODEL_STRONG", raising=False)
+
+    res = loop.run_agent("Implement bubble sort", use_search=False)
+    assert res.verification == "verified" and res.attempts_taken == 2
+
+    # The round-2 (refined) solution prompt must FREEZE the already-passing check and say keep it.
+    refine_prompts = [u for (s, u) in provider.calls
+                      if s == loop._GEN_SYSTEM and "FAILED last time" in u]
+    assert refine_prompts, "expected a refinement generation prompt"
+    rp = refine_prompts[-1]
+    assert "ALREADY-PASSING" in rp and "test_empty" in rp            # the passing check carried forward
+    assert "KEEP the code that satisfies them UNCHANGED" in rp
+    assert "Revise ONLY the parts responsible for the FAILING checks" in rp
+    assert "sorted(a)" in res.best_code                              # frozen-and-fixed final solution
+
+
+# ----------------------------------------------------------------------
+# (e/d) REAL failure: code that special-cases the visible inputs is caught by the HELD-OUT gate and
+# fixed in the CODE (the tests are never weakened to force a pass).
+# ----------------------------------------------------------------------
+def test_real_failure_special_casing_is_fixed_in_code_not_tests(monkeypatch):
+    from test_agent import _FakeProvider, _fence, _ok, _runner, _TESTS_SRC, _HIDDEN_SRC, _INV_SRC
+
+    special = _fence("def bubble_sort(a):\n    return [1, 2, 3] if a == [3, 1, 2] else list(a)")
+    general = _fence("def bubble_sort(a):\n    return sorted(a)")
+    provider = _FakeProvider(requirements="- implement bubble_sort(a)", tests=_fence(_TESTS_SRC),
+                             first=[special], refined=[general], hidden=_HIDDEN_SRC, invariants=_INV_SRC)
+    monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
+    monkeypatch.setattr(loop, "docker_available", lambda: True)
+    # Visible tests pass for BOTH (the special-case satisfies the shown input); the HELD-OUT suite
+    # passes ONLY the general solution -> the special-casing is caught and must be fixed in the CODE.
+    monkeypatch.setattr(loop, "run_python_auto", _runner(
+        lambda c: _ok(2, 2),
+        lambda c: _ok(1, 1) if "sorted(a)" in c else _ok(0, 1)))
+    monkeypatch.setenv("AGENT_REFERENCE_TESTS", "false")
+    monkeypatch.setenv("AGENT_ANTICHEAT_SCAN", "false")        # isolate the held-out generalization gate
+    monkeypatch.setenv("AGENT_PARALLEL_N", "1")
+    monkeypatch.setenv("AGENT_VERIFY_SEEDS", "1")
+    monkeypatch.setenv("AUTO_REVIEW", "false")
+    monkeypatch.delenv("AGENT_MODEL_STRONG", raising=False)
+
+    res = loop.run_agent("Implement bubble sort", use_search=False)
+    assert res.verification == "verified" and res.attempts_taken == 2
+    assert "sorted(a)" in res.best_code and "[1, 2, 3] if" not in res.best_code   # generalized in CODE
+    assert res.tests_total == 2                                # the test suite was NOT weakened

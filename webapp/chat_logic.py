@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -39,6 +40,10 @@ from backend.answering.agentic_answer import (  # noqa: E402
     build_revision_message,
     complete_text,
     followup_query,
+    has_actionable_feedback,
+    has_concrete_gap,
+    max_deep_loops,
+    python_blocks_in_order,
     max_verify_rounds,
     run_best_python_block,
     verification_passed,
@@ -47,7 +52,7 @@ from backend.answering.agentic_answer import (  # noqa: E402
 from backend.llm.streaming_provider import get_provider  # noqa: E402
 from backend.external_search import gather_external_evidence, is_web_search_enabled  # noqa: E402
 from backend.observability import tracing  # noqa: E402  (no-op unless LANGFUSE_ENABLED=true)
-from backend.answering.citations import repair_citations  # noqa: E402
+from backend.answering.citations import find_citations, repair_citations  # noqa: E402
 from backend.answering.evidence_grader import (  # noqa: E402
     NONE,
     PARTIAL,
@@ -114,6 +119,10 @@ SYSTEM_PROMPT = (
     "  drawing on a DIVERSITY of sources rather than leaning on one.\n"
     "- Ground all specifics (equations, numbers, parameters, names, dates) in the cited\n"
     "  sources. Never invent facts, numbers, URLs, titles, or citations.\n"
+    "- ATTRIBUTION: only credit a result, product, model, or claim to a person or organisation\n"
+    "  when a cited source EXPLICITLY ties them together. If a source is about a DIFFERENT entity\n"
+    "  than the one asked about (e.g. a model from another lab/company), do NOT present it as the\n"
+    "  asked-about entity's work — say the evidence doesn't cover that entity instead.\n"
     "- If the sources genuinely don't cover part of the question, say so plainly and\n"
     "  answer what you can from what is available.\n"
     "- For code / implementation / simulation requests: you MAY use your OWN expert knowledge\n"
@@ -123,6 +132,35 @@ SYSTEM_PROMPT = (
     "- Prefer depth, accuracy, and breadth over brevity.\n"
     "- Write in clean, professional prose. Do NOT use emojis or decorative symbols.\n"
 )
+
+
+def _today_note() -> str:
+    """A live current-date anchor prepended to the system prompt so 'today'/'this year'/'latest'
+    are interpreted against the REAL date, not the model's training-era default (which made a
+    'latest this year' question answer with old years)."""
+    return (
+        "Today's date is " + datetime.now().strftime("%Y-%m-%d") + ". Interpret 'today', 'now', "
+        "'this year', 'latest', and 'recent' relative to THIS date — never assume an earlier year "
+        "from your training data. If the newest available evidence predates the user's timeframe, "
+        "say so explicitly (e.g. 'the most recent source found is from <year>') instead of "
+        "presenting older information as current.\n\n"
+    )
+
+
+def _freshness_note(question: str) -> str:
+    """Extra instruction for time-sensitive questions: lead with the newest dated item and, when the
+    freshest source is older than the current year, open with an explicit caveat instead of dressing
+    up old news as 'this year'."""
+    if not _freshness_sensitive(question):
+        return ""
+    yr = datetime.now().year
+    return (
+        f"\nThis is a TIME-SENSITIVE question about the current state as of {yr}. Sort the evidence "
+        f"by date and LEAD with the most recent, dated development. Do NOT describe a development "
+        f"from an earlier year as happening 'this year'. If the newest source you have predates "
+        f"{yr}, OPEN with a clear caveat: 'The most recent information in these sources is from "
+        f"<year>; there may be newer developments not captured here.'\n"
+    )
 
 
 def _evidence_header(n: int, item: Dict[str, Any]) -> str:
@@ -300,9 +338,10 @@ def answer_cache_limit() -> int:
 
 
 _FRESHNESS_RE = re.compile(
-    r"\b(20\d{2}|latest|current|currently|today|tonight|tomorrow|yesterday|now|"
+    r"\b(20\d{2}|latest|current|currently|today|tonight|tomorrow|yesterday|now|nowadays|"
     r"recent|recently|newest|new(est)?|as of|up[- ]to[- ]date|state[- ]of[- ]the[- ]art|"
-    r"this (week|month|year|quarter)|release[ds]?|version)\b"
+    r"these days|at present|breaking|trending|this (week|month|year|quarter)|"
+    r"release[ds]?|version)\b"
 )
 
 
@@ -425,11 +464,22 @@ def _external_item(es: Any) -> Dict[str, Any]:
 
 
 def _gather_external_items(query: str, max_results: int) -> tuple[List[Dict[str, Any]], List[str]]:
+    # Freshness-sensitive queries ('latest/current/today/...') ALWAYS re-search and are never
+    # cached — the same policy the answer cache uses (_freshness_sensitive), so a stale 'latest'
+    # answer can't be built from memoized evidence within the TTL.
+    fresh = _freshness_sensitive(query)
+    if not fresh:
+        cached = _ext_cache_get(query, max_results)
+        if cached is not None:                        # already fetched this (query, k) -> reuse
+            return cached
     try:
         ext_sources, warnings = gather_external_evidence(query, max_results=max_results)
     except Exception as exc:
         return [], [f"External search failed: {exc}"]
-    return [_external_item(es) for es in ext_sources], warnings
+    items = [_external_item(es) for es in ext_sources]
+    if not fresh:
+        _ext_cache_put(query, max_results, items, warnings)
+    return items, warnings
 
 
 def _item_key(item: Dict[str, Any]) -> tuple:
@@ -465,6 +515,40 @@ def _public_sources(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         pub["text"] = (it.get("text") or "")[:600]
         sources.append(pub)
     return sources
+
+
+def _source_relevance_enabled() -> bool:
+    return _env_flag("SOURCE_RELEVANCE_DISPLAY", True)
+
+
+_CODE_FENCE_RE = re.compile(r"```.*?```", re.S)
+_INLINE_CODE_RE = re.compile(r"`[^`]*`")
+
+
+def _prose_only(text: str) -> str:
+    """Strip fenced and inline code so citation parsing ignores code subscripts like `arr[2]`."""
+    return _INLINE_CODE_RE.sub(" ", _CODE_FENCE_RE.sub(" ", text or ""))
+
+
+def _cited_source_numbers(text: str) -> set:
+    """The set of source numbers the answer cited, including GROUPED citations like [1, 3]
+    (delegates to citations.find_citations so it matches the rest of the citation system). Code
+    blocks are excluded so an array index `arr[2]` is never counted as a citation."""
+    return find_citations(_prose_only(text or ""))
+
+
+def _relevant_sources(answer: str, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep only the sources the answer CITED — those are the ones that justify it, so the panel
+    never lists fetched-but-off-topic results (e.g. biology hits for a maths question). Each kept
+    source keeps its original `n` (the frontend resolves [n] by source.n, so gaps are fine). Falls
+    back to all sources when the answer cited none (never blanks the panel)."""
+    if not _source_relevance_enabled():
+        return sources
+    cited = _cited_source_numbers(answer)
+    if not cited:
+        return sources
+    kept = [s for s in sources if s.get("n") in cited]
+    return kept or sources
 
 
 # UI badge text per CRAG grade — the frontend renders {"type":"grade",...} as a small chip on
@@ -564,6 +648,87 @@ def _grade_cache_put(session_id: str, mode: str, q: str, items, grade: str) -> N
     _GRADE_CACHE[_grade_cache_key(session_id, mode, q)] = (time.time(), [dict(it) for it in items], grade)
 
 
+def _agent_parallelism() -> int:
+    """Bounded worker cap for independent agent-level concurrency (search angles + follow-up
+    gathers). Capped (never unbounded) to protect the GPU and free-tier rate limits."""
+    try:
+        return max(1, min(8, int(os.getenv("AGENT_PARALLELISM", "4"))))
+    except ValueError:
+        return 4
+
+
+def _followup_confidence_floor() -> float:
+    """Minimum router confidence required to DIVERT a message away from search (answer it as a
+    follow-up). The owner's hard rule is that a genuinely new question must still search, so this is
+    a code-level safety net on top of the LLM verdict: below it, we treat the message as research.
+    The regex fallback scores 0.5 (< default 0.6), so an LLM-down request always searches."""
+    try:
+        return max(0.0, min(1.0, float(os.getenv("FOLLOWUP_CONFIDENCE", "0.6"))))
+    except (TypeError, ValueError):
+        return 0.6
+
+
+# Deixis / back-references that a real follow-up uses to point at the conversation. Deliberately
+# EXCLUDES content words like "output"/"result" ("the output impedance" is a new question). Used
+# only to VETO a confident-but-wrong LLM follow-up verdict, never to create one.
+_CONTEXT_DEIXIS_RE = re.compile(
+    r"\b(it|its|it's|this|that|these|those|they|them|their|above|previous(ly)?|earlier|"
+    r"aforementioned|former|prior|same)\b"
+    r"|\b(the|that|this) (code|answer|reply|snippet|program|script|solution|function|"
+    r"implementation|example)\b", re.I)
+_ELLIPSIS_START_RE = re.compile(
+    r"^\s*(and|also|but|so|then|plus|what about|how about|why|ok|okay)\b", re.I)
+
+
+def _plausibly_references_context(question: str) -> bool:
+    """Permissive check: could this message PLAUSIBLY be a follow-up to the conversation? True if it
+    carries any deixis/pronoun/back-reference or an elliptical opener, or is very short. Used to
+    VETO a confident-but-wrong LLM 'context'/'code_output' verdict on a clearly self-contained NEW
+    question — so such a question still searches no matter how sure the model was."""
+    s = (question or "").strip()
+    if not s:
+        return False
+    if len(s.split()) <= 4:                          # "why?", "and the complexity?" -> elliptical
+        return True
+    return bool(_CONTEXT_DEIXIS_RE.search(s) or _ELLIPSIS_START_RE.search(s))
+
+
+# Per-(query, k) memo so the verify->rewrite loop never re-fetches the SAME external search across
+# rounds (and so similar angles within a request reuse). A short TTL keeps it fresh — external
+# results don't change within a single multi-loop request; correctness comes from the TTL.
+_EXT_CACHE: Dict[tuple, tuple] = {}   # (normalized_q, k) -> (ts, items, warnings)
+
+
+def _ext_cache_ttl() -> float:
+    try:
+        return max(0.0, float(os.getenv("EXTERNAL_GATHER_CACHE_TTL", "120")))
+    except ValueError:
+        return 120.0
+
+
+def _ext_cache_key(query: str, k: int) -> tuple:
+    return (" ".join((query or "").lower().split()), int(k))
+
+
+def _ext_cache_get(query: str, k: int):
+    ent = _EXT_CACHE.get(_ext_cache_key(query, k))
+    if not ent:
+        return None
+    ts, items, warnings = ent
+    if time.time() - ts > _ext_cache_ttl():
+        _EXT_CACHE.pop(_ext_cache_key(query, k), None)
+        return None
+    return [dict(it) for it in items], list(warnings)
+
+
+def _ext_cache_put(query: str, k: int, items, warnings) -> None:
+    if _ext_cache_ttl() <= 0:
+        return
+    if len(_EXT_CACHE) > 256:                         # crude bound; the TTL owns correctness
+        _EXT_CACHE.clear()
+    _EXT_CACHE[_ext_cache_key(query, k)] = (time.time(), [dict(it) for it in items], list(warnings))
+
+
 def _traced_span(trace, span_name: str, fn, *fn_args):
     """Run `fn(*fn_args)` inside a trace span, recording the result count. The trace handle is
     passed explicitly so nesting stays correct across the worker-thread hop."""
@@ -584,7 +749,11 @@ def _gather_pass(queries: List[str], gather_fn, arg_for, *, trace, span_name: st
     items: List[Dict[str, Any]] = []
     warnings: List[str] = []
     timed_out = False
-    workers = max(1, min(4, len(queries)))
+    t0 = time.time()
+    # All queries (the main question + its angles) are submitted up front, so they run
+    # CONCURRENTLY in the pool (bounded by AGENT_PARALLELISM); collecting in submission order
+    # only fixes the merge order, not execution — wall-time is the slowest query, not the sum.
+    workers = max(1, min(_agent_parallelism(), len(queries)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
         ordered = [ex.submit(_traced_span, trace, span_name, gather_fn, q, arg_for(i, q))
                    for i, q in enumerate(queries)]
@@ -599,6 +768,9 @@ def _gather_pass(queries: List[str], gather_fn, arg_for, *, trace, span_name: st
                 continue
             _extend_unique(items, got_items)
             warnings.extend(got_warnings)
+    logger.info("%s gather: %d sources from %d quer%s in %.1fs (%d workers)",
+                span_name, len(items), len(queries), "y" if len(queries) == 1 else "ies",
+                time.time() - t0, workers)
     return items, warnings, timed_out
 
 
@@ -944,6 +1116,132 @@ def _run_code_agent(question: str, session_id: str, mem,
 
 
 # ----------------------------------------------------------------------
+# Conversation-aware follow-up handling (answer from the chat, not a fresh search)
+# ----------------------------------------------------------------------
+SYSTEM_PROMPT_FOLLOWUP = (
+    "You are continuing an ongoing conversation. The user's latest message is a FOLLOW-UP that "
+    "refers back to what was already discussed. Answer it using the conversation so far — no new "
+    "sources were searched because none are needed for a follow-up. Be direct and accurate; if the "
+    "answer is already present in earlier turns, use it. Do not invent citations or external sources."
+)
+
+
+def _conversation_history(mem, session_id: str) -> List[Dict[str, str]]:
+    """Prior turns (role/content) for this session, EXCLUDING the just-added current question
+    (and, on regenerate, its prior answer). Empty on the first message. Never raises."""
+    try:
+        all_turns = mem.get_turns(session_id)
+    except Exception:
+        return []
+    trimmed = list(all_turns)
+    if trimmed and trimmed[-1].get("role") == "assistant":   # regen: drop the current answer
+        trimmed = trimmed[:-1]
+    if trimmed and trimmed[-1].get("role") == "user":        # drop the current question
+        trimmed = trimmed[:-1]
+    return [{"role": t["role"], "content": t.get("content") or ""}
+            for t in trimmed if (t.get("content") or "").strip()]
+
+
+def _run_prior_code(code: str) -> str:
+    """Run a code block from the conversation in the Docker sandbox and format the output as the
+    answer. Never raises; degrades to a clear message if the sandbox is unavailable."""
+    try:
+        from backend.agent.code_runner import docker_available, run_python
+    except Exception as exc:
+        return f"I couldn't run the earlier code — the sandbox runner is unavailable ({exc})."
+    if not docker_available():
+        return ("Docker isn't running, so I can't execute the earlier code to get its live output. "
+                "Start Docker and ask again (the output shown with the code above is from its "
+                "previous run).")
+    try:
+        timeout = int(os.getenv("AGENTIC_SIMULATION_TIMEOUT", os.getenv("AGENT_RUN_TIMEOUT", "30")))
+    except ValueError:
+        timeout = 30
+    res = run_python(code, timeout=timeout)
+    out = (res.stdout or "").strip()
+    if res.ok:
+        return ("Here is the output of the code from earlier, re-run just now in the sandbox:\n\n"
+                f"```text\n{out or '(the program produced no output)'}\n```")
+    err = (res.stderr or res.error or "").strip()
+    body = ("I re-ran the code from earlier and it raised an error:\n\n"
+            f"```text\n{err or 'unknown error'}\n```")
+    if out:
+        body += f"\n\nPartial output before it failed:\n\n```text\n{out}\n```"
+    return body
+
+
+def _emit_answer(mem, q_version_id, node_id, answer: str, *, code_agent: bool = False):
+    """Save an answer version and build the matching `done` event (shared by the follow-up paths)."""
+    av = None
+    try:
+        av = mem.add_answer_version(q_version_id, answer, sources=[])
+    except Exception as exc:
+        logger.warning("follow-up answer not persisted (add_answer_version failed): %s", exc)
+    done: Dict[str, Any] = {"type": "done", "answer": answer}
+    if code_agent:
+        done["code_agent"] = True
+    if av:
+        done.update({"node_id": node_id, "qversion_id": q_version_id,
+                     "answer_turn_id": av["turn_id"], "answer_version_index": av["version_index"],
+                     "answer_total": av["total"]})
+    return done
+
+
+def _answer_prior_code_output(question: str, conv_history: List[Dict[str, str]], mem,
+                              q_version_id, node_id) -> Iterator[Dict[str, Any]]:
+    """Re-run the most recent code block from the conversation and answer with its output. Yields
+    events; the generator's return value is True if it handled the request, False if no runnable
+    code was found (so the caller falls back to a plain conversational answer)."""
+    code = ""
+    for t in reversed(conv_history):
+        if t.get("role") == "assistant":
+            blocks = python_blocks_in_order(t.get("content") or "")
+            if blocks:
+                code = blocks[-1]          # the LAST python fence = the canonical final program
+                break
+    if not code:
+        return False
+    yield {"type": "sources", "sources": []}        # follow-up: no external sources to show
+    yield {"type": "status", "message": "Re-running the code from our conversation in the sandbox..."}
+    answer = _run_prior_code(code)
+    yield {"type": "token", "text": answer}
+    yield _emit_answer(mem, q_version_id, node_id, answer, code_agent=True)
+    return True
+
+
+def _answer_from_conversation(question: str, mem, session_id: str,
+                              q_version_id, node_id) -> Iterator[Dict[str, Any]]:
+    """Answer a follow-up from the conversation context alone — no external search, no source pool."""
+    _ctx = _build_compact_context(mem, session_id, question)
+    history = _ctx["history"]
+    sys_prompt = _today_note() + SYSTEM_PROMPT_FOLLOWUP + _ctx["system_extra"]
+    yield {"type": "sources", "sources": []}        # clear any stale source panel
+    provider = get_provider()
+    parts: List[str] = []
+    if not provider.is_available:
+        msg = "The language model isn't available right now, so I can't answer the follow-up."
+        parts.append(msg)
+        yield {"type": "token", "text": msg}
+    else:
+        messages = history + [{"role": "user", "content": question}]
+        try:
+            for chunk in provider.stream_chat(messages, system=sys_prompt,
+                                              max_tokens=_answer_max_tokens(), temperature=0.3,
+                                              yield_reasoning=True):
+                if isinstance(chunk, dict):
+                    yield {"type": "thinking", "text": chunk.get("reasoning", "")}
+                else:
+                    parts.append(chunk)
+                    yield {"type": "token", "text": chunk}
+        except Exception as exc:
+            m = f"\n\n_Answer generation failed: {exc}_"
+            parts.append(m)
+            yield {"type": "token", "text": m}
+    answer = "".join(parts).strip() or "(no answer)"
+    yield _emit_answer(mem, q_version_id, node_id, answer)
+
+
+# ----------------------------------------------------------------------
 # The streaming orchestration
 # ----------------------------------------------------------------------
 def stream_chat_events(
@@ -1033,7 +1331,8 @@ def stream_chat_events(
     # with the regex is_code_intent for high recall. It degrades to pure regex when the LLM is
     # unavailable (or CODE_INTENT_SEMANTIC=false) and never raises.
     from backend.answering.task_classifier import classify
-    if classify(q).code_task:
+    task_class = classify(q)            # reused below to gate the runnable-simulation check
+    if task_class.code_task:
         # CRAG code-from-paper: if the requested algorithm lives in the user's PDFs, extract its
         # description and hand it to the code agent as the spec (cited in the answer). GitHub
         # references supplement only when the paper is thin; otherwise the paper alone is the spec.
@@ -1068,6 +1367,49 @@ def stream_chat_events(
                                    paper_spec=paper_spec, paper_citation=paper_citation,
                                    supplement_github=supplement)
         return
+
+    # --- Conversation-aware routing: a follow-up that refers to the chat so far is answered FROM
+    #     the conversation (or by re-running earlier code), NOT by a fresh web/paper sweep that
+    #     pulls dozens of off-topic sources. Runs only when prior conversation exists, and defaults
+    #     to "research" on any doubt so a genuinely new question still searches. (Code-intent
+    #     queries already returned to the code agent above, which is itself conversation-aware.) ---
+    search_q = q                       # the query used for retrieval; resolved if it's a follow-up
+    conv_history = _conversation_history(mem, session_id)
+    if conv_history:
+        from backend.answering.conversation_router import route as route_conversation
+        try:
+            conv_route = route_conversation(q, conv_history)
+        except Exception:
+            conv_route = None
+        if conv_route is not None:
+            # Safety net for the owner's hard rule ("a new question must still search"). Divert to a
+            # follow-up answer ONLY when ALL hold: the router is confident it is a follow-up; the
+            # message PLAUSIBLY references the chat (a deixis veto, so a confident-but-wrong verdict
+            # on a self-contained question can't skip search); and it is not time-sensitive (those
+            # always need a fresh search — checked on the message AND its resolved form).
+            resolved = (conv_route.resolved_query or "").strip()
+            refs_context = _plausibly_references_context(q)
+            # Use the anaphora-resolved query for retrieval ONLY when there is a reference to resolve;
+            # for a standalone question keep the user's exact words (don't trust a stray LLM rewrite).
+            search_q = resolved if (resolved and refs_context) else q
+            fresh = _freshness_sensitive(q) or (bool(resolved) and _freshness_sensitive(resolved))
+            divert = (conv_route.kind in ("code_output", "context")
+                      and conv_route.confidence >= _followup_confidence_floor()
+                      and refs_context
+                      and not fresh)
+            logger.info("conversation route: kind=%s conf=%.2f (%s) refs=%s divert=%s resolved=%r",
+                        conv_route.kind, conv_route.confidence, conv_route.source, refs_context,
+                        divert, resolved[:80])
+            if divert and conv_route.kind == "code_output":
+                handled = yield from _answer_prior_code_output(q, conv_history, mem,
+                                                               q_version_id, node_id)
+                if handled:
+                    return
+                yield from _answer_from_conversation(q, mem, session_id, q_version_id, node_id)
+                return
+            if divert:                 # context follow-up
+                yield from _answer_from_conversation(q, mem, session_id, q_version_id, node_id)
+                return
 
     # Embed the question ONCE (if semantic reuse is on); reused for lookup AND save.
     query_emb, query_meta = (None, None)
@@ -1107,11 +1449,24 @@ def stream_chat_events(
     local_on = local_rag_enabled()
     crag_grade = NONE                 # set by the CRAG branch; read later by the Self-RAG escalation
 
+    # --- Freshness ('latest/current/this year') handling: the static local PDF library can't hold
+    #     'the latest', so a time-sensitive question goes WEB-ONLY (skip the stale local corpus) and
+    #     the search is anchored to the current year so external results target recent content. Only
+    #     when web search is actually available — otherwise keep local rather than returning nothing.
+    is_fresh = _freshness_sensitive(q)
+    if is_fresh and local_on and is_web_search_enabled():
+        local_on = False
+        logger.info("freshness query -> web-only (skipping the static local library)")
+    if is_fresh:
+        _yr = str(datetime.now().year)
+        if _yr not in search_q:
+            search_q = f"{search_q} {_yr}"
+
     # --- Deep research, automatically: plan a few angles, then search the main
     #     question AND every angle across all sources, merging the evidence so the
     #     answer is built from everything found (local papers + web + papers +
     #     patents + GitHub). ---
-    queries = _deep_queries(q)
+    queries = _deep_queries(search_q)   # search_q == q unless a follow-up resolved its references
     if len(queries) > 1:
         yield {"type": "status", "message":
                f"Planning the research — exploring {len(queries)} angles..."}
@@ -1220,7 +1575,7 @@ def stream_chat_events(
     # the full raw history stays saved for display + versioning. sys_prompt carries facts+summary.
     _ctx = _build_compact_context(mem, session_id, q)
     history = _ctx["history"]
-    sys_prompt = SYSTEM_PROMPT + _ctx["system_extra"]
+    sys_prompt = _today_note() + SYSTEM_PROMPT + _freshness_note(q) + _ctx["system_extra"]
 
     answer_parts: List[str] = []
     verdict: Dict[str, Any] = {}
@@ -1243,7 +1598,17 @@ def stream_chat_events(
             provider_ok = True
             answer = ""
             run_info: Dict[str, Any] | None = None
-            for round_no in range(1, max_verify_rounds() + 1):
+            # Cap the SEQUENTIAL verify->rewrite loop. By default DEEP_MAX_LOOPS matches
+            # max_verify_rounds (fast=1, deep=3), so the cap does NOT reduce thoroughness; the
+            # latency win comes entirely from the early-stop below (skip a rewrite when the draft
+            # passes or the verifier names no concrete gap — an empty round can't improve the
+            # answer). A query that genuinely needs every round still gets them. DEEP_MAX_LOOPS is
+            # only a deliberate, operator-set speed/quality lever when set below max_verify_rounds.
+            loop_cap = min(max_verify_rounds(), max_deep_loops())
+            loop_t0 = time.time()
+            feedback_rewrites = 0       # guided rewrites done for feedback-only (no-gap) verdicts
+            for round_no in range(1, loop_cap + 1):
+                round_t0 = time.time()
 
                 def _messages_for(ev: str) -> List[Dict[str, str]]:
                     if answer and verdict:
@@ -1255,7 +1620,7 @@ def stream_chat_events(
                     return history + [{"role": "user", "content": um}]
 
                 yield {"type": "status", "message": (
-                    f"Agent loop {round_no}/{max_verify_rounds()}: drafting a grounded answer..."
+                    f"Agent loop {round_no}/{loop_cap}: drafting a grounded answer..."
                 )}
 
                 # Draft, shrinking the evidence to fit if the model rejects the prompt
@@ -1298,18 +1663,23 @@ def stream_chat_events(
                     _sp.set(model=getattr(provider, "model", None), output_len=len(answer),
                             tokens_out_est=len(answer) // 4)   # ~4 chars/token (no exact usage)
 
-                yield {"type": "status", "message": "Checking for runnable Python simulation..."}
-                with trace.span("code_simulation") as _sp:
-                    run_info = run_best_python_block(answer)
+                # Runnable-Python check ONLY for code-intent queries. A pure research/reasoning
+                # question (router said NON-code) skips this entirely — every loop — so we never
+                # spin up the sandbox path for prose. Code tasks run their code in the dedicated
+                # agent (they route there before this loop), so this stays correct for them too.
+                if task_class.code_task:
+                    yield {"type": "status", "message": "Checking for runnable Python simulation..."}
+                    with trace.span("code_simulation") as _sp:
+                        run_info = run_best_python_block(answer)
+                        if run_info:
+                            _sp.set(attempted=bool(run_info.get("attempted")),
+                                    ok=bool(run_info.get("ok")),
+                                    summary=run_info.get("summary"))
                     if run_info:
-                        _sp.set(attempted=bool(run_info.get("attempted")),
-                                ok=bool(run_info.get("ok")),
-                                summary=run_info.get("summary"))
-                if run_info:
-                    if run_info.get("attempted"):
-                        yield {"type": "status", "message": f"Sandbox result: {run_info.get('summary')}"}
-                    else:
-                        yield {"type": "warning", "message": run_info.get("summary", "Simulation was not run.")}
+                        if run_info.get("attempted"):
+                            yield {"type": "status", "message": f"Sandbox result: {run_info.get('summary')}"}
+                        else:
+                            yield {"type": "warning", "message": run_info.get("summary", "Simulation was not run.")}
 
                 yield {"type": "status", "message": "Verifying answer against the retrieved evidence..."}
                 try:
@@ -1337,7 +1707,11 @@ def stream_chat_events(
                     verdict["feedback"] = "Generated Python did not run successfully; fix the code and rerun it."
                 loop_run_failed = run_failed
 
-                if (verification_passed(verdict) and not run_failed) or round_no >= max_verify_rounds():
+                logger.info("agent loop %d/%d: round %.1fs (verify score %s, ok %s, run_failed %s)",
+                            round_no, loop_cap, time.time() - round_t0,
+                            verdict.get("score"), verdict.get("ok"), run_failed)
+
+                if (verification_passed(verdict) and not run_failed) or round_no >= loop_cap:
                     break
 
                 # Self-RAG: a STRONG answer drawn from the PDFs ALONE that fails verification means
@@ -1346,7 +1720,7 @@ def stream_chat_events(
                 # PARTIAL/NONE already searched externally, so the generic follow-up below covers them.
                 if (crag_grade == STRONG and not self_rag_escalated
                         and not verification_passed(verdict)
-                        and round_no < max_verify_rounds() and is_web_search_enabled()):
+                        and round_no < loop_cap and is_web_search_enabled()):
                     self_rag_escalated = True
                     yield {"type": "status", "message":
                            "Your PDFs didn't fully hold up — searching the web to corroborate "
@@ -1365,6 +1739,22 @@ def stream_chat_events(
                         yield _grade_event(PARTIAL, True)   # badge: needed the web after all
                     continue                                 # regenerate with the merged evidence
 
+                # Early-stop: the draft didn't fully pass and the verifier named NO concrete,
+                # structured gap (no missing evidence / citation issue / follow-up search). But the
+                # verifier may still have given SPECIFIC prose feedback (e.g. "soften the overstated
+                # claim about [2]") that a rewrite can fix from the existing evidence — so we do ONE
+                # feedback-guided rewrite before finalizing. A second no-gap round would only chase a
+                # vague target (the waste this removes). A code-run failure always continues to fix
+                # the code. (FAST mode is loop_cap=1, so this never triggers a rewrite there.)
+                if not loop_run_failed and not has_concrete_gap(verdict):
+                    if has_actionable_feedback(verdict) and feedback_rewrites < 1:
+                        feedback_rewrites += 1
+                        yield {"type": "status",
+                               "message": "Verification noted a specific fix; revising once from the evidence..."}
+                        continue                         # rewrite next round using verdict feedback
+                    yield {"type": "status", "message": "No concrete gap left to fix — finalizing the best answer."}
+                    break
+
                 added = 0
                 needs_search = bool(
                     verdict.get("needs_more_search")
@@ -1374,16 +1764,36 @@ def stream_chat_events(
                 if needs_search:
                     search_q = followup_query(q, verdict)
                     yield {"type": "status", "message": "Verification found gaps; searching again..."}
-                    if local_on:
-                        local_items, local_warnings = _gather_local_items(search_q, mode)
-                        added += _extend_unique(items, local_items)
-                        for w in local_warnings:
+                    # Local + external follow-up run CONCURRENTLY (bounded pool), merged local-first
+                    # so citation order stays stable. The external memo also skips a re-fetch if this
+                    # same query was already searched earlier in the request.
+                    fu_t0 = time.time()
+                    fu_futs: Dict[str, concurrent.futures.Future] = {}
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(2, _agent_parallelism()))) as fx:
+                        if local_on:
+                            fu_futs["local"] = fx.submit(_gather_local_items, search_q, mode)
+                        if is_web_search_enabled():
+                            fu_futs["external"] = fx.submit(_gather_external_items, search_q, AGENTIC_EXTRA_SEARCH_K)
+                        fu_res: Dict[str, Any] = {}
+                        for _name, _fut in fu_futs.items():
+                            try:
+                                _to = None if _name == "local" else float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0
+                                fu_res[_name] = _fut.result(timeout=_to)
+                            except Exception as _exc:
+                                logger.info("follow-up %s search failed: %s", _name, type(_exc).__name__)
+                                # Surface it (don't swallow): the answer is built on fewer sources.
+                                _msg = ("External follow-up search timed out — using available sources."
+                                        if isinstance(_exc, concurrent.futures.TimeoutError)
+                                        else f"Follow-up {_name} search failed.")
+                                fu_res[_name] = ([], [_msg])
+                    for _name in ("local", "external"):      # local first -> stable citation order
+                        if _name not in fu_res:
+                            continue
+                        _gi, _gw = fu_res[_name]
+                        added += _extend_unique(items, _gi)
+                        for w in _gw:
                             yield {"type": "warning", "message": w}
-                    if is_web_search_enabled():
-                        ext_items, ext_warnings = _gather_external_items(search_q, AGENTIC_EXTRA_SEARCH_K)
-                        added += _extend_unique(items, ext_items)
-                        for w in ext_warnings:
-                            yield {"type": "warning", "message": w}
+                    logger.info("follow-up search: +%d sources in %.1fs", added, time.time() - fu_t0)
                     if added:
                         sources = _public_sources(items)
                         yield {"type": "sources", "sources": sources}
@@ -1391,6 +1801,9 @@ def stream_chat_events(
                         yield {"type": "warning", "message": "Follow-up search did not find new sources."}
                 else:
                     yield {"type": "status", "message": "Verification requested a rewrite; refining answer..."}
+
+            logger.info("agentic answer: %d loop(s) of <=%d in %.1fs", round_no, loop_cap,
+                        time.time() - loop_t0)
 
             # Automatic peer review (the "Review" step, run for you): critique the final
             # answer (with topical relevance), improve it once if it's weak. Reviewer jargon
@@ -1475,35 +1888,45 @@ def stream_chat_events(
     answer = "".join(answer_parts).strip() or "(no answer)"
     with trace.span("memory_save") as _sp:
         sources = _public_sources(items)
-        # Citation guard: strip any [n] that references a source outside the returned list,
-        # so the saved/cached answer's citations always match the actual sources. (The
-        # frontend strips out-of-range [n] from the live display too.)
-        answer, removed_citations = repair_citations(answer, len(sources))
-        _av = mem.add_answer_version(q_version_id, answer, sources=sources)
+        full_n = len(sources)
+        # Citation guard: strip any [n] that references a source outside the FULL retrieved list,
+        # so the saved/cached answer's citations always match the actual sources. (The frontend
+        # strips out-of-range [n] from the live display too.) Done against full_n BEFORE the
+        # relevance filter, since cited numbers index the full list.
+        answer, removed_citations = repair_citations(answer, full_n)
+        # Show only the sources that JUSTIFY the answer (the ones it cited): a maths question no
+        # longer lists biology hits the search happened to return. Kept sources keep their original
+        # number so [n] still resolves; falls back to all when nothing was cited.
+        display_sources = _relevant_sources(answer, sources)
+        if len(display_sources) != full_n:
+            logger.info("source relevance: %d of %d sources cited — showing only those",
+                        len(display_sources), full_n)
+            yield {"type": "sources", "sources": display_sources}
+        _av = mem.add_answer_version(q_version_id, answer, sources=display_sources)
 
         # Save for reuse ONLY when the generation truly succeeded: provider worked, no
         # exception, the agentic answer passed verification AND its code didn't fail, and
         # the answer wasn't rewritten post-verification. Cache the clean body (no footers).
         verified = (not agentic_loop_enabled()) or (verification_passed(verdict) and not loop_run_failed)
         body = (clean_body or "").strip() or _strip_answer_footers(answer)
-        body, _ = repair_citations(body, len(sources))
+        body, _ = repair_citations(body, full_n)
         did_cache = False
         if (cache_on and provider_ok and not gen_failed and verified
-                and not answer_rewritten and _cacheable_answer(q, body, sources)):
+                and not answer_rewritten and _cacheable_answer(q, body, display_sources)):
             mem.cache_answer(
                 user_id=user_id,
                 session_id=session_id,
                 question=q,
                 answer=body,
-                sources=sources,
+                sources=display_sources,
                 embedding=query_emb,
                 embedding_meta=query_meta,
             )
             did_cache = True
         _sp.set(cached=did_cache, citations_removed=len(removed_citations))
-    trace.set(cached=did_cache, n_sources=len(sources)).end()
+    trace.set(cached=did_cache, n_sources=len(display_sources)).end()
     if removed_citations:
         logger.info("citation guard: removed out-of-range %s (only %d sources)",
-                    removed_citations, len(sources))
-        yield {"type": "citation_warning", "removed": removed_citations, "n_sources": len(sources)}
+                    removed_citations, full_n)
+        yield {"type": "citation_warning", "removed": removed_citations, "n_sources": full_n}
     yield {"type": "done", "answer": answer, **_ans_meta(_av)}

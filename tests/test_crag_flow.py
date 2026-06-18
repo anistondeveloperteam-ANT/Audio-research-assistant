@@ -261,6 +261,7 @@ def test_self_rag_escalates_to_web_when_strong_answer_fails_verification(tmp_pat
     monkeypatch.setattr(cl, "agentic_loop_enabled", lambda: True)
     monkeypatch.setattr(cl, "auto_review_enabled", lambda: False)
     monkeypatch.setattr(cl, "max_verify_rounds", lambda: 2)
+    monkeypatch.setattr(cl, "max_deep_loops", lambda: 2)   # allow 2 loops so the escalation can fire
     monkeypatch.setattr(cl, "run_best_python_block", lambda answer: None)
     monkeypatch.setattr(cl, "get_provider", lambda *a, **k: _FakeProvider())
 

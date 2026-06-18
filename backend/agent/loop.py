@@ -33,7 +33,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from backend.agent.anticheat import anticheat_enabled, scan_for_cheating
-from backend.agent.code_runner import RunResult, docker_available, run_python_auto
+from backend.agent.code_runner import RunResult, clip_keep_ends, docker_available, run_python_auto
+
+# Demo stdout kept for the completeness gate + the user-facing Output block. Head+tail (not
+# head-only) so a requested value printed AFTER a large intermediate dump still survives.
+DEMO_OUTPUT_CAP = 12_000
 from backend.agent.hooks import pre_run
 from backend.llm.streaming_provider import CATALOG, DEFAULT_OPENAI_MODEL, get_provider
 from backend.observability import tracing  # no-op unless LANGFUSE_ENABLED=true
@@ -369,9 +373,17 @@ _DRIVER_SYSTEM = (
     "already-defined functions on representative inputs taken from the task and PRINTS the results "
     "with clear labels (e.g. print('period (s):', period)). Print EVERY value the request asks for — "
     "each requested deliverable on its own line with a clear text label — so every one is visible in "
-    "the output. The solution is ALREADY DEFINED above "
-    "your snippet — do NOT redefine it, do NOT write tests, add an import only if truly needed. Keep "
-    "it under ~20 lines and a couple of seconds to run. Output ONLY the snippet code."
+    "the output.\n"
+    "DO NOT FLOOD STDOUT: never print a whole large array, matrix, tensor, DataFrame, or dataset in "
+    "full. For any large or collection value, print only a COMPACT SUMMARY — its shape/length plus a "
+    "few elements, or a statistic (min/max/mean) — NEVER thousands of values. Print ONLY the "
+    "requested deliverables and such summaries; do NOT dump unrelated intermediate or debug data.\n"
+    "PRINT THE REQUESTED RESULTS LAST: emit the specific value(s) the user asked for in a clear FINAL "
+    "block at the very END, one labelled value per line, so they are ALWAYS visible even if other "
+    "prints appear earlier and even if earlier output is long.\n"
+    "The solution is ALREADY DEFINED above your snippet — do NOT redefine it, do NOT write tests, add "
+    "an import only if truly needed. Keep it under ~20 lines and a couple of seconds to run. Output "
+    "ONLY the snippet code."
 )
 
 _TESTS_SYSTEM = (
@@ -603,7 +615,9 @@ def _generate_demo_driver(provider, task: str, requirements: str, solution_code:
     real results, so the user sees actual values. '' on failure (no demo run)."""
     user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\nSOLUTION (already defined — call it, "
             f"do not redefine):\n```python\n{solution_code[:3000]}\n```\n\n"
-            "Write the driver snippet now (call the solution + print the real result(s)).")
+            "Write the driver snippet now: call the solution and print the requested result(s). "
+            "Summarize any large array/matrix/dataset (shape + a few values) instead of dumping it, "
+            "and print the requested values in a clear labelled block LAST.")
     try:
         return _extract_code(_complete(provider, _DRIVER_SYSTEM, user, REFLECT_MAX_TOKENS))
     except Exception:
@@ -686,7 +700,10 @@ def _apply_output_gates(verdict: Dict[str, Any], *, wants_output: bool, output: 
         verdict["gate_fail"] = "; ".join(reasons)
         verdict["feedback"] = (
             "Your solution passed the tests but FAILED a delivery gate — " + "; ".join(reasons)
-            + ". Make the program actually RUN and PRINT every requested value with a clear label.")
+            + ". Make the program actually RUN and PRINT every requested value with a clear label. "
+            "Do NOT dump large arrays/matrices/datasets in full (that buries the answer) — print a "
+            "compact summary for those, and print every requested value in a clear FINAL labelled "
+            "block at the very END so none is lost.")
     return verdict
 
 
@@ -700,7 +717,9 @@ def _capture_and_check(provider, task: str, requirements: str, code: str,
         if (driver or "").strip():
             dres = run_python_auto(code + "\n\n# === demo run ===\n" + driver)
             if dres.ok and (dres.stdout or "").strip():
-                output = (dres.stdout or "").strip()[:4000]
+                # Head+tail clip: a requested value printed LAST (after a big intermediate dump)
+                # must survive so the completeness gate can see it and the user can read it.
+                output = clip_keep_ends((dres.stdout or "").strip(), DEMO_OUTPUT_CAP)
     except Exception:                                   # noqa: BLE001 - capture failures -> empty output
         output = ""
     missing = _check_completeness(deliverables, output) if deliverables else []
@@ -721,11 +740,13 @@ def _generate_tests(provider, task: str, requirements: str, task_type: str = "",
 
 def _generate_solution(provider, task: str, requirements: str, tests: str, reference: str,
                        last_code: str, feedback: str, memory_summary: str = "",
-                       temperature: float = 0.2, variant: str = "") -> str:
+                       temperature: float = 0.2, variant: str = "", frozen: str = "") -> str:
     """(c) Write modular solution code so the provided tests pass. The tests are appended by the
     runner, not by the model. `memory_summary` carries the cross-attempt 'avoid these' notes.
-    `temperature`/`variant` diversify parallel best-of-N candidates WITHOUT implying failure —
-    only `feedback` (real test diagnostics from a prior round) signals "fix what failed"."""
+    `frozen` (a _freeze_clause) tells the model to KEEP the already-passing parts unchanged and
+    revise only the failing ones. `temperature`/`variant` diversify parallel best-of-N candidates
+    WITHOUT implying failure — only `feedback` (real diagnostics from a prior round) signals
+    "fix what failed"."""
     parts = [f"TASK:\n{task}", f"\nREQUIREMENTS:\n{requirements}",
              "\nYour solution MUST define the functions these tests call so they pass. Solve the "
              "GENERAL problem — do NOT hardcode the expected outputs, special-case these specific "
@@ -734,7 +755,10 @@ def _generate_solution(provider, task: str, requirements: str, tests: str, refer
     if reference:
         parts.append(f"\nREFERENCE implementations (adapt the approach, do NOT copy):\n{reference[:3000]}")
     if last_code:
-        parts.append(f"\nYOUR PREVIOUS SOLUTION (fix it):\n```python\n{last_code}\n```")
+        parts.append(f"\nYOUR PREVIOUS SOLUTION (keep what's correct, fix what's not):\n"
+                     f"```python\n{last_code}\n```")
+    if frozen:
+        parts.append("\n" + frozen)
     if memory_summary:
         parts.append("\nAVOID repeating these already-failed or REJECTED approaches:\n" + memory_summary)
     if feedback:
@@ -847,6 +871,38 @@ def _test_results(stdout: str) -> Dict[str, bool]:
     when those lines are absent (e.g. the script crashed before the runner)."""
     return {m.group(1): (m.group(2) == "PASS")
             for m in re.finditer(r"^TEST\s+(\w+)\s+(PASS|FAIL)\s*$", stdout or "", re.M)}
+
+
+def _passing_names(stdout: str) -> List[str]:
+    """Names of the checks that PASSED in this run — the verified-correct parts to FREEZE."""
+    return [n for n, ok in _test_results(stdout).items() if ok]
+
+
+def _failing_names(stdout: str) -> List[str]:
+    """Names of the checks that FAILED — the only parts the next attempt should revise."""
+    return [n for n, ok in _test_results(stdout).items() if not ok]
+
+
+def _freeze_clause(passing: List[str], regressed: List[str] | None = None) -> str:
+    """Refinement instruction that FREEZES verified-correct parts: the next attempt keeps the code
+    satisfying the already-passing checks UNCHANGED and revises ONLY what the failing checks need.
+    `regressed` (checks that were green before but a later attempt re-broke) are called out so the
+    agent RESTORES them. Empty string when there is nothing yet proven correct to preserve."""
+    if not passing and not regressed:
+        return ""
+    lines: List[str] = []
+    if passing:
+        shown = ", ".join(sorted(passing)[:20])
+        lines.append(
+            "ALREADY-PASSING checks (your previous solution is CORRECT for these — KEEP the code that "
+            f"satisfies them UNCHANGED, do NOT rewrite working functions): {shown}.")
+    if regressed:
+        lines.append(
+            "You RE-BROKE these previously-passing checks last attempt — RESTORE them while keeping "
+            f"the rest: {', '.join(sorted(regressed)[:20])}.")
+    lines.append("Revise ONLY the parts responsible for the FAILING checks below; leave everything "
+                 "that already passes exactly as it is.")
+    return "\n".join(lines)
 
 
 def _invalid_tests(oracle_code: str, tests_code: str, footer: str = _TEST_FOOTER) -> set:
@@ -1201,6 +1257,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
     best_clean: Optional[Attempt] = None      # best NON-cheating attempt — the only thing we return
     last_code = ""
     feedback = ""
+    frozen_clause = ""        # _freeze_clause: keep already-passing parts, fix only the failing ones
+    frozen_best: set = set()  # the most checks ever seen green — used to detect a regression
     rounds_failed = 0
     cheat_count = 0
     best_remaining = None     # fewest GENUINE failing checks seen so far (for stall detection)
@@ -1288,7 +1346,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
             temperature = min(0.9, 0.2 + 0.2 * c)   # diversify the best-of-N pool
             code = _generate_solution(gen_provider, task, requirements, tests, reference,
                                       last_code, feedback, mem.summary(),
-                                      temperature=temperature, variant=variant)
+                                      temperature=temperature, variant=variant, frozen=frozen_clause)
             if not (code or "").strip():
                 return None
             emit({"type": "code", "iteration": i, "candidate": c + 1, "code": code})
@@ -1313,6 +1371,9 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
 
             relevant = _is_relevant_code(task, code, tests)        # (C6) algorithm-match gate
             verdict = _verdict_from_tests(passed, total, relevant, result)
+            # Per-check pass/fail names so the next attempt can FREEZE what already passes.
+            verdict["passing_checks"] = _passing_names(result.stdout or "")
+            verdict["failing_checks"] = _failing_names(result.stdout or "")
             cheating = bool(cheat and cheat.flagged)
             verdict["cheating"] = cheating
             verdict["cheat_reasons"] = list(cheat.reasons) if cheat else []
@@ -1447,6 +1508,16 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
         feedback = v.get("feedback", "")
         rounds_failed += 1
 
+        # FREEZE for the NEXT attempt: keep the code that satisfies the already-passing checks and
+        # revise only the failing ones. Flag any check that was green before but this round re-broke
+        # (a regression) so the next attempt restores it instead of trading one pass for another.
+        round_passing = set(v.get("passing_checks") or [])
+        regressed = sorted(frozen_best - round_passing)
+        if regressed:
+            mem.add(f"iter {i}: RE-BROKE previously-passing {', '.join(regressed[:6])} — restore them")
+        frozen_best |= round_passing
+        frozen_clause = _freeze_clause(sorted(round_passing), regressed)
+
         # Stall detection: keep iterating only while attempts REDUCE the genuine failing checks.
         # No reduction for AGENT_STALL_LIMIT consecutive rounds -> stop with the best effort so far,
         # rather than burning the whole attempt budget when more tries clearly are not helping.
@@ -1530,7 +1601,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
     if present is not None and _wants_output(task):
         cached = (present.verdict.get("demo_output") or "").strip()    # captured by the delivery gate
         if cached:
-            best_output = cached[:4000]
+            best_output = clip_keep_ends(cached, DEMO_OUTPUT_CAP)
             emit({"type": "output", "text": best_output})
         else:
             try:
@@ -1539,7 +1610,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
                 if (driver or "").strip():
                     dres = run_python_auto(present.code + "\n\n# === demo run ===\n" + driver)
                     if dres.ok and (dres.stdout or "").strip():
-                        best_output = (dres.stdout or "").strip()[:4000]
+                        best_output = clip_keep_ends((dres.stdout or "").strip(), DEMO_OUTPUT_CAP)
                         emit({"type": "output", "text": best_output})
             except Exception:                       # noqa: BLE001 - output is a bonus; never break
                 best_output = ""

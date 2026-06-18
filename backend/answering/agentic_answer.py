@@ -31,6 +31,16 @@ def max_verify_rounds() -> int:
         return 3
 
 
+def max_deep_loops() -> int:
+    """Hard cap on the agentic verify->rewrite loop (it also early-stops on a passing verdict
+    or one with no concrete gap). Distinct from max_verify_rounds() so DEEP mode can run fewer
+    loops without changing the mode's verify-round semantics. Default 2."""
+    try:
+        return max(1, min(5, int(os.getenv("DEEP_MAX_LOOPS", "2"))))
+    except ValueError:
+        return 2
+
+
 def min_verify_score() -> int:
     try:
         return max(0, min(100, int(os.getenv("AGENTIC_MIN_VERIFY_SCORE", "80"))))
@@ -97,6 +107,13 @@ def extract_python_blocks(answer: str) -> List[str]:
                 blocks.append(code)
     blocks.sort(key=len, reverse=True)
     return blocks
+
+
+def python_blocks_in_order(answer: str) -> List[str]:
+    """Fenced ```python / ```py blocks in DOCUMENT ORDER (top to bottom). Unlike
+    extract_python_blocks this does NOT sort by length and does NOT fall back to non-python
+    fences — so 'the last block' is the canonical final program, never a ```text output dump."""
+    return [b.strip() for b in _PY_FENCE.findall(answer or "") if b.strip()]
 
 
 def run_best_python_block(answer: str) -> Optional[Dict[str, Any]]:
@@ -204,7 +221,7 @@ def verify_answer(
     verdict.setdefault("score", 0)
     verdict.setdefault("needs_more_search", False)
     verdict.setdefault("followup_query", "")
-    verdict.setdefault("feedback", "Verifier did not return a usable verdict.")
+    verdict.setdefault("feedback", DEFAULT_FEEDBACK)
     verdict.setdefault("missing_evidence", [])
     verdict.setdefault("citation_issues", [])
     try:
@@ -218,6 +235,29 @@ def verify_answer(
 
 def verification_passed(verdict: Dict[str, Any]) -> bool:
     return bool(verdict.get("ok")) and int(verdict.get("score", 0)) >= min_verify_score()
+
+
+# Placeholder used when the verifier returns nothing usable — NOT actionable guidance.
+DEFAULT_FEEDBACK = "Verifier did not return a usable verdict."
+
+
+def has_concrete_gap(verdict: Dict[str, Any]) -> bool:
+    """True only when the verifier named a SPECIFIC, fixable problem — missing evidence, a
+    citation issue, or a follow-up search to run — not merely a sub-threshold score. The
+    verify->rewrite loop early-stops when a non-passing verdict has no concrete gap, since a
+    rewrite would only chase a marginal score with nothing actionable to fix."""
+    if verdict.get("missing_evidence") or verdict.get("citation_issues"):
+        return True
+    return bool(verdict.get("needs_more_search")) or bool((verdict.get("followup_query") or "").strip())
+
+
+def has_actionable_feedback(verdict: Dict[str, Any]) -> bool:
+    """True when the verifier gave SPECIFIC prose corrections (e.g. 'soften the overstated claim
+    about [2]') even though it named no structured gap. Such a defect is fixable from the existing
+    evidence via a guided rewrite, so the loop must not early-stop on the FIRST such verdict —
+    skipping it would ship a known-flawed draft. Excludes the empty/placeholder default."""
+    fb = (verdict.get("feedback") or "").strip()
+    return bool(fb) and fb != DEFAULT_FEEDBACK
 
 
 def followup_query(question: str, verdict: Dict[str, Any]) -> str:

@@ -34,7 +34,7 @@
     try { renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true }); }
     catch (e) { return false; }
     renderer.setSize(innerWidth, innerHeight);
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));  // soft bg: 1.5x is indistinguishable from 2x, ~40% less GPU on HiDPI
     host.appendChild(renderer.domElement);
     group = new THREE.Group(); scene.add(group);
 
@@ -94,13 +94,15 @@
   function applyTheme3D() {
     if (!nodePoints) return;
     var light = isLight();
-    nodePoints.material.color.set(light ? 0x1a1a1a : 0xffffff);
-    nodePoints.material.opacity = light ? .85 : .95;
+    // Keep the network subtle in BOTH themes so it doesn't sit heavy on the page. Light mode uses
+    // a softer grey (not near-black) at low opacity; dark mode is gently dialled back from full.
+    nodePoints.material.color.set(light ? 0x5a5a5a : 0xffffff);
+    nodePoints.material.opacity = light ? .40 : .68;
     nodePoints.material.blending = light ? THREE.NormalBlending : THREE.AdditiveBlending;
-    lineSeg.material.color.set(light ? 0x2a2a2a : 0xffffff);
-    lineSeg.material.opacity = light ? .16 : .22;
-    pulsePoints.material.color.set(light ? 0x000000 : 0xffffff);
-    pulsePoints.material.opacity = light ? .55 : 1;
+    lineSeg.material.color.set(light ? 0x6a6a6a : 0xffffff);
+    lineSeg.material.opacity = light ? .09 : .15;
+    pulsePoints.material.color.set(light ? 0x4a4a4a : 0xffffff);
+    pulsePoints.material.opacity = light ? .28 : .75;
     pulsePoints.material.blending = light ? THREE.NormalBlending : THREE.AdditiveBlending;
     nodePoints.material.needsUpdate = lineSeg.material.needsUpdate = pulsePoints.material.needsUpdate = true;
     if (scene.fog) scene.fog.color.set(light ? 0xffffff : 0x070708);

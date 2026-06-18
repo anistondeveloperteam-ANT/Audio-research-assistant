@@ -212,25 +212,27 @@
     const targets = []; while (walker.nextNode()) targets.push(walker.currentNode);
     const owner = root.closest && root.closest(".ai-card");
     const srcList = (owner && owner._sources) || state.currentSources || [];
-    const nSources = srcList.length;
     for (const node of targets) {
       const frag = document.createDocumentFragment();
       let last = 0; const s = node.nodeValue;
       s.replace(/\[(\d+)\]/g, (m, n, idx) => {
         if (idx > last) frag.appendChild(document.createTextNode(s.slice(last, idx)));
         const num = parseInt(n, 10);
-        if (num >= 1 && num <= nSources) {
-          const src = srcList[num - 1];
-          const cls = "chip " + (src && src.source_type === "local_pdf" ? "chip-pdf" : "chip-web");
+        // Resolve by source NUMBER (src.n), not array position: the displayed source set can be a
+        // relevance-filtered subset with non-contiguous n (e.g. only the cited sources), and the
+        // hover popup already resolves by .n — keep them in agreement.
+        const src = srcList.find((x) => String(x.n) === String(num));
+        if (src) {
+          const cls = "chip " + (src.source_type === "local_pdf" ? "chip-pdf" : "chip-web");
           let el;
-          if (src && src.url) { el = document.createElement("a"); el.href = src.url; el.target = "_blank"; el.rel = "noopener noreferrer"; }
+          if (src.url) { el = document.createElement("a"); el.href = src.url; el.target = "_blank"; el.rel = "noopener noreferrer"; }
           else { el = document.createElement("button"); el.type = "button"; el.style.cssText = "border:none;font-family:inherit"; el.addEventListener("click", () => focusSource(num, el)); }
           el.className = cls; el.textContent = n; el.dataset.n = n;
           el.addEventListener("mouseenter", () => showCitePop(el, n));
           el.addEventListener("mouseleave", hideCitePop);
           frag.appendChild(el);
-        } else if (nSources === 0) {
-          frag.appendChild(document.createTextNode(m));
+        } else {
+          frag.appendChild(document.createTextNode(m));   // no matching source -> leave literal [n]
         }
         last = idx + m.length; return m;
       });
@@ -713,13 +715,27 @@
   }
 
   // ---------- sessions ----------
-  function dayStart(sec) { const x = new Date(sec * 1000); x.setHours(0, 0, 0, 0); return x.getTime() / 1000; }
+  // Group history by the user's LOCAL calendar day. Backend stores updated_at as UTC
+  // epoch SECONDS (time.time()); we normalize defensively (numeric string / accidental
+  // milliseconds) and derive Today/Yesterday/older from LOCAL midnight via Date objects
+  // (DST-robust — not a fixed 86400s). Mirror of tests/test_date_grouping.js — keep in sync.
+  function toEpochSec(ts) {
+    let n = typeof ts === "number" ? ts : parseFloat(ts);
+    if (!isFinite(n)) return NaN;
+    if (n > 1e12) n = n / 1000;                 // value looks like milliseconds -> seconds
+    return n;
+  }
+  function localMidnight(d) { const x = new Date(d.getTime()); x.setHours(0, 0, 0, 0); return x; }
   function bucketLabel(ts) {
-    if (!ts) return "Earlier";
-    const today = dayStart(Date.now() / 1000), d = dayStart(ts);
-    if (d >= today) return "Today";
-    if (d >= today - 86400) return "Yesterday";
-    if (d >= today - 7 * 86400) return "Previous 7 days";
+    const sec = toEpochSec(ts);
+    if (!isFinite(sec)) return "Earlier";
+    const todayMs = localMidnight(new Date()).getTime();
+    const dayMs = localMidnight(new Date(sec * 1000)).getTime();
+    const y = localMidnight(new Date(todayMs)); y.setDate(y.getDate() - 1);
+    const w = localMidnight(new Date(todayMs)); w.setDate(w.getDate() - 7);
+    if (dayMs >= todayMs) return "Today";
+    if (dayMs >= y.getTime()) return "Yesterday";
+    if (dayMs >= w.getTime()) return "Previous 7 days";
     return "Earlier";
   }
   function renderSessions() {
@@ -947,7 +963,7 @@
     panel.querySelector(".agent-head").addEventListener("click", () => panel.classList.toggle("collapsed"));
     const stepsBox = panel.querySelector(".agent-steps");
     const attemptEl = panel.querySelector(".agent-attempt");
-    let cur = null, runStep = null, consoleShown = false, lastOutput = "";
+    let cur = null, runStep = null, lastOutput = "", lastSolutionWrap = null, lastConsoleWrap = null;
 
     const nodeHTML = (s) => s === "running" ? '<span class="spin"></span>' : (s === "fail" ? SVG_X : (s === "pending" ? "" : ICON_CHECK));
     const setStatus = (step, s) => { step.className = "astep " + s; step.querySelector(".anode").innerHTML = nodeHTML(s); };
@@ -966,17 +982,25 @@
       if (window.hljs) { try { hljs.highlightElement(codeEl); } catch (e) {} }
       const copy = wrap.querySelector(".code-copy");
       copy.addEventListener("click", () => { navigator.clipboard.writeText(code || "").then(() => { copy.innerHTML = ICON_CHECK + " Copied"; setTimeout(() => (copy.innerHTML = COPY_SVG + " Copy"), 1300); }).catch(() => {}); });
-      root.appendChild(wrap); scrollToBottom();
+      // Keep ONE live solution block: each new attempt REPLACES the previous in place, so the card
+      // shows a single result at the end, not a stack of every iteration's code.
+      const isSolution = (file || "solution.py") === "solution.py";
+      if (isSolution && lastSolutionWrap) lastSolutionWrap.replaceWith(wrap); else root.appendChild(wrap);
+      if (isSolution) lastSolutionWrap = wrap;
+      scrollToBottom();
     };
     const consoleBlock = (stdout, stderr, ok) => {
-      consoleShown = true;
       const wrap = document.createElement("div"); wrap.className = "console";
       wrap.innerHTML = `<div class="console-head"><span class="console-dot"></span><span class="console-dot"></span><span class="console-dot"></span><span class="console-title">SANDBOX OUTPUT</span></div>`;
       const body = document.createElement("pre"); body.className = "console-body";
       if (stdout) { const s = document.createElement("span"); s.textContent = stdout; body.appendChild(s); }
       if (stderr) { const s = document.createElement("span"); s.className = "fail"; s.textContent = (stdout ? "\n" : "") + stderr; body.appendChild(s); }
       if (!stdout && !stderr) body.textContent = ok ? "(no output)" : "(failed)";
-      wrap.appendChild(body); root.appendChild(wrap); scrollToBottom();
+      wrap.appendChild(body);
+      // Same: one live sandbox-output block that updates per run, instead of one per attempt.
+      if (lastConsoleWrap) lastConsoleWrap.replaceWith(wrap); else root.appendChild(wrap);
+      lastConsoleWrap = wrap;
+      scrollToBottom();
     };
     const codeFoot = (success) => {
       const foot = document.createElement("div"); foot.className = "code-foot";
@@ -999,7 +1023,7 @@
         case "requirements": addStep("Read the requirements", "done", (e.text || "").slice(0, 600)); break;
         case "task_type": addStep("Verification mode: " + (e.task_type || ""), "done"); break;
         case "reference": addStep(e.scope === "validation" ? "Built an independent validation oracle" : "Built a reference oracle", "done"); break;
-        case "tests": addStep("Wrote " + (e.count || 0) + " correctness test" + (e.count === 1 ? "" : "s"), "done"); if (e.code) codeBlock(e.code, "tests.py", "python"); break;
+        case "tests": addStep("Wrote " + (e.count || 0) + " correctness test" + (e.count === 1 ? "" : "s"), "done"); break;
         case "test_validation": if (e.message) addStep("⚠ " + e.message, "done"); break;
         case "deliverables": if (e.items && e.items.length) addStep("Deliverables: " + e.items.map(String).join(", "), "done"); break;
         case "heldout": addStep("Verifying against " + (e.count || 0) + " held-out check" + (e.count === 1 ? "" : "s") + (e.strict ? " (strict)" : ""), "done"); break;
@@ -1022,8 +1046,10 @@
         case "error": addStep("Error", "fail", e.message || ""); break;
         case "final": {
           if (cur && cur.classList.contains("running")) setStatus(cur, e.success ? "done" : "fail");
+          // The single, definitive result: replaces the last live solution/output blocks.
           if (e.code) codeBlock(e.code, "solution.py", "python");
-          if (!consoleShown && (e.output || lastOutput)) consoleBlock(e.output || lastOutput, "", true);
+          const finalOut = e.output || lastOutput;
+          if (finalOut) consoleBlock(finalOut, "", true);
           if (e.answer) { const a = document.createElement("div"); a.style.cssText = "margin:12px 0 2px;font-size:14px;line-height:1.6;color:var(--text-strong);white-space:pre-wrap"; a.textContent = e.answer; root.appendChild(a); }
           codeFoot(!!e.success);
           panel.querySelector(".agent-title").textContent = e.success ? "Agent — solved & verified" : "Agent — best attempt";
