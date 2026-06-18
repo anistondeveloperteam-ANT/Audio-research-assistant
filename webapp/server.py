@@ -33,7 +33,7 @@ if str(ROOT) not in sys.path:
 
 from webapp import auth as webauth, chat_logic, ingest, settings
 from backend.auth.users import (
-    create_user, verify_user, resolve_user, get_email, set_password,
+    create_user, verify_user, resolve_user, get_email, get_dob, set_password,
     create_reset_token, consume_reset_token, count_users,
 )
 from backend.auth import mailer, google_oauth
@@ -130,13 +130,14 @@ def _index_html() -> str:
     so the browser always fetches the current build after a deploy — no hard-refresh needed."""
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     ver = 0
-    for name in ("app.js", "styles.css"):
+    for name in ("app.js", "styles.css", "app-bg.js"):
         try:
             ver = max(ver, int((STATIC / name).stat().st_mtime))
         except OSError:
             pass
     return (html.replace("/static/app.js", f"/static/app.js?v={ver}")
-                .replace("/static/styles.css", f"/static/styles.css?v={ver}"))
+                .replace("/static/styles.css", f"/static/styles.css?v={ver}")
+                .replace("/static/app-bg.js", f"/static/app-bg.js?v={ver}"))
 
 
 @app.get("/")
@@ -216,8 +217,13 @@ def api_signup(request: Request, body: dict = Body(default={})):
     uid = (body.get("user_id") or "").strip()
     pw = body.get("password") or ""
     email = (body.get("email") or "").strip()
+    dob = (body.get("date_of_birth") or body.get("dob") or "").strip()
+    if not email:
+        return JSONResponse({"error": "Please enter your email."}, status_code=400)
+    if not dob:
+        return JSONResponse({"error": "Please enter your date of birth."}, status_code=400)
     try:
-        create_user(uid, pw, email=email)
+        create_user(uid, pw, email=email, date_of_birth=dob)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     request.session["user_id"] = uid
@@ -234,8 +240,12 @@ def api_forgot_password(request: Request, body: dict = Body(default={})):
     generic = {"ok": True,
                "message": "If an account matches, a password-reset link has been sent."}
     identifier = (body.get("identifier") or body.get("user_id") or body.get("email") or "").strip()
+    dob = (body.get("date_of_birth") or body.get("dob") or "").strip()
     user_id = resolve_user(identifier)
-    if not user_id:
+    # Extra knowledge factor: if the account has a date of birth on file, it must match. A mismatch
+    # (or unknown account) behaves identically — generic response, no token — so nothing is leaked.
+    stored_dob = get_dob(user_id) if user_id else None
+    if not user_id or (stored_dob and dob != stored_dob):
         secrets.token_urlsafe(32)   # equalize work vs. the found-account branch (timing)
         return generic
     token = create_reset_token(user_id)

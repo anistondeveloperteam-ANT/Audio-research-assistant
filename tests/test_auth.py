@@ -61,6 +61,32 @@ def test_set_password_and_delete(store):
         store.set_password("carol", "whatever1")        # no such user
 
 
+# ---- date of birth ---------------------------------------------------
+def test_valid_dob():
+    assert users.valid_dob("1990-05-14")
+    assert not users.valid_dob("")               # empty
+    assert not users.valid_dob("14-05-1990")     # wrong format
+    assert not users.valid_dob("1990-13-01")     # not a real calendar date
+    assert not users.valid_dob("3000-01-01")     # in the future
+    assert not users.valid_dob("1800-01-01")     # implausibly old
+
+
+def test_create_user_stores_dob(store):
+    store.create_user("dana", "secret1", email="dana@x.com", date_of_birth="1992-03-08")
+    assert store.get_dob("dana") == "1992-03-08"
+    assert store.get_email("dana") == "dana@x.com"
+    assert store.get_dob("ghost") is None        # unknown user
+    store.create_user("noddob", "secret1")       # dob is optional at the store level
+    assert store.get_dob("noddob") is None
+
+
+def test_create_user_rejects_bad_dob(store):
+    with pytest.raises(ValueError):
+        store.create_user("eric", "secret1", date_of_birth="not-a-date")
+    with pytest.raises(ValueError):
+        store.create_user("erin", "secret1", date_of_birth="2999-01-01")   # future
+
+
 # ---- per-user conversation isolation --------------------------------
 def test_sessions_are_per_user(tmp_path):
     mem = MemoryStore(tmp_path / "mem.db")

@@ -1,0 +1,207 @@
+/* Monochrome premium auth design — shared by login.html and reset.html.
+   No hue anywhere; tokens flip between dark (default) and light (html.light). */
+:root {
+  --bg-0:        #070708;
+  --bg-1:        #0d0d0f;
+  --grad-a:      #141416;
+  --grad-b:      #0a0a0b;
+  --text-strong: #ffffff;
+  --text-mid:    rgba(255,255,255,0.62);
+  --text-faint:  rgba(255,255,255,0.40);
+  --glass-bg:    rgba(255,255,255,0.045);
+  --glass-bg-2:  rgba(255,255,255,0.07);
+  --glass-brd:   rgba(255,255,255,0.12);
+  --glass-brd-2: rgba(255,255,255,0.22);
+  --input-bg:    rgba(255,255,255,0.04);
+  --input-bg-f:  rgba(255,255,255,0.09);
+  --btn-bg:      #ffffff;
+  --btn-text:    #0a0a0b;
+  --net-node:    rgba(255,255,255,0.85);
+  --net-line:    rgba(255,255,255,0.16);
+  --net-pulse:   rgba(255,255,255,0.95);
+  --shadow:      0 30px 80px -20px rgba(0,0,0,0.8);
+}
+html.light {
+  --bg-0:        #ffffff;
+  --bg-1:        #f4f4f5;
+  --grad-a:      #ededee;
+  --grad-b:      #fbfbfc;
+  --text-strong: #0a0a0b;
+  --text-mid:    rgba(10,10,11,0.60);
+  --text-faint:  rgba(10,10,11,0.42);
+  --glass-bg:    rgba(255,255,255,0.55);
+  --glass-bg-2:  rgba(255,255,255,0.72);
+  --glass-brd:   rgba(10,10,11,0.10);
+  --glass-brd-2: rgba(10,10,11,0.22);
+  --input-bg:    rgba(10,10,11,0.025);
+  --input-bg-f:  rgba(10,10,11,0.05);
+  --btn-bg:      #0a0a0b;
+  --btn-text:    #ffffff;
+  --net-node:    rgba(10,10,11,0.55);
+  --net-line:    rgba(10,10,11,0.10);
+  --net-pulse:   rgba(10,10,11,0.65);
+  --shadow:      0 30px 80px -28px rgba(10,10,11,0.30);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; }
+body {
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  background: var(--bg-0);
+  color: var(--text-strong);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  transition: background .6s ease, color .6s ease;
+}
+
+/* ---- Layered backgrounds ---- */
+#gradient, #network, #three { position: fixed; inset: 0; pointer-events: none; }
+#gradient {
+  background: radial-gradient(120% 120% at 30% 20%, var(--grad-a) 0%, var(--bg-0) 55%),
+              radial-gradient(100% 100% at 80% 90%, var(--grad-b) 0%, transparent 60%);
+  animation: drift 26s ease-in-out infinite alternate;
+  z-index: 0;
+}
+@keyframes drift {
+  0%   { background-position: 0% 0%, 100% 100%; filter: brightness(1); }
+  100% { background-position: 18% 12%, 82% 88%; filter: brightness(1.08); }
+}
+#network { z-index: 1; }
+#three   { z-index: 2; }
+
+/* ---- Theme toggle ---- */
+.top-bar { position: fixed; top: 22px; right: 22px; z-index: 20; display: flex; gap: 10px; align-items: center; }
+.icon-btn {
+  width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; cursor: pointer;
+  background: var(--glass-bg); border: 1px solid var(--glass-brd);
+  backdrop-filter: blur(20px) saturate(120%); -webkit-backdrop-filter: blur(20px) saturate(120%);
+  color: var(--text-strong); transition: background .3s, border-color .3s, transform .2s;
+}
+.icon-btn:hover { background: var(--glass-bg-2); border-color: var(--glass-brd-2); transform: translateY(-1px); }
+.icon-btn svg { width: 18px; height: 18px; }
+.moon { display: none; } .light .moon { display: block; } .light .sun { display: none; }
+
+/* ---- Stage / card ---- */
+.stage { position: relative; z-index: 10; height: 100%; display: grid; place-items: center; perspective: 1400px; padding: 24px; }
+.card {
+  position: relative; width: 100%; max-width: 408px; padding: 40px 38px 34px; border-radius: 26px;
+  background: var(--glass-bg); border: 1px solid var(--glass-brd);
+  backdrop-filter: blur(40px) saturate(135%); -webkit-backdrop-filter: blur(40px) saturate(135%);
+  box-shadow: var(--shadow); transform-style: preserve-3d;
+  transition: box-shadow .5s ease, background .5s ease, border-color .5s ease; will-change: transform;
+}
+.card::before {
+  content:""; position:absolute; inset:0; border-radius:26px; pointer-events:none;
+  background: linear-gradient(180deg, rgba(255,255,255,0.10), transparent 30%);
+}
+html.light .card::before { background: linear-gradient(180deg, rgba(255,255,255,0.7), transparent 34%); }
+.card.authing { box-shadow: var(--shadow), 0 0 90px 8px rgba(255,255,255,0.28); border-color: var(--glass-brd-2); }
+html.light .card.authing { box-shadow: var(--shadow), 0 0 70px 4px rgba(10,10,11,0.18); }
+
+.brand-row { display:flex; align-items:center; gap:11px; transform: translateZ(40px); }
+.mark { width: 34px; height: 34px; border-radius: 11px; flex: none; border: 1px solid var(--glass-brd-2);
+  display: grid; place-items: center; background: var(--glass-bg-2); }
+.mark svg { width: 18px; height: 18px; color: var(--text-strong); }
+h1 { font-size: 21px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
+.tag { margin-top: 10px; font-size: 13.5px; color: var(--text-mid); font-weight: 400; transform: translateZ(30px); }
+
+form { margin-top: 26px; display: flex; flex-direction: column; gap: 14px; transform: translateZ(24px); }
+
+.field { position: relative; }
+.field input {
+  width: 100%; padding: 17px 16px 7px; font-size: 14.5px; font-family: inherit;
+  color: var(--text-strong); background: var(--input-bg); border: 1px solid var(--glass-brd);
+  border-radius: 15px; outline: none; transition: background .25s, border-color .25s, box-shadow .25s;
+}
+.field input:focus { background: var(--input-bg-f); border-color: var(--glass-brd-2); box-shadow: 0 0 0 4px rgba(127,127,127,0.10); }
+.field label {
+  position: absolute; left: 16px; top: 14px; font-size: 14.5px; color: var(--text-faint);
+  pointer-events: none; transition: transform .18s ease, font-size .18s ease, color .18s ease; transform-origin: left top;
+}
+.field input:focus + label, .field input:not(:placeholder-shown) + label { transform: translateY(-8px) scale(0.78); color: var(--text-mid); }
+/* date-of-birth: the input is text at rest and flips to type=date on focus, so it floats its label
+   exactly like the other fields; these rules just theme the native date UI while it is shown. */
+input[type="date"] { color-scheme: dark; }
+html.light input[type="date"] { color-scheme: light; }
+input[type="date"]::-webkit-calendar-picker-indicator { opacity: .55; cursor: pointer; }
+input[type="date"]:focus::-webkit-calendar-picker-indicator { opacity: 1; }
+
+/* show/hide password eye */
+.has-peek input { padding-right: 46px; }
+.peek { position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  width: 32px; height: 32px; border: none; background: transparent; cursor: pointer;
+  color: var(--text-faint); display: grid; place-items: center; border-radius: 9px;
+  transition: color .2s, background .2s; }
+.peek:hover { color: var(--text-strong); background: var(--glass-bg-2); }
+.peek svg { width: 18px; height: 18px; }
+.peek .eye-off { display: none; }
+.peek.on .eye { display: none; }
+.peek.on .eye-off { display: block; }
+
+.row-min { display:flex; justify-content:flex-end; margin-top: -4px; }
+.link { font-size: 12.5px; color: var(--text-mid); text-decoration: none; cursor: pointer; transition: color .2s; }
+.link:hover { color: var(--text-strong); }
+
+/* ---- Buttons ---- */
+.btn-primary {
+  position: relative; margin-top: 4px; height: 50px; border: none; border-radius: 15px; cursor: pointer;
+  background: var(--btn-bg); color: var(--btn-text); font-family: inherit; font-size: 15px; font-weight: 600;
+  letter-spacing: -0.01em; display: flex; align-items: center; justify-content: center; gap: 9px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.4) inset, 0 14px 30px -12px rgba(0,0,0,0.6);
+  transition: transform .12s ease, filter .2s ease, gap .2s ease; overflow: hidden;
+}
+.btn-primary:hover { filter: brightness(0.92); }
+html.light .btn-primary:hover { filter: brightness(1.25); }
+.btn-primary:active { transform: translateY(1px) scale(0.995); }
+.btn-primary svg { width: 17px; height: 17px; transition: transform .25s ease; }
+.btn-primary:hover svg.arrow { transform: translateX(3px); }
+.btn-primary .spinner, .btn-primary .check { display:none; }
+.btn-primary.loading .label, .btn-primary.loading svg.arrow { display:none; }
+.btn-primary.loading .spinner { display:block; }
+.btn-primary.done .label, .btn-primary.done svg.arrow, .btn-primary.done .spinner { display:none; }
+.btn-primary.done .check { display:block; }
+.btn-primary[disabled] { cursor: default; }
+.spinner { width: 20px; height: 20px; border-radius: 50%; border: 2.5px solid rgba(0,0,0,0.18); border-top-color: var(--btn-text); animation: spin .7s linear infinite; }
+html.light .spinner { border-color: rgba(255,255,255,0.25); border-top-color: var(--btn-text); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.divider { display:flex; align-items:center; gap:12px; margin: 18px 0 2px; color: var(--text-faint); font-size: 11.5px; transform: translateZ(18px); }
+.divider::before, .divider::after { content:""; height:1px; flex:1; background: var(--glass-brd); }
+
+.btn-ghost {
+  height: 48px; border-radius: 15px; cursor: pointer; width: 100%; background: var(--glass-bg);
+  border: 1px solid var(--glass-brd); color: var(--text-strong); font-family: inherit; font-size: 14px; font-weight: 500;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  transition: background .25s, border-color .25s, transform .12s; transform: translateZ(18px);
+}
+.btn-ghost:hover { background: var(--glass-bg-2); border-color: var(--glass-brd-2); }
+.btn-ghost:active { transform: translateZ(18px) translateY(1px); }
+.g-logo { width:17px; height:17px; }
+
+/* ---- Message (monochrome: no hue) ---- */
+.msg { margin-top: 4px; font-size: 13px; line-height: 1.5; padding: 11px 14px; border-radius: 13px;
+  display: none; background: var(--glass-bg); border: 1px solid var(--glass-brd); color: var(--text-mid);
+  transform: translateZ(20px); }
+.msg.show { display: block; }
+.msg.err { color: var(--text-strong); border-color: var(--glass-brd-2); }
+.msg a { color: var(--text-strong); font-weight: 600; }
+
+/* ---- Strength bar (reset page) ---- */
+.bar { height: 5px; border-radius: 4px; background: var(--glass-bg-2); overflow: hidden; margin-top: 2px; border: 1px solid var(--glass-brd); transform: translateZ(20px); }
+.bar i { display: block; height: 100%; width: 0; border-radius: 4px; background: var(--text-strong); opacity: .85; transition: width .25s ease; }
+
+.foot { margin-top: 22px; text-align:center; font-size: 13px; color: var(--text-mid); transform: translateZ(14px); }
+.foot b { color: var(--text-strong); font-weight: 600; cursor: pointer; }
+.foot b:hover { text-decoration: underline; }
+.foot a { color: var(--text-strong); font-weight: 600; text-decoration: none; }
+.foot a:hover { text-decoration: underline; }
+
+.hint { position: fixed; bottom: 20px; left: 0; right: 0; text-align:center; z-index:10; font-size: 11.5px; color: var(--text-faint); letter-spacing: .02em; }
+
+.hidden { display: none !important; }
+
+@media (max-width: 440px) { .card { padding: 32px 26px 28px; } }
+@media (prefers-reduced-motion: reduce) {
+  #gradient { animation: none; }
+  .btn-primary svg, .field label { transition: none; }
+}

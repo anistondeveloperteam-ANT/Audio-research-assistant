@@ -72,6 +72,28 @@ def parallel_n() -> int:
         return 4
 
 
+def max_attempts() -> int:
+    """Live read (AGENT_MAX_ATTEMPTS, default 10, clamped >=1): the upper bound on generate->verify
+    rounds. The loop keeps iterating — feeding each round's GENUINE failing checks back — until the
+    solution is fully verified, this bound is hit, or it STALLS (no progress). Falls back to the
+    legacy AGENT_MAX_ITERS if AGENT_MAX_ATTEMPTS is unset, so existing configs keep working."""
+    raw = os.getenv("AGENT_MAX_ATTEMPTS") or os.getenv("AGENT_MAX_ITERS") or "10"
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 10
+
+
+def stall_limit() -> int:
+    """Live read (AGENT_STALL_LIMIT, default 3, clamped >=1): stop early after this many CONSECUTIVE
+    rounds that fail to reduce the number of genuine failing checks. Prevents looping to the attempt
+    cap when more attempts clearly are not helping — return the best effort, labelled honestly."""
+    try:
+        return max(1, int(os.getenv("AGENT_STALL_LIMIT", "3")))
+    except (TypeError, ValueError):
+        return 3
+
+
 def reference_tests_enabled() -> bool:
     """Live read (AGENT_REFERENCE_TESTS, default on): derive each test's EXPECTED value by RUNNING
     a reference oracle in the sandbox, instead of letting the test-LLM guess literal outputs. Off
@@ -93,6 +115,16 @@ def definition_gate_enabled() -> bool:
     quantity, point/time, aggregation, units — computed independently of the candidate AND the
     reference oracle (which could share a wrong definition). Catches 'right logic, wrong answer'."""
     return os.getenv("AGENT_DEFINITION_GATE", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def test_validation_enabled() -> bool:
+    """Live read (AGENT_TEST_VALIDATION, default on): before a generated test is allowed to FAIL a
+    candidate, run it against the known-correct reference ORACLE. Any test the oracle itself fails is
+    INVALID — its expected value was guessed, its tolerance is too tight for the method, or it checks
+    the wrong quantity — and is QUARANTINED: excluded from the candidate's pass/total so a flawed test
+    can never falsely fail correct code, while every test the oracle PASSES still gates genuinely wrong
+    code. Needs a reference oracle (AGENT_REFERENCE_TESTS); off, every generated test is trusted."""
+    return os.getenv("AGENT_TEST_VALIDATION", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
 @dataclass
@@ -117,6 +149,8 @@ class AgentResult:
     hidden_passed: int = 0
     hidden_total: int = 0
     cheat_flags: List[str] = field(default_factory=list)
+    attempts_taken: int = 0           # generate->verify rounds actually run
+    stop_reason: str = ""             # verified | stall | max_attempts
 
 
 # ----------------------------------------------------------------------
@@ -348,6 +382,14 @@ _TESTS_SYSTEM = (
     "matching ONE function signature — do NOT require the function to accept several input shapes;\n"
     "- compare floats with tolerances (math.isclose, or numpy.allclose with explicit rtol/atol), "
     "NEVER exact ==; build small CONCRETE inputs (use numpy if it helps);\n"
+    "- DERIVE every tolerance FROM THE PROBLEM — never paste an arbitrary fixed threshold. For a "
+    "STOCHASTIC / Monte-Carlo result, a correct estimate is EXPECTED to differ from the true value "
+    "by about one STANDARD ERROR, so compare within a few SE (estimate SE from the sample variance "
+    "and N, e.g. atol ~= k * stdev / sqrt(N) with k=3-5) — a tight atol on a noisy mean is wrong and "
+    "WILL falsely fail correct code. For an ITERATIVE / NUMERICAL method, size the tolerance to the "
+    "method's own error (step size h, discretization, or the convergence tol). Only a DETERMINISTIC "
+    "closed-form result earns a tight tolerance (~1e-9). A tolerance too tight for the method is the "
+    "#2 cause of false failures;\n"
     "- obtain every EXPECTED value by COMPUTING it — from the reference oracle when one is provided "
     "(see below), otherwise as a PROPERTY that holds for any correct implementation. NEVER "
     "hand-write a literal expected number/output you imagined; a guessed expected value is the #1 "
@@ -380,7 +422,10 @@ _HIDDEN_SYSTEM = (
     "assumption would get wrong (e.g. an angle where radians-vs-degrees matters, an off-by-one "
     "index, an int vs float) and assert the correct result. Get every EXPECTED value by COMPUTING "
     "it (the reference oracle when provided, else a property) — NEVER a guessed literal. Compare "
-    "with tolerances (math.isclose / numpy.allclose), call the SOLUTION's functions directly, and "
+    "with tolerances DERIVED FROM THE PROBLEM (math.isclose / numpy.allclose) — a few STANDARD "
+    "ERRORS for a stochastic estimate (atol ~= k * stdev / sqrt(N)), the method's error for an "
+    "iterative/numerical result, tight only for an exact closed-form value — never an arbitrary "
+    "constant that a correct result would trip. Call the SOLUTION's functions directly, and "
     "`assert`. Their purpose is to catch code that is right on the demo value but special-cased, "
     "hardcoded, or made a fragile assumption that breaks on other valid inputs. "
     "Do NOT define the solution or a runner. Output ONLY the Python test functions."
@@ -402,8 +447,10 @@ _INVARIANTS_SYSTEM = (
     "w^H d ~= 1; Black-Scholes put-call parity C - P ~= S - K*exp(-rT), price >= 0, monotonic in "
     "volatility). Use RANDOM inputs where a property is general (use random / numpy.random; do NOT "
     "seed — the harness seeds globally), and the request's own values where the spec pins an answer. "
-    "Use tolerances, call the SOLUTION's functions directly, and `assert`. Do NOT define the solution "
-    "or a runner. Output ONLY the Python test functions."
+    "Use tolerances DERIVED FROM THE PROBLEM (a few standard errors for a stochastic quantity, the "
+    "method's error for a numerical one, tight only for an exact value — never an arbitrary fixed "
+    "threshold a correct result would trip), call the SOLUTION's functions directly, and `assert`. Do "
+    "NOT define the solution or a runner. Output ONLY the Python test functions."
 )
 
 _DEFINITION_SYSTEM = (
@@ -433,9 +480,10 @@ _DEFINITION_SYSTEM = (
 _TASK_TYPE_GUIDANCE = {
     "deterministic": (
         "\n\nTASK TYPE = DETERMINISTIC: a single correct output exists. Assert EXACT expected "
-        "outputs on small concrete inputs (use math.isclose / numpy.allclose only for floats), "
-        "PLUS 2-4 general properties any correct solution must satisfy (e.g. output length and "
-        "ordering, idempotence, boundary/empty cases)."
+        "outputs on small concrete inputs (use math.isclose / numpy.allclose only for floats, with "
+        "a TIGHT tolerance ~1e-9 — correct here because the output is exact), PLUS 2-4 general "
+        "properties any correct solution must satisfy (e.g. output length and ordering, idempotence, "
+        "boundary/empty cases)."
     ),
     "simulation": (
         "\n\nTASK TYPE = SIMULATION / STOCHASTIC: there is NO single fixed output — do NOT assert "
@@ -443,14 +491,19 @@ _TASK_TYPE_GUIDANCE = {
         "shape/type; conservation laws (energy / mass / probability sums); values within physical "
         "or range bounds; expected convergence or a monotonic trend (e.g. a damped system's "
         "amplitude decreases over time); and seeded REPRODUCIBILITY (same seed -> identical "
-        "output). Use tolerances generous enough for discretization/noise."
+        "output). SIZE each tolerance from the math, not by guessing: when you check a stochastic "
+        "mean/estimate over N samples, a correct run is EXPECTED to differ from the true value by "
+        "about one STANDARD ERROR, so allow a few SE (atol ~= k * stdev / sqrt(N), k=3-5); for a "
+        "discretized quantity use the discretization error. Never a tiny fixed atol on a noisy "
+        "estimate — it would falsely fail a correct simulation."
     ),
     "numeric_algorithm": (
         "\n\nTASK TYPE = NUMERIC ALGORITHM: assert DOMAIN INVARIANTS, not one value. DERIVE 2-4 "
         "mathematical properties that hold for ANY correct implementation, e.g. a beamformer's "
         "distortionless constraint w^H d ~= 1 and output noise power <= input; FFT / Parseval "
         "energy conservation; Black-Scholes put-call parity C - P ~= S - K*exp(-rT), price >= 0 "
-        "and monotonic in volatility. Compare with tolerances."
+        "and monotonic in volatility. Compare with a tolerance SIZED TO THE METHOD'S ERROR (step "
+        "size h, iteration/convergence tol), not an arbitrary constant a correct result would trip."
     ),
 }
 
@@ -785,21 +838,98 @@ def _run_against_tests(solution_code: str, tests_code: str, footer: str = _TEST_
     return result, passed, total
 
 
-def _verify_heldout(solution_code: str, heldout_code: str, seeds: int, reference_src: str = ""):
+# ----------------------------------------------------------------------
+# Oracle test-validation: a test the KNOWN-CORRECT reference itself fails is invalid (guessed
+# expected, too-tight tolerance, or wrong definition) and must never be allowed to fail a candidate.
+# ----------------------------------------------------------------------
+def _test_results(stdout: str) -> Dict[str, bool]:
+    """Parse the per-test 'TEST <name> PASS|FAIL' lines the runner prints into {name: passed}. Empty
+    when those lines are absent (e.g. the script crashed before the runner)."""
+    return {m.group(1): (m.group(2) == "PASS")
+            for m in re.finditer(r"^TEST\s+(\w+)\s+(PASS|FAIL)\s*$", stdout or "", re.M)}
+
+
+def _invalid_tests(oracle_code: str, tests_code: str, footer: str = _TEST_FOOTER) -> set:
+    """Run the KNOWN-CORRECT reference ORACLE through the generated tests and return the names of the
+    tests it FAILS. A correct reference failing a test means the TEST is wrong — a guessed expected
+    value, a tolerance too tight for the method, or a wrong quantity/definition — so that test must be
+    quarantined, never allowed to fail a candidate. The oracle is BOTH solution and reference here, so
+    any `ref.*`-derived expected trivially agrees; what surfaces is the non-reference tests
+    (properties / definitions / guessed literals / theory checks with a too-tight tolerance) that even
+    correct code cannot satisfy. Fail-OPEN: returns an empty set with no oracle, or when no per-test
+    lines parse (a crash), so a hiccup never silently drops genuine tests."""
+    if not (oracle_code or "").strip() or not (tests_code or "").strip():
+        return set()
+    try:
+        result, _passed, _total = _run_against_tests(oracle_code, tests_code, footer,
+                                                     reference_src=oracle_code)
+        results = _test_results(result.stdout or "")
+        if not results:
+            return set()
+        failing = {name for name, ok in results.items() if not ok}
+        # A reference that fails its OWN ENTIRE suite is unreliable (e.g. wrong function names -> every
+        # test errors). Don't trust it to quarantine anything — fail OPEN rather than quarantine all
+        # (which would otherwise leave each candidate judged on the very tests proven invalid).
+        return set() if len(failing) == len(results) else failing
+    except Exception:                       # noqa: BLE001 - validation is best-effort; fail open
+        return set()
+
+
+def _heldout_quarantine(oracle_code: str, heldout_code: str, seeds: Optional[int] = None) -> set:
+    """Held-out test-validation: the held-out checks the known-correct oracle itself fails — EXCEPT
+    DEFINITION checks. Definition checks are oracle-INDEPENDENT by design (their job is to catch a
+    wrong-definition oracle), so the oracle must never be allowed to quarantine them away; only the
+    hidden/invariant checks (whose expected values DO come from the oracle/properties) are eligible.
+    Validated across the SAME random seeds `_verify_heldout` judges candidates on (UNION): a
+    stochastic check the correct reference fails on ANY of those seeds is flawed, so quarantining it
+    covers every seed — not just the first. Empty unless test-validation is on and both an oracle and
+    held-out code are present."""
+    if not (test_validation_enabled() and (oracle_code or "").strip() and (heldout_code or "").strip()):
+        return set()
+    n = max(1, seeds if seeds is not None else verify_seeds())
+    invalid: set = set()
+    for s in range(n):
+        invalid |= _invalid_tests(oracle_code, heldout_code, _seeded_footer(1000 + s))
+    return {x for x in invalid if not x.startswith("test_definition")}
+
+
+def _valid_counts(stdout: str, quarantine: set):
+    """Recompute (passed, total) over only the NON-quarantined tests, from the per-test PASS/FAIL
+    lines. Returns None when no per-test lines parse (script crashed before the runner) or every test
+    is quarantined — the caller then keeps the original tally rather than inventing one."""
+    results = _test_results(stdout)
+    if not results:
+        return None
+    valid = {n: ok for n, ok in results.items() if n not in (quarantine or set())}
+    if not valid:
+        return None
+    return sum(1 for ok in valid.values() if ok), len(valid)
+
+
+def _verify_heldout(solution_code: str, heldout_code: str, seeds: int, reference_src: str = "",
+                    quarantine: Optional[set] = None):
     """(C4) Run solution + held-out (hidden + invariant) tests once per random seed, judging the
     fresh inputs against the SAME reference oracle. Returns (ok_all_seeds, passed, total,
-    last_result); ok only if EVERY seed fully passes. No held-out -> (True, 0, 0, None)."""
+    last_result); ok only if EVERY seed fully passes. No held-out -> (True, 0, 0, None). Held-out
+    tests the reference oracle itself fails (`quarantine`) are excluded from the tally, so an invalid
+    held-out test never falsely fails a correct candidate."""
     total0 = _count_tests(heldout_code)
     if not total0:
         return True, 0, 0, None
-    last = None
+    quarantine = quarantine or set()
+    last, last_total = None, total0
     for s in range(max(1, seeds)):
         result, passed, total = _run_against_tests(
             solution_code, heldout_code, _seeded_footer(1000 + s), reference_src=reference_src)
         last = result
+        if quarantine:                       # judge on valid (oracle-passing) held-out tests only
+            vc = _valid_counts(result.stdout or "", quarantine)
+            if vc is not None:
+                passed, total = vc
+        last_total = total or total0
         if total == 0 or passed < total:
             return False, passed, (total or total0), result
-    return True, total0, total0, last
+    return True, last_total, last_total, last
 
 
 class _AttemptMemory:
@@ -878,6 +1008,23 @@ def _verdict_from_tests(passed: int, total: int, relevant: bool, result: RunResu
     }
 
 
+def _remaining_failures(verdict: Dict[str, Any]) -> int:
+    """The count of GENUINE failing checks for a round's best attempt — what the next attempt must
+    still fix. Zero iff fully verified. Quarantined (flawed) tests are already excluded from
+    passed/total, so this counts only real failures: missing visible passes + missing held-out
+    passes + a failed delivery/output gate. Drives stall detection (no reduction -> stalling)."""
+    if verdict.get("verified"):
+        return 0
+    total = int(verdict.get("total", 0) or 0)
+    passed = int(verdict.get("passed", 0) or 0)
+    htotal = int(verdict.get("hidden_total", 0) or 0)
+    hpassed = int(verdict.get("hidden_passed", 0) or 0)
+    rem = max(0, total - passed) + max(0, htotal - hpassed)
+    if verdict.get("gate_fail"):
+        rem += 1
+    return rem or 1          # not verified -> at least one outstanding failure
+
+
 def _score(att: Attempt) -> int:
     # Gaming attempts never win; off-topic never win; a verified attempt beats any unverified one;
     # then a program that ran beats one that didn't; then the visible pass-rate breaks ties.
@@ -921,7 +1068,7 @@ def _read_directive(path: Optional[str]) -> str:
 # ----------------------------------------------------------------------
 # The loop
 # ----------------------------------------------------------------------
-def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
+def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = None,
               use_search: bool = True, directive_path: Optional[str] = None,
               conversation: str = "", on_event: Optional[OnEvent] = None) -> AgentResult:
     emit: OnEvent = on_event or (lambda e: None)
@@ -931,6 +1078,12 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         task = "Achieve the goal described in the brief."
     if not task:
         return AgentResult(task, False, "", "", "No task given.", [])
+
+    # Iterate until FULLY verified, the attempt cap is hit, or progress stalls. An explicit
+    # max_iters (CLI --iters, tests) is an exact cap; otherwise use the configurable AGENT_MAX_ATTEMPTS.
+    budget = int(max_iters) if max_iters is not None else max_attempts()
+    budget = max(1, budget)
+    stall_cap = stall_limit()
 
     # Resilient model chain: the user's selection first (AGENT_MODEL or the chat's OPENAI_MODEL),
     # then configured fallbacks. On a 429/timeout/5xx the provider retries + switches to another
@@ -963,7 +1116,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     convo = conversation.strip()
     if brief:
         convo = (convo + "\n\n# Brief\n" + brief).strip()
-    agent_trace = tracing.start_trace("agent_run", max_iters=max_iters, use_search=bool(use_search))
+    agent_trace = tracing.start_trace("agent_run", max_iters=budget, use_search=bool(use_search))
 
     # (a) Restate the task as a concrete requirements checklist (uses the conversation topic).
     emit({"type": "status", "message": "Restating the task as requirements…"})
@@ -992,6 +1145,23 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         use_reference = bool((oracle or "").strip())   # graceful fallback if generation failed
         emit({"type": "reference", "chars": len(oracle or ""), "used": use_reference})
 
+    # Test-VALIDATION oracle: for non-simulation this IS the expected-value oracle above. For a
+    # SIMULATION there is no exact-value oracle (chaotic trajectories diverge), but an INDEPENDENT
+    # correct reference STILL validates the property/invariant tests — a check the correct reference
+    # also fails is flawed (a too-tight tolerance or a wrong definition, e.g. asserting total momentum
+    # ~= 0 when it is conserved at a nonzero value), so it is quarantined; a check it passes that the
+    # candidate fails is a REAL bug. Built for VALIDATION ONLY — the tests stay property-based
+    # (use_reference is False for simulation), so no expected value is ever derived from this oracle.
+    validation_oracle = oracle
+    if (not validation_oracle and task_type == "simulation"
+            and test_validation_enabled() and reference_tests_enabled()):
+        emit({"type": "status", "message": "Building an independent reference to validate the checks…"})
+        with agent_trace.span("validation_reference") as _sp:
+            validation_oracle = _generate_reference(provider, task, requirements, task_type)
+            _sp.set(chars=len(validation_oracle or ""))
+        emit({"type": "reference", "scope": "validation",
+              "chars": len(validation_oracle or ""), "used": bool((validation_oracle or "").strip())})
+
     # (b) Generate concrete correctness tests for THIS task — the acceptance criteria. With the
     # oracle available, the tests compute expected via ref.* at runtime instead of guessing.
     emit({"type": "status", "message": "Writing correctness tests…"})
@@ -1001,6 +1171,22 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         _sp.set(count=_count_tests(tests))
     test_n = _count_tests(tests)
     emit({"type": "tests", "iteration": 0, "code": tests, "count": test_n})
+
+    # Oracle test-validation: a generated test the KNOWN-CORRECT oracle itself fails is invalid — its
+    # expected value was guessed, its tolerance is too tight for the method, or it checks the wrong
+    # quantity. Validate the visible suite against the oracle ONCE and QUARANTINE such tests; they are
+    # excluded from every candidate's pass/total, so correct code is never falsely failed while every
+    # oracle-passing test still gates genuinely wrong code.
+    visible_quarantine: set = set()
+    if test_validation_enabled() and validation_oracle:
+        emit({"type": "status", "message": "Validating the tests against the reference oracle…"})
+        visible_quarantine = _invalid_tests(validation_oracle, tests)
+        if visible_quarantine:
+            emit({"type": "test_validation", "scope": "visible",
+                  "quarantined": sorted(visible_quarantine),
+                  "message": (f"Quarantined {len(visible_quarantine)} visible test(s) the reference "
+                              "itself fails (invalid expected/tolerance/definition): "
+                              + ", ".join(sorted(visible_quarantine)))})
 
     # Completeness gate prep: extract the explicit deliverables the request asks for, ONCE (only when
     # the task asks for output and the gates are on). Checked against the real stdout each round.
@@ -1017,8 +1203,11 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     feedback = ""
     rounds_failed = 0
     cheat_count = 0
+    best_remaining = None     # fewest GENUINE failing checks seen so far (for stall detection)
+    stall = 0                 # consecutive rounds with no reduction in remaining failures
+    stop_reason = "max_attempts"
     mem = _AttemptMemory()
-    hstate: Dict[str, Any] = {"code": None, "strict": False}   # lazily-built held-out suite
+    hstate: Dict[str, Any] = {"code": None, "strict": False, "quarantine": set()}   # lazy held-out
     _heldout_lock = threading.Lock()                            # parallel candidates share it
 
     def _ensure_heldout(hp, strict: bool) -> str:
@@ -1044,11 +1233,23 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                 definitions = _generate_definition_checks(hp, task, requirements, strict=strict,
                                                           task_type=task_type)
             combined = "\n\n".join(p for p in (hidden, invariants, definitions) if (p or "").strip())
-            hstate["code"], hstate["strict"] = combined, strict
+            # Oracle test-validation on the held-out suite: quarantine the hidden/invariant checks
+            # the known-correct reference itself fails (an invalid one must never falsely fail a
+            # correct candidate); definition checks are exempt (oracle-independent by design). Uses
+            # the VALIDATION oracle, so this also covers simulation tasks (no exact-value oracle).
+            quarantine: set = _heldout_quarantine(validation_oracle, combined)
+            if quarantine:
+                emit({"type": "test_validation", "scope": "heldout",
+                      "quarantined": sorted(quarantine),
+                      "message": (f"Quarantined {len(quarantine)} held-out check(s) the reference "
+                                  "itself fails: " + ", ".join(sorted(quarantine)))})
+            hstate["code"], hstate["strict"], hstate["quarantine"] = combined, strict, quarantine
             emit({"type": "heldout", "count": _count_tests(combined), "strict": strict})
             return combined
 
-    for i in range(1, max_iters + 1):
+    attempts_taken = 0
+    for i in range(1, budget + 1):
+        attempts_taken = i
         directive = _read_directive(directive_path)
         if directive:
             emit({"type": "directive", "iteration": i, "text": directive[:300]})
@@ -1068,7 +1269,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                       "message": f"Escalating to a stronger model ({esc_chain[0]})…"})
 
         emit({"type": "think", "iteration": i,
-              "message": f"Writing code to pass the tests (attempt {i}/{max_iters})…"})
+              "message": f"Writing code to pass the tests (attempt {i}/{budget})…"})
 
         # (d) Best-of-N: generate N candidates CONCURRENTLY, each run + verified in its own
         # sandbox (the sandbox semaphore bounds how many containers run at once). Keep the best
@@ -1105,6 +1306,10 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                 emit({"type": "run", "iteration": i, "candidate": c + 1,
                       "message": "Running it against the tests in the Docker sandbox…"})
                 result, passed, total = _run_against_tests(code, tests, reference_src=oracle)
+                if visible_quarantine:          # judge on valid (oracle-passing) tests only
+                    vc = _valid_counts(result.stdout or "", visible_quarantine)
+                    if vc is not None:
+                        passed, total = vc
 
             relevant = _is_relevant_code(task, code, tests)        # (C6) algorithm-match gate
             verdict = _verdict_from_tests(passed, total, relevant, result)
@@ -1129,7 +1334,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                     heldout = _ensure_heldout(gen_provider, strict)
                     if heldout:
                         ok, hp_pass, hp_tot, hres = _verify_heldout(
-                            code, heldout, verify_seeds(), reference_src=oracle)
+                            code, heldout, verify_seeds(), reference_src=oracle,
+                            quarantine=hstate.get("quarantine"))
                         verdict["hidden_passed"], verdict["hidden_total"] = hp_pass, hp_tot
                         if ok:
                             verdict["verified"] = True
@@ -1188,9 +1394,9 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
             if round_best is None or rank > round_best_rank:
                 round_best, round_best_rank = att, rank
 
-        if round_best is None:         # all candidates were empty or produced no code
-            rounds_failed += 1
-            continue
+        if round_best is None:         # all candidates were empty or produced no code: a provider
+            rounds_failed += 1         # hiccup (rate-limit, blank/unparseable reply), NOT genuine
+            continue                   # non-progress -> retry within the budget, don't trip the stall
 
         attempts.append(round_best)
         if best is None or _score(round_best) > _score(best):
@@ -1233,12 +1439,28 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
 
         last_code = round_best.code
         if v.get("verified"):
+            stop_reason = "verified"
             break
         if v.get("relevant") is False:
             emit({"type": "status",
                   "message": "Off-topic for the requested algorithm — regenerating…"})
         feedback = v.get("feedback", "")
         rounds_failed += 1
+
+        # Stall detection: keep iterating only while attempts REDUCE the genuine failing checks.
+        # No reduction for AGENT_STALL_LIMIT consecutive rounds -> stop with the best effort so far,
+        # rather than burning the whole attempt budget when more tries clearly are not helping.
+        rem = _remaining_failures(v)
+        if best_remaining is None or rem < best_remaining:
+            best_remaining, stall = rem, 0
+        else:
+            stall += 1
+        if stall >= stall_cap:
+            stop_reason = "stall"
+            emit({"type": "status", "message":
+                  f"No progress for {stall} attempt(s) ({rem} genuine check(s) still failing) — "
+                  "stopping with the best result so far."})
+            break
 
     # (7) Honest outcome — prefer the best NON-cheating attempt; never present a gaming solution.
     try:
@@ -1273,6 +1495,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
     htotal = int(final.verdict.get("hidden_total", 0)) if final else 0
     cheat_flags = list(final.verdict.get("cheat_reasons") or []) if final else []
 
+    tries = f" after {attempts_taken} attempt{'s' if attempts_taken != 1 else ''}"
     if final is None:
         verification, answer, present = "failed", "The agent could not produce a working solution.", None
     elif best_clean is None:                  # every attempt was flagged for gaming
@@ -1286,14 +1509,19 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
                  if htotal else "")
         outclause = (" and produced every requested output when run"
                      if (gate_output and (final.verdict.get("demo_output") or "").strip()) else "")
-        answer = f"Implemented {topic} in Python — passes all {btotal} visible tests{gates}{outclause}."
+        answer = (f"Implemented {topic} in Python — passes all {btotal} visible tests{gates}"
+                  f"{outclause} (fully verified{tries}).")
         present = final
     else:
+        # Honest partial: never a fake "verified". Say how many GENUINE checks pass, why the rest
+        # remain, how many attempts ran, and whether we stopped early (stall) or hit the cap.
         verification = "partial"
         why = (final.verdict.get("gate_fail") or (final.verdict.get("feedback") or "").split("\n")[0])
         why = (" — " + why.strip()[:160]) if (why or "").strip() else ""
-        answer = (f"Best effort at {topic} in Python — {bpassed}/{btotal} visible tests pass "
-                  f"(partially verified){why}.")
+        stop = (" — stopped early, no further progress" if stop_reason == "stall"
+                else f" — reached the {budget}-attempt limit" if stop_reason == "max_attempts" else "")
+        answer = (f"Best effort at {topic} in Python — {bpassed}/{btotal} genuine checks pass "
+                  f"(partially verified{tries}{stop}){why}.")
         present = final
 
     # (5) Execution output: if the request asks to print/show/return a result, RUN the finished
@@ -1329,10 +1557,13 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: int = MAX_ITERS,
         hidden_passed=hpassed,
         hidden_total=htotal,
         cheat_flags=cheat_flags,
+        attempts_taken=attempts_taken,
+        stop_reason=(stop_reason if final is not None else "failed"),
     )
     emit({"type": "final", "success": res.success, "verification": verification,
           "answer": res.answer, "code": res.best_code, "output": res.best_output,
-          "iterations": len(attempts), "tests_passed": bpassed, "tests_total": btotal,
+          "iterations": len(attempts), "attempts_taken": attempts_taken,
+          "stop_reason": res.stop_reason, "tests_passed": bpassed, "tests_total": btotal,
           "hidden_passed": hpassed, "hidden_total": htotal})
     agent_trace.set(success=res.success, iterations=len(attempts), verification=verification,
                     tests_passed=bpassed, tests_total=btotal).end()
@@ -1350,12 +1581,14 @@ def result_to_markdown(res) -> str:
     output = (getattr(res, "best_output", "") or "").strip()
     total = int(getattr(res, "tests_total", 0) or 0)
     passed = int(getattr(res, "tests_passed", 0) or 0)
+    attempts_taken = int(getattr(res, "attempts_taken", 0) or 0)
+    tries = f" after {attempts_taken} attempt{'s' if attempts_taken != 1 else ''}" if attempts_taken else ""
     # A gaming solution is NEVER presented as a clean answer.
     if verification == "rejected_cheating":
         return ("> ⛔ Rejected — possible test gaming detected; no genuine, verified solution was "
                 "produced. Try rephrasing the request, or set a stronger model (AGENT_MODEL_STRONG).")
     if verification == "partial" or (total and not (getattr(res, "success", False) and passed >= total)):
-        parts.append(f"> ⚠ Partially verified — {passed}/{total} generated tests passing.")
+        parts.append(f"> ⚠ Partially verified — {passed}/{total} genuine checks passing{tries}.")
     if answer:
         parts.append(answer)
     if code:

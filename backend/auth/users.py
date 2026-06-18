@@ -7,6 +7,7 @@ PBKDF2-HMAC-SHA256 (200k iterations). Users live in a small SQLite database
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import hmac
 import os
@@ -28,6 +29,16 @@ _RESET_TTL_SECONDS = 30 * 60   # password-reset links expire after 30 minutes
 
 def valid_email(email: str) -> bool:
     return bool(_EMAIL_RE.match((email or "").strip()))
+
+
+def valid_dob(dob: str) -> bool:
+    """A plausible ISO date of birth (YYYY-MM-DD): a real calendar date that is not in the
+    future and sits within a sane range (1900-01-01 .. today)."""
+    try:
+        d = datetime.date.fromisoformat((dob or "").strip())
+    except ValueError:
+        return False
+    return datetime.date(1900, 1, 1) <= d <= datetime.date.today()
 
 
 # ----------------------------------------------------------------------
@@ -74,6 +85,8 @@ def _conn() -> sqlite3.Connection:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
     if "email" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    if "date_of_birth" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN date_of_birth TEXT")
     # One-time, single-use, expiring password-reset tokens (only the hash is stored).
     conn.execute("""
         CREATE TABLE IF NOT EXISTS password_resets (
@@ -88,24 +101,27 @@ def _conn() -> sqlite3.Connection:
 
 
 def create_user(user_id: str, password: str, is_admin: bool = False,
-                email: Optional[str] = None) -> None:
+                email: Optional[str] = None, date_of_birth: Optional[str] = None) -> None:
     user_id = (user_id or "").strip()
     email = (email or "").strip().lower() or None
+    dob = (date_of_birth or "").strip() or None
     if not valid_user_id(user_id):
         raise ValueError("user_id must be 3-64 chars: letters, digits, . _ - @")
     if not password or len(password) < 6:
         raise ValueError("password must be at least 6 characters")
     if email and not valid_email(email):
         raise ValueError("please enter a valid email address")
+    if dob and not valid_dob(dob):
+        raise ValueError("please enter a valid date of birth")
     with _conn() as conn:
         if conn.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,)).fetchone():
             raise ValueError(f"user {user_id!r} already exists")
         if email and conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
             raise ValueError("that email is already registered")
         conn.execute(
-            "INSERT INTO users (user_id, password_hash, is_admin, created_at, email) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (user_id, hash_password(password), 1 if is_admin else 0, time.time(), email),
+            "INSERT INTO users (user_id, password_hash, is_admin, created_at, email, date_of_birth) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, hash_password(password), 1 if is_admin else 0, time.time(), email, dob),
         )
 
 
@@ -142,6 +158,13 @@ def get_email(user_id: str) -> Optional[str]:
         row = conn.execute("SELECT email FROM users WHERE user_id = ?",
                            ((user_id or "").strip(),)).fetchone()
     return row["email"] if row else None
+
+
+def get_dob(user_id: str) -> Optional[str]:
+    with _conn() as conn:
+        row = conn.execute("SELECT date_of_birth FROM users WHERE user_id = ?",
+                           ((user_id or "").strip(),)).fetchone()
+    return row["date_of_birth"] if row else None
 
 
 def set_email(user_id: str, email: str) -> None:

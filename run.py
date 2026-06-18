@@ -32,6 +32,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
+# Print UTF-8 regardless of the Windows console code page, so the startup banner's
+# arrows/symbols (→, ✓, …) never crash with UnicodeEncodeError when stdout is a
+# redirected pipe/log (cp1252). Safe no-op where reconfigure isn't available.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Load .env so --share can read CLOUDFLARE_TUNNEL_TOKEN / ENABLE_AUTH for warnings.
 try:
     from dotenv import load_dotenv
@@ -246,7 +255,10 @@ def _run_with_tunnel(port: int) -> int:
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     shown = False
     try:
-        for line in tunnel.stdout:
+        # tunnel.stdout can be None (e.g. if pipes were closed); guard against that
+        import io
+        stream = tunnel.stdout if tunnel.stdout is not None else io.StringIO()
+        for line in stream:
             m = re.search(r"https://[a-z0-9.-]+\.trycloudflare\.com", line)
             if m and not shown:
                 shown = True

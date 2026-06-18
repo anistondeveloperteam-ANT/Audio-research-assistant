@@ -164,12 +164,15 @@ def list_papers() -> list:
     try:
         conn = _connect()
         cur = conn.cursor()
+        # Use scalar sub-queries for the per-paper counts instead of GROUP BY:
+        # `title` is a CLOB and Oracle cannot GROUP BY a LOB column (ORA-00932),
+        # which made the whole list silently fail and return empty.
         cur.execute(
             """
-            SELECT p.id, p.title, p.file_name, COUNT(c.id),
-                   SUM(CASE WHEN c.embedding IS NULL THEN 1 ELSE 0 END)
-            FROM papers p LEFT JOIN chunks c ON c.paper_id = p.id
-            GROUP BY p.id, p.title, p.file_name
+            SELECT p.id, p.title, p.file_name,
+                   (SELECT COUNT(*) FROM chunks c WHERE c.paper_id = p.id),
+                   (SELECT COUNT(*) FROM chunks c WHERE c.paper_id = p.id AND c.embedding IS NULL)
+            FROM papers p
             ORDER BY p.id DESC
             """
         )

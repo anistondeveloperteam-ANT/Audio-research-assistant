@@ -1,326 +1,545 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Sign in · Research Assistant</title>
-<meta name="description" content="Sign in to your intelligent research companion." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.3-4.3'/%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231E6FD9' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M12 5a3 3 0 1 0-3 3M12 19a3 3 0 1 0 3-3M5 12a3 3 0 1 0 3 3M19 12a3 3 0 1 0-3-3'/%3E%3C/svg%3E" />
 <style>
-:root{
-  --navy1:#0A1628; --navy2:#102a52; --navy3:#1A3A6B;
-  --blue:#1E6FD9; --blue2:#3b82f6; --blue300:#93c5fd;
-  --ink:#0A1628; --ink2:#1A3A6B; --slate:#cbd5e1; --slate2:#e2e8f0;
-  --err:#dc2626; --ok:#0f9d6e;
-  --font:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-}
-*{box-sizing:border-box}
-html,body{height:100%}
-body{margin:0;font-family:var(--font);color:var(--ink);-webkit-font-smoothing:antialiased;
-  background:linear-gradient(135deg,#0A1628 0%,#102a52 45%,#1A3A6B 100%);min-height:100vh}
+  /* ---------- theme tokens (dark = :root, light flips on html.light) ---------- */
+  :root{
+    --bg0:#08090c; --bg1:#13151b;
+    --card-bg:rgba(18,20,26,.55); --card-brd:rgba(255,255,255,.12);
+    --text:#f3f4f6; --muted:#9aa0aa; --input-bg:rgba(255,255,255,.05);
+    --ring:rgba(255,255,255,.65);
+    --ok:#22c55e; --err:#fb7185;
+    color-scheme:dark;
+  }
+  html.light{
+    --bg0:#eef1f6; --bg1:#dde2ec;
+    --card-bg:rgba(255,255,255,.62); --card-brd:rgba(15,20,30,.10);
+    --text:#14181e; --muted:#5b626d; --input-bg:rgba(10,15,25,.04);
+    --ring:rgba(20,30,45,.45);
+    --ok:#16a34a; --err:#e11d48;
+    color-scheme:light;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg0); color:var(--text);
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+    font-feature-settings:"cv05","ss01"; letter-spacing:-.006em;
+    -webkit-font-smoothing:antialiased; overflow:hidden;
+    display:grid; place-items:center;
+  }
+  .sr-only{position:absolute;width:1px;height:1px;clip:rect(0 0 0 0);overflow:hidden}
+  .hidden{display:none !important}
 
-.wrap{position:relative;display:grid;grid-template-columns:1fr 1fr;min-height:100vh}
-@media (max-width:980px){.wrap{grid-template-columns:1fr}}
+  /* ---------- animated Waves background ---------- */
+  #bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0}
+  .vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(120% 120% at 50% 38%,transparent 46%,rgba(0,0,0,.34) 100%)}
+  html.light .vignette{background:radial-gradient(120% 120% at 50% 38%,transparent 52%,rgba(20,30,45,.10) 100%)}
 
-/* decorative floating dots — absolute overlay so it doesn't take a grid cell */
-.dots{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0}
-.dots span{position:absolute;border-radius:50%;background:var(--blue2);filter:blur(.5px);
-  animation:floaty 9s ease-in-out infinite}
-.dots span:nth-child(1){width:8px;height:8px;left:10%;top:24%;opacity:.7}
-.dots span:nth-child(2){width:6px;height:6px;left:5%;top:52%;opacity:.55;animation-delay:-2s}
-.dots span:nth-child(3){width:10px;height:10px;left:18%;bottom:26%;opacity:.5;animation-delay:-4s;filter:blur(1px)}
-.dots span:nth-child(4){width:6px;height:6px;left:44%;top:34%;opacity:.4;animation-delay:-6s}
-.dots span:nth-child(5){width:7px;height:7px;right:46%;bottom:18%;opacity:.45;animation-delay:-3s}
-@keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-14px)}}
-@media (prefers-reduced-motion:reduce){.dots span{animation:none}}
+  /* ---------- theme toggle ---------- */
+  .theme{position:fixed;top:16px;right:16px;z-index:4;width:40px;height:40px;border-radius:50%;
+    border:1px solid var(--card-brd);background:var(--card-bg);color:var(--text);cursor:pointer;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);display:grid;place-items:center;transition:border-color .2s}
+  .theme:hover{border-color:var(--ring)}
 
-/* ---- brand side ---- */
-.brand{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;gap:34px;padding:56px 60px;color:#fff}
-@media (max-width:980px){.brand{padding:40px 28px 8px;gap:22px;justify-content:flex-start}}
-.logo{display:flex;align-items:center;gap:16px}
-.logo .mk{width:60px;height:60px;border-radius:16px;display:grid;place-items:center;flex:none;
-  background:linear-gradient(135deg,#1E6FD9,#3b82f6);box-shadow:0 0 40px rgba(30,111,217,.7);
-  animation:logoGlow 3.6s ease-in-out infinite;transition:transform .25s}
-.logo:hover .mk{transform:rotate(-6deg) scale(1.05)}
-.logo .mk svg{width:32px;height:32px;color:#fff}
-.logo b{font-size:28px;font-weight:800;letter-spacing:-.02em}
-@keyframes logoGlow{0%,100%{box-shadow:0 0 38px rgba(30,111,217,.55)}50%{box-shadow:0 0 60px rgba(59,130,246,.85)}}
-.brand h1{font-size:46px;line-height:1.1;font-weight:800;letter-spacing:-.03em;margin:0}
-@media (max-width:980px){.brand h1{font-size:32px}}
-.brand .lede{color:var(--blue300);font-size:18px;line-height:1.6;max-width:34ch;margin:0}
-.feats{display:flex;flex-direction:column;gap:14px;max-width:440px}
-@media (max-width:980px){.feats{display:none}}
-.feat{display:flex;align-items:center;gap:16px;padding:16px;border-radius:14px;
-  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
-  transition:transform .2s ease,background .2s ease,border-color .2s ease,box-shadow .2s ease}
-.feat:hover{transform:translateY(-3px);background:rgba(255,255,255,.09);
-  border-color:rgba(96,165,250,.45);box-shadow:0 12px 30px -12px rgba(30,111,217,.5)}
-.feat .fic{width:44px;height:44px;border-radius:11px;flex:none;display:grid;place-items:center;
-  background:rgba(30,111,217,.25);color:#60a5fa;transition:transform .2s ease,background .2s ease}
-.feat:hover .fic{transform:scale(1.1);background:rgba(30,111,217,.4)}
-.feat .fic svg{width:20px;height:20px}
-.feat .ft{font-weight:600;font-size:14px;color:#fff;display:block}
-.feat .fd{font-size:12px;color:rgba(147,197,253,.85)}
+  /* ---------- the card ---------- */
+  .card{
+    position:relative;z-index:3;width:372px;max-width:calc(100vw - 32px);
+    padding:30px 28px 24px;border-radius:22px;
+    background:var(--card-bg);border:1px solid var(--card-brd);
+    backdrop-filter:blur(22px) saturate(1.25);-webkit-backdrop-filter:blur(22px) saturate(1.25);
+    box-shadow:0 35px 80px -25px rgba(0,0,0,.62),inset 0 1px 0 rgba(255,255,255,.10);
+    transition:transform .15s ease, box-shadow .35s ease;transform-style:preserve-3d;
+  }
+  .card.authing{box-shadow:0 35px 80px -25px rgba(0,0,0,.62),inset 0 1px 0 rgba(255,255,255,.10),0 0 0 1px var(--ring),0 0 40px -6px var(--ring)}
 
-/* ---- form side ---- */
-.pane{position:relative;z-index:1;display:grid;place-items:center;padding:40px 28px}
-.card{width:100%;max-width:440px;padding:36px;border-radius:24px;
-  background:rgba(255,255,255,.97);border:1px solid rgba(255,255,255,.5);
-  box-shadow:0 0 60px rgba(30,111,217,.30),0 30px 60px -30px rgba(0,0,0,.5);backdrop-filter:blur(20px);
-  animation:cardIn .55s cubic-bezier(.2,.7,.2,1) both;transition:transform .12s ease;will-change:transform}
-/* staggered entrance for a premium first paint */
-.brand .logo{animation:fadeUp .5s ease both}
-.brand h1{animation:fadeUp .5s ease .06s both}
-.brand .lede{animation:fadeUp .5s ease .12s both}
-.feat{animation:fadeIn .55s ease both}
-.feats .feat:nth-child(2){animation-delay:.1s}
-.feats .feat:nth-child(3){animation-delay:.2s}
-@keyframes cardIn{from{opacity:0;transform:translateY(16px) scale(.99)}to{opacity:1;transform:none}}
-@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-@keyframes fadeIn{from{opacity:0}to{opacity:1}}
-@media (prefers-reduced-motion:reduce){.card,.brand .logo,.brand h1,.brand .lede,.feat{animation:none}}
-.card h2{font-size:30px;font-weight:800;letter-spacing:-.02em;color:var(--ink);margin:0 0 6px}
-.card .desc{color:rgba(26,58,107,.7);font-size:16px;margin:0 0 24px}
+  .brand{display:flex;align-items:center;gap:11px;margin-bottom:4px}
+  .logomark{width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;
+    background:var(--input-bg);border:1px solid var(--card-brd);color:var(--text);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.10)}
+  .logomark svg{width:18px;height:18px}
+  .brand h1{font-size:18px;font-weight:650;margin:0;letter-spacing:-.022em;line-height:1.1}
+  .sub{margin:9px 0 20px;color:var(--muted);font-size:13px;line-height:1.5}
 
-.field{margin-bottom:16px}
-.field label{display:block;font-size:14px;font-weight:600;color:var(--ink2);margin:0 0 8px}
-.inp{position:relative}
-.inp .lic{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:rgba(26,58,107,.5);display:grid;place-items:center}
-.inp .lic svg{width:17px;height:17px}
-.inp input{width:100%;height:46px;padding:0 44px;border-radius:12px;font-size:15px;color:var(--ink);
-  background:#fff;border:1.5px solid var(--slate);font-family:inherit;transition:border-color .15s,box-shadow .15s}
-.inp input::placeholder{color:rgba(26,58,107,.4)}
-.inp input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 4px rgba(30,111,217,.16)}
-.inp .peek{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;
-  color:rgba(26,58,107,.5);padding:8px;border-radius:8px;display:grid;place-items:center}
-.inp .peek:hover{color:var(--ink);background:#f1f5f9}
-.inp .peek svg{width:17px;height:17px}
+  /* ---------- floating-label glass fields ---------- */
+  .field{position:relative;margin-top:12px}
+  .field input{
+    width:100%;height:52px;padding:18px 14px 6px;font-size:15px;color:var(--text);
+    background:var(--input-bg);border:1px solid var(--card-brd);border-radius:13px;outline:none;
+    transition:border-color .18s,box-shadow .18s;
+  }
+  .field.has-peek input{padding-right:46px}
+  .field input:focus{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in srgb,var(--ring) 16%,transparent)}
+  .field label{position:absolute;left:14px;top:16px;color:var(--muted);font-size:15px;
+    pointer-events:none;transition:top .15s ease,font-size .15s ease,letter-spacing .15s ease}
+  .field input:focus ~ label,
+  .field input:not(:placeholder-shown) ~ label,
+  .field input:-webkit-autofill ~ label,
+  .field input:autofill ~ label,
+  .field.float label{top:7px;font-size:11px;letter-spacing:.03em}
+  /* keep browser-autofilled fields on-theme (no yellow/white box, label stays floated) */
+  .field input:-webkit-autofill,
+  .field input:-webkit-autofill:hover,
+  .field input:-webkit-autofill:focus{
+    -webkit-text-fill-color:var(--text);
+    -webkit-box-shadow:0 0 0 1000px var(--input-bg) inset;
+    caret-color:var(--text);
+    transition:background-color 9999s ease 0s, border-color .18s, box-shadow .18s;
+  }
 
-.caps{display:none;align-items:center;gap:6px;font-size:12px;color:var(--err);margin-top:6px}
-.caps.on{display:flex}
-.forgot{display:block;text-align:right;font-size:14px;font-weight:600;color:var(--blue);
-  text-decoration:none;background:none;border:none;cursor:pointer;padding:0;margin:-4px 0 18px auto}
-.forgot:hover{text-decoration:underline}
+  .peek{position:absolute;right:8px;top:9px;width:34px;height:34px;border:0;background:transparent;
+    color:var(--muted);cursor:pointer;border-radius:9px;display:grid;place-items:center}
+  .peek:hover{color:var(--text)}
 
-.btn{width:100%;height:48px;border:none;border-radius:12px;cursor:pointer;font:inherit;font-size:16px;font-weight:700;
-  color:#fff;background:var(--blue);box-shadow:0 8px 24px rgba(30,111,217,.4);
-  display:flex;align-items:center;justify-content:center;gap:9px;transition:transform .14s,box-shadow .14s,filter .14s}
-.btn:hover{filter:brightness(1.06);transform:translateY(-1px);box-shadow:0 12px 30px rgba(30,111,217,.5)}
-.btn:active{transform:translateY(0)}
-.btn[disabled]{opacity:.7;cursor:not-allowed;transform:none}
-.btn svg{width:19px;height:19px}
-.btn .spin{width:17px;height:17px;border:2.4px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:none}
-.btn.loading .spin{display:block}.btn.loading svg{display:none}
-@keyframes spin{to{transform:rotate(360deg)}}
+  .row-forgot{display:flex;justify-content:flex-end;margin-top:8px}
+  .link{background:none;border:0;padding:0;color:var(--muted);font-size:12.5px;cursor:pointer;text-decoration:none}
+  .link:hover{color:var(--text)}
 
+  /* ---------- message box ---------- */
+  .msg{display:none;margin-top:14px;padding:10px 12px;border-radius:11px;font-size:13px;line-height:1.45;
+    border:1px solid transparent}
+  .msg.show{display:block}
+  .msg.err{color:var(--err);background:color-mix(in srgb,var(--err) 10%,transparent);border-color:color-mix(in srgb,var(--err) 30%,transparent)}
+  .msg.ok{color:var(--text);background:var(--input-bg);border-color:var(--card-brd)}
+  .msg a{color:var(--text);font-weight:600}
 
-.msg{margin-top:16px;font-size:14px;padding:11px 14px;border-radius:11px;display:none;line-height:1.5;border:1px solid transparent}
-.msg.show{display:block}
-.msg.err{color:var(--err);background:#fef2f2;border-color:#fecaca}
-.msg.ok{color:var(--ok);background:#f0fdf4;border-color:#bbf7d0}
-.msg a{color:inherit;font-weight:700}
+  /* ---------- submit button + states ---------- */
+  .submit{margin-top:16px;width:100%;height:50px;border:0;border-radius:13px;cursor:pointer;position:relative;
+    background:var(--text);color:var(--bg0);font-size:15px;font-weight:600;letter-spacing:.01em;
+    display:flex;align-items:center;justify-content:center;transition:transform .1s,opacity .2s,background .25s}
+  .submit:hover{opacity:.93}.submit:active{transform:scale(.99)}
+  .submit:disabled{cursor:default;opacity:1}
+  .s-label{display:flex;align-items:center;gap:8px}
+  .s-spin,.s-check{display:none}
+  .s-spin{width:20px;height:20px;border:2.5px solid color-mix(in srgb,var(--bg0) 22%,transparent);
+    border-top-color:var(--bg0);border-radius:50%;animation:spin .7s linear infinite}
+  .submit.loading .s-label{display:none}.submit.loading .s-spin{display:block}
+  .submit.done{background:var(--ok);color:#fff}
+  .submit.done .s-label,.submit.done .s-spin{display:none}.submit.done .s-check{display:flex}
+  @keyframes spin{to{transform:rotate(360deg)}}
 
-.foot{margin-top:22px;text-align:center;font-size:14px;color:rgba(26,58,107,.7)}
-.foot a{font-weight:700;color:var(--blue);cursor:pointer;text-decoration:none}
-.foot a:hover{text-decoration:underline}
-.hidden{display:none!important}
-.shake{animation:shake .4s}
-@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-7px)}40%,80%{transform:translateX(7px)}}
+  /* ---------- google + footer ---------- */
+  .or{display:flex;align-items:center;gap:12px;margin:15px 0;color:var(--muted);font-size:12px}
+  .or::before,.or::after{content:"";height:1px;flex:1;background:var(--card-brd)}
+  .google{width:100%;height:48px;border-radius:13px;cursor:pointer;font-size:14px;color:var(--text);
+    background:var(--input-bg);border:1px solid var(--card-brd);display:flex;align-items:center;justify-content:center;gap:10px;transition:border-color .2s}
+  .google:hover{border-color:var(--ring)}
+  .foot{margin:16px 0 2px;text-align:center;color:var(--muted);font-size:13px}
+  .foot a{color:var(--text);text-decoration:none;font-weight:600;cursor:pointer}
+  .demo{margin-top:12px;text-align:center;color:var(--muted);font-size:11px;letter-spacing:.03em;opacity:.8}
+
+  @media (prefers-reduced-motion:reduce){.card{transition:none}.s-spin{animation:none}}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="dots"><span></span><span></span><span></span><span></span><span></span></div>
+  <h2 class="sr-only">Sign in to Research Assistant. Switch between sign in, sign up, and password reset within one card.</h2>
 
-  <!-- Brand side -->
-  <section class="brand">
-    <div class="logo">
-      <span class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.142 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588 4 4 0 0 0 7.967.273V5z"/><path d="M12 5a3 3 0 1 1 5.997.142 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588 4 4 0 0 1-7.967.273V5z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4M6 18a4 4 0 0 1-1.967-.516M19.967 17.484A4 4 0 0 1 18 18"/></svg></span>
-      <b>Research Assistant</b>
+  <canvas id="bg"></canvas>
+  <div class="vignette"></div>
+
+  <button class="theme" id="themeBtn" aria-label="Switch theme">
+    <svg id="themeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></svg>
+  </button>
+
+  <main class="card" id="card">
+    <div class="brand">
+      <span class="logomark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg></span>
+      <h1>Research Assistant</h1>
     </div>
-    <div>
-      <h1>Your Intelligent<br/>Research Companion</h1>
-      <p class="lede" style="margin-top:16px">Accelerate discovery with AI that reads, understands, and surfaces insights from your documents in seconds.</p>
-    </div>
-    <div class="feats">
-      <div class="feat">
-        <span class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M12 18v-6"/><path d="m9 15 3-3 3 3"/></svg></span>
-        <span><span class="ft">Upload PDFs &amp; Docs</span><span class="fd">Drop your sources and let AI parse them</span></span>
-      </div>
-      <div class="feat">
-        <span class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
-        <span><span class="ft">Smart Search &amp; Query</span><span class="fd">Ask questions in natural language</span></span>
-      </div>
-      <div class="feat">
-        <span class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M3 12h3M18 12h3M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3.2"/></svg></span>
-        <span><span class="ft">AI-Powered Insights</span><span class="fd">Summaries, citations, and key findings</span></span>
-      </div>
-    </div>
-  </section>
+    <p class="sub" id="sub">Sign in to continue.</p>
 
-  <!-- Form side -->
-  <section class="pane">
-    <div class="card">
-      <h2 id="title">Welcome Back</h2>
-      <p class="desc" id="desc">Sign in to continue your research</p>
-
-      <!-- sign in / sign up -->
-      <form id="authForm" novalidate>
-        <div class="field">
-          <label for="uid" id="uidLabel">Email or username</label>
-          <div class="inp">
-            <span class="lic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
-            <input id="uid" type="text" autocomplete="username" placeholder="you@research.edu" autofocus />
-          </div>
-        </div>
-        <div class="field hidden" id="emailField">
-          <label for="email">Email</label>
-          <div class="inp">
-            <span class="lic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
-            <input id="email" type="email" autocomplete="email" placeholder="you@research.edu" />
-          </div>
-        </div>
-        <div class="field">
-          <label for="pw">Password</label>
-          <div class="inp">
-            <span class="lic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-            <input id="pw" type="password" autocomplete="current-password" placeholder="••••••••" />
-            <button type="button" class="peek" id="peek" aria-label="Show password"></button>
-          </div>
-          <div class="caps" id="caps"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 9 9h-5v9H8v-9H3z"/></svg> Caps Lock is on</div>
-        </div>
-        <button type="button" class="forgot" id="toForgot">Forgot Password?</button>
-        <button class="btn" id="submit" type="submit"><span class="spin"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></svg><span class="label">Sign In</span></button>
-        <div class="msg" id="msg"></div>
-      </form>
-
-      <!-- forgot password -->
-      <form id="forgotForm" class="hidden" novalidate>
-        <div class="field">
-          <label for="fid">Email or username</label>
-          <div class="inp">
-            <span class="lic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
-            <input id="fid" type="text" autocomplete="username" placeholder="you@research.edu or username" />
-          </div>
-        </div>
-        <button class="btn" id="forgotSubmit" type="submit"><span class="spin"></span><span class="label">Send reset link</span></button>
-        <div class="msg" id="forgotMsg"></div>
-      </form>
-
-      <div class="foot" id="foot">
-        <span id="footText">Don't have an account?</span> <a id="footLink">Sign Up</a>
+    <form id="form" novalidate>
+      <!-- email or username (login, forgot) -->
+      <div class="field" data-modes="login forgot">
+        <input id="userid" type="text" placeholder=" " autocomplete="username" autofocus />
+        <label for="userid">Email or username</label>
       </div>
-    </div>
-  </section>
-</div>
+
+      <!-- username (signup) -->
+      <div class="field" data-modes="signup">
+        <input id="username" type="text" placeholder=" " autocomplete="username" />
+        <label for="username">Username</label>
+      </div>
+
+      <!-- email (signup) -->
+      <div class="field" data-modes="signup">
+        <input id="email" type="email" placeholder=" " autocomplete="email" />
+        <label for="email">Email</label>
+      </div>
+
+      <!-- date of birth (signup, forgot) -->
+      <div class="field" id="dobField" data-modes="signup forgot">
+        <input id="dob" type="text" placeholder=" " autocomplete="bday" />
+        <label for="dob">Date of birth</label>
+      </div>
+
+      <!-- password (login, signup) -->
+      <div class="field has-peek" data-modes="login signup">
+        <input id="password" type="password" placeholder=" " autocomplete="current-password" />
+        <label for="password">Password</label>
+        <button class="peek" type="button" tabindex="-1" aria-label="Show password" data-target="password">
+          <svg class="eye" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg class="eyeoff hidden" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18M10.6 10.7a3 3 0 0 0 4.2 4.2M9.9 5.2A10 10 0 0 1 22 12a17 17 0 0 1-2.2 3M6.6 6.7A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 3.4-.6"/></svg>
+        </button>
+      </div>
+
+      <!-- confirm (signup) -->
+      <div class="field has-peek" data-modes="signup">
+        <input id="confirm" type="password" placeholder=" " autocomplete="new-password" />
+        <label for="confirm">Confirm password</label>
+        <button class="peek" type="button" tabindex="-1" aria-label="Show password" data-target="confirm">
+          <svg class="eye" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg class="eyeoff hidden" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18M10.6 10.7a3 3 0 0 0 4.2 4.2M9.9 5.2A10 10 0 0 1 22 12a17 17 0 0 1-2.2 3M6.6 6.7A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 3.4-.6"/></svg>
+        </button>
+      </div>
+
+      <!-- forgot link (login) -->
+      <div class="row-forgot" data-modes="login">
+        <button type="button" class="link" id="forgotLink">Forgot?</button>
+      </div>
+
+      <div class="msg" id="msg" role="alert" aria-live="polite"></div>
+
+      <button class="submit" id="submit" type="submit">
+        <span class="s-label"><span id="submitLabel">Sign in</span>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </span>
+        <span class="s-spin" aria-hidden="true"></span>
+        <span class="s-check" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+        </span>
+      </button>
+
+      <!-- google block (login, signup; only when configured) -->
+      <div data-modes="login signup" data-requires="google" id="googleBlock">
+        <div class="or">or</div>
+        <button class="google" id="googleBtn" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+          <span id="googleLabel">Continue with Google</span>
+        </button>
+      </div>
+
+      <p class="foot" id="foot"></p>
+      <p class="demo hidden" id="demoNote">Preview · no backend connected — submissions are simulated.</p>
+    </form>
+  </main>
 
 <script>
-const $=id=>document.getElementById(id);
-let mode="login", signupAllowed=false;
-fetch("/api/me").then(r=>r.json()).then(d=>{
-  signupAllowed=(d.signup!==false);if(!signupAllowed)$("foot").style.display="none";
-}).catch(()=>{});
-// surface OAuth / rate errors passed back via ?error=
-(function(){const e=new URLSearchParams(location.search).get("error");if(!e)return;
-  const map={google:"Google sign-in didn't complete. Please try again.",
-    google_email:"Your Google account email isn't verified.",
-    google_off:"Google sign-in isn't configured on this server.",
-    rate:"Too many attempts — please wait a minute."};
-  const m=$("msg");m.className="msg err show";m.textContent=map[e]||"Sign-in failed. Please try again.";})();
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
 
-// password peek
-const eye='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
-const eyeOff='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 3l18 18M10.6 10.7a3 3 0 0 0 4.2 4.2"/><path d="M9.9 5.2A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.4 4.1M6.5 6.6A17 17 0 0 0 2 12s3.6 7 10 7c1 0 2-.1 2.9-.4"/></svg>';
-$("peek").innerHTML=eye;
-$("peek").onclick=()=>{const i=$("pw");const s=i.type==="password";i.type=s?"text":"password";$("peek").innerHTML=s?eyeOff:eye;i.focus();};
-function capsWatch(e){const on=e.getModifierState&&e.getModifierState("CapsLock");$("caps").classList.toggle("on",!!on);}
-$("pw").addEventListener("keyup",capsWatch);$("pw").addEventListener("keydown",capsWatch);
-
-function setMode(m){
-  mode=m;
-  $("authForm").classList.toggle("hidden",m==="forgot");
-  $("forgotForm").classList.toggle("hidden",m!=="forgot");
-  $("emailField").classList.toggle("hidden",m!=="signup");
-  $("toForgot").style.display=(m==="login")?"block":"none";
-  $("foot").style.display=(m==="forgot"||!signupAllowed)?"none":"block";
-  $("msg").className="msg";$("forgotMsg").className="msg";
-  if(m==="login"){
-    $("title").textContent="Welcome Back";$("desc").textContent="Sign in to continue your research";
-    $("uidLabel").textContent="Email or username";$("uid").placeholder="you@research.edu";
-    $("submit").querySelector(".label").textContent="Sign In";
-    $("footText").textContent="Don't have an account?";$("footLink").textContent="Sign Up";$("uid").focus();
+  /* ----- validation primitives (mirror the server) ----- */
+  const USER_RE  = /^[A-Za-z0-9._@-]{3,64}$/;
+  const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  function ageFromDob(s){
+    const d = new Date(s); if (isNaN(d)) return -1;
+    const t = new Date(); let a = t.getFullYear() - d.getFullYear();
+    const m = t.getMonth() - d.getMonth();
+    if (m < 0 || (m === 0 && t.getDate() < d.getDate())) a--;
+    return a;
   }
-  if(m==="signup"){
-    $("title").textContent="Create your account";$("desc").textContent="Start your research in seconds";
-    $("uidLabel").textContent="Username";$("uid").placeholder="choose a username";
-    $("submit").querySelector(".label").textContent="Create Account";
-    $("footText").textContent="Already have an account?";$("footLink").textContent="Sign In";$("uid").focus();
+
+  const fields = {
+    userid:$('userid'), username:$('username'), email:$('email'),
+    dob:$('dob'), password:$('password'), confirm:$('confirm')
+  };
+  const form=$('form'), card=$('card'), msg=$('msg'), foot=$('foot'),
+        sub=$('sub'), submit=$('submit'), submitLabel=$('submitLabel'),
+        googleLabel=$('googleLabel');
+
+  let MODE = 'login';
+  const CFG = { auth:true, signup:true, google:true };
+  let DEMO = false;
+
+  /* ----- messages ----- */
+  function showMsg(html, kind){ msg.innerHTML = html; msg.className = 'msg show ' + (kind||'ok'); }
+  function clearMsg(){ msg.className = 'msg'; msg.innerHTML = ''; }
+
+  /* ----- submit button states ----- */
+  function setSubmit(state){            // 'idle' | 'loading' | 'done'
+    submit.classList.toggle('loading', state==='loading');
+    submit.classList.toggle('done',    state==='done');
+    submit.disabled = (state!=='idle');
+    card.classList.toggle('authing', state==='loading');
   }
-  if(m==="forgot"){
-    $("title").textContent="Reset your password";$("desc").textContent="We'll send you a link to set a new one";
-    $("fid").focus();
+
+  /* ----- mode switching (no page reload) ----- */
+  const SUBS = { login:'Sign in to continue.', signup:'Create your account.', forgot:'Reset your password.' };
+  function setMode(m){
+    MODE = m;
+    document.querySelectorAll('[data-modes]').forEach(el=>{
+      let show = el.getAttribute('data-modes').split(' ').includes(m);
+      if (el.dataset.requires === 'google' && !CFG.google) show = false;
+      el.classList.toggle('hidden', !show);
+    });
+    submitLabel.textContent = m==='login' ? 'Sign in' : m==='signup' ? 'Create account' : 'Send reset link';
+    googleLabel.textContent = m==='signup' ? 'Sign up with Google' : 'Continue with Google';
+    sub.textContent = SUBS[m];
+    setFooter(m);
+    clearMsg(); setSubmit('idle'); syncFloats();
+    const first = document.querySelector('.field:not(.hidden) input');
+    if (first) first.focus();
   }
-}
-$("toForgot").onclick=()=>setMode("forgot");
-$("footLink").onclick=()=>setMode(mode==="login"?"signup":"login");
-
-function backToSignin(){setMode("login");}
-function fail(boxId,text){const b=$(boxId);b.className="msg err show";b.textContent=text;const f=b.closest("form");f.classList.remove("shake");void f.offsetWidth;f.classList.add("shake");}
-
-$("authForm").addEventListener("submit",async e=>{
-  e.preventDefault();
-  const uid=$("uid").value.trim(),pw=$("pw").value;
-  if(!uid||!pw){fail("msg",mode==="signup"?"Pick a username and password.":"Enter your email/username and password.");return;}
-  if(mode==="signup"&&pw.length<6){fail("msg","Password must be at least 6 characters.");return;}
-  const btn=$("submit");btn.classList.add("loading");btn.disabled=true;
-  const payload={user_id:uid,password:pw};
-  if(mode==="signup"){const em=$("email").value.trim();if(em)payload.email=em;}
-  try{
-    const res=await fetch("/api/"+(mode==="signup"?"signup":"login"),
-      {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-    const d=await res.json().catch(()=>({}));
-    if(res.ok&&d.ok){$("msg").className="msg ok show";$("msg").textContent="Welcome! Taking you in…";location.href="/";return;}
-    fail("msg",d.error||"Something went wrong. Please try again.");
-  }catch(err){fail("msg","Network error — is the server running?");}
-  btn.classList.remove("loading");btn.disabled=false;
-});
-
-$("forgotForm").addEventListener("submit",async e=>{
-  e.preventDefault();
-  const id=$("fid").value.trim();
-  if(!id){fail("forgotMsg","Enter your email or username.");return;}
-  const btn=$("forgotSubmit");btn.classList.add("loading");btn.disabled=true;
-  try{
-    const res=await fetch("/api/forgot-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({identifier:id})});
-    const d=await res.json().catch(()=>({}));
-    const m=$("forgotMsg");m.className="msg ok show";
-    if(d.reset_url){
-      m.textContent="Your reset link is ready (valid 30 min): ";
-      const a=document.createElement("a");a.href=d.reset_url;a.textContent="Reset your password →";m.appendChild(a);
+  function setFooter(m){
+    if (m==='login'){
+      if (!CFG.signup){ foot.classList.add('hidden'); foot.innerHTML=''; return; }
+      foot.classList.remove('hidden');
+      foot.innerHTML = 'New here? <a data-go="signup">Sign up</a>';
+    } else if (m==='signup'){
+      foot.classList.remove('hidden');
+      foot.innerHTML = 'Already have an account? <a data-go="login">Sign in</a>';
     } else {
-      m.textContent=d.message||"If an account matches, a reset link has been sent. Check your email.";
+      foot.classList.remove('hidden');
+      foot.innerHTML = '<a data-go="login">← Back to sign in</a>';
     }
-    const back=document.createElement("button");back.type="button";back.className="forgot";back.style.margin="14px auto 0";back.style.textAlign="center";back.textContent="← Back to sign in";back.onclick=backToSignin;
-    m.parentNode.appendChild(back);
-  }catch(err){fail("forgotMsg","Network error — please try again.");}
-  btn.classList.remove("loading");btn.disabled=false;
-});
+  }
 
-// 3D tilt — the card leans toward the cursor for a premium, physical feel.
-(function(){
-  const card=document.querySelector(".card"), pane=document.querySelector(".pane");
-  if(!card||!pane||window.matchMedia("(prefers-reduced-motion: reduce)").matches||window.innerWidth<980)return;
-  let raf=0;
-  pane.addEventListener("mousemove",e=>{
-    const r=card.getBoundingClientRect();
-    const px=(e.clientX-r.left)/r.width-.5, py=(e.clientY-r.top)/r.height-.5;
-    cancelAnimationFrame(raf);
-    raf=requestAnimationFrame(()=>{card.style.transform=`perspective(1100px) rotateY(${px*5.5}deg) rotateX(${-py*5.5}deg) translateZ(6px)`;});
+  /* footer + forgot navigation */
+  document.addEventListener('click', (e)=>{
+    const go = e.target.closest('[data-go]');
+    if (go){ e.preventDefault(); setMode(go.dataset.go); }
   });
-  pane.addEventListener("mouseleave",()=>{cancelAnimationFrame(raf);card.style.transform="";});
+  $('forgotLink').addEventListener('click', ()=> setMode('forgot'));
+
+  /* ----- floating labels: value-driven so typed, programmatic AND browser-autofilled
+           values all float the label (fixes the password label overlapping its dots) ----- */
+  function syncFloat(inp){
+    if (!inp) return; const f = inp.closest('.field'); if (!f) return;
+    f.classList.toggle('float', !!inp.value || inp.type === 'date');
+  }
+  function syncFloats(){ Object.keys(fields).forEach((k)=> syncFloat(fields[k])); }
+  Object.keys(fields).forEach((k)=>{ const i = fields[k];
+    if (i){ i.addEventListener('input', ()=> syncFloat(i)); i.addEventListener('change', ()=> syncFloat(i)); } });
+
+  fields.dob.setAttribute('max', new Date().toISOString().slice(0,10)); // no future dates
+  fields.dob.addEventListener('focus', ()=>{ fields.dob.type='date'; syncFloats(); });
+  fields.dob.addEventListener('blur',  ()=>{ if(!fields.dob.value) fields.dob.type='text'; syncFloats(); });
+  fields.dob.addEventListener('change', syncFloats);
+
+  /* ----- password peek toggles ----- */
+  document.querySelectorAll('.peek').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const inp = $(btn.dataset.target);
+      const reveal = inp.type==='password';
+      inp.type = reveal ? 'text' : 'password';
+      btn.setAttribute('aria-label', reveal ? 'Hide password' : 'Show password');
+      btn.querySelector('.eye').classList.toggle('hidden', reveal);
+      btn.querySelector('.eyeoff').classList.toggle('hidden', !reveal);
+    });
+  });
+
+  /* ----- per-mode validation ----- */
+  function validate(){
+    if (MODE==='login'){
+      if (!fields.userid.value.trim() || !fields.password.value)
+        return 'Enter your email/username and password.';
+    } else if (MODE==='signup'){
+      const u = fields.username.value.trim();
+      if (!USER_RE.test(u))  return 'Username must be 3–64 characters (letters, digits, . _ - @).';
+      if (!EMAIL_RE.test(fields.email.value.trim())) return 'Enter a valid email address.';
+      const dob = fields.dob.value;
+      if (!dob) return 'Enter your date of birth.';
+      const age = ageFromDob(dob);
+      if (age < 0) return 'Enter a valid date of birth.';
+      if (new Date(dob) > new Date()) return 'Date of birth can’t be in the future.';
+      if (age < 13) return 'You must be at least 13 years old.';
+      if (fields.password.value.length < 6) return 'Password must be at least 6 characters.';
+      if (fields.confirm.value !== fields.password.value) return 'Passwords don’t match.';
+    } else { // forgot
+      if (!fields.userid.value.trim()) return 'Enter your email or username.';
+      if (!fields.dob.value)           return 'Enter your date of birth.';
+    }
+    return null;
+  }
+
+  /* ----- API helper ----- */
+  async function api(url, body){
+    const res = await fetch(url, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    let data = {}; try { data = await res.json(); } catch(_) {}
+    data._status = res.status; data._rate = (res.status === 429);
+    return data;
+  }
+  const wait = (ms)=> new Promise(r=>setTimeout(r, ms));
+
+  /* ----- submit ----- */
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const err = validate();
+    if (err){ showMsg(err, 'err'); return; }
+    clearMsg(); setSubmit('loading');
+
+    if (DEMO){                                  // standalone preview, no server
+      await wait(850);
+      if (MODE==='forgot'){
+        setSubmit('idle');
+        showMsg('If an account matches, a reset link has been sent. <a href="#">Reset your password →</a>', 'ok');
+      } else {
+        setSubmit('done');
+        await wait(800); setSubmit('idle');
+        showMsg(MODE==='signup' ? 'Account created (demo).' : 'Signed in (demo).', 'ok');
+      }
+      return;
+    }
+
+    try{
+      if (MODE==='login'){
+        const r = await api('/api/login', { user_id:fields.userid.value.trim(), password:fields.password.value });
+        if (r.ok){ setSubmit('done'); setTimeout(()=> location.href='/', 750); }
+        else fail(r, 'Invalid email/username or password.');
+      } else if (MODE==='signup'){
+        const r = await api('/api/signup', {
+          user_id:fields.username.value.trim(), password:fields.password.value,
+          email:fields.email.value.trim(), date_of_birth:fields.dob.value
+        });
+        if (r.ok){ setSubmit('done'); setTimeout(()=> location.href='/', 750); }
+        else fail(r, 'Could not create your account.');
+      } else { // forgot — always generic (anti-enumeration)
+        const r = await api('/api/forgot-password', {
+          identifier:fields.userid.value.trim(), date_of_birth:fields.dob.value
+        });
+        setSubmit('idle');
+        if (r.reset_url){
+          showMsg('Account matched. <a href="'+r.reset_url+'">Reset your password →</a>', 'ok');
+        } else {
+          showMsg(r.message || 'If an account matches, a reset link has been sent.', 'ok');
+        }
+      }
+    } catch(_){
+      setSubmit('idle');
+      showMsg('Something went wrong. Please try again.', 'err');
+    }
+  });
+  function fail(r, fallback){
+    setSubmit('idle');
+    if (r._rate){ showMsg('Too many attempts — please wait a minute.', 'err'); return; }
+    showMsg(r.error || fallback, 'err');
+  }
+
+  /* ----- Google ----- */
+  $('googleBtn').addEventListener('click', ()=>{
+    if (DEMO){ showMsg('Demo mode — this would redirect to Google sign-in.', 'ok'); return; }
+    location.href = '/auth/google/login';
+  });
+
+  /* ----- ?error= mapping (from failed Google redirects / rate limits) ----- */
+  const ERR = {
+    google:'Google sign-in didn’t complete. Please try again.',
+    google_email:'Your Google account email isn’t verified.',
+    google_off:'Google sign-in isn’t configured on this server.',
+    rate:'Too many attempts — please wait a minute.'
+  };
+
+  /* ----- theme (persisted; default dark) ----- */
+  const THEME_KEY='ara-theme';
+  const SUN='<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
+  const MOON='<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>';
+  function applyTheme(light){
+    document.documentElement.classList.toggle('light', light);
+    $('themeIcon').innerHTML = light ? MOON : SUN;
+    try{ localStorage.setItem(THEME_KEY, light?'light':'dark'); }catch(_){}
+    palette(); rebuild();
+  }
+  $('themeBtn').addEventListener('click', ()=>
+    applyTheme(!document.documentElement.classList.contains('light')));
+
+  /* =========================================================
+     Waves background — theme-aware, reduced-motion-aware
+     ========================================================= */
+  const canvas=$('bg'), ctx=canvas.getContext('2d');
+  const pointer={x:0,y:0};
+  let dpr=1,W=0,H=0,pal={},wave=null,raf=0,running=true;
+  const css=(n)=> getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  function palette(){ pal={ bg0:css('--bg0'), bg1:css('--bg1'),
+                            light:document.documentElement.classList.contains('light') }; }
+  function makeWaves(){
+    const cols=['56,189,248','99,102,241','45,212,191','168,85,247']; // sky, indigo, teal, violet
+    const L=cols.map((c,i)=>({ c, base:0.30+i*0.16, amp:0.075+i*0.018,
+                               k:1.2+i*0.5, sp:0.34+i*0.13, ph:i*1.4 }));
+    return (t)=>{
+      const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,pal.bg1); g.addColorStop(1,pal.bg0);
+      ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1; ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+      ctx.globalCompositeOperation = pal.light ? 'multiply' : 'screen';
+      for(const w of L){
+        ctx.beginPath(); ctx.moveTo(0,H);
+        for(let x=0;x<=W;x+=10){
+          const y=H*( w.base
+            + w.amp*Math.sin(x/W*6.283185*w.k + t*w.sp + w.ph + pointer.x*0.15)
+            + w.amp*0.4*Math.sin(x/W*7 - t*w.sp*1.6) );
+          ctx.lineTo(x,y);
+        }
+        ctx.lineTo(W,H); ctx.closePath();
+        const lg=ctx.createLinearGradient(0,H*w.base,0,H); const a=pal.light?0.14:0.22;
+        lg.addColorStop(0,`rgba(${w.c},${a})`); lg.addColorStop(1,`rgba(${w.c},0)`);
+        ctx.fillStyle=lg; ctx.fill();
+      }
+      ctx.globalCompositeOperation='source-over';
+    };
+  }
+  function resize(){
+    dpr=Math.min(2, window.devicePixelRatio||1);
+    W=window.innerWidth; H=window.innerHeight;
+    canvas.width=W*dpr; canvas.height=H*dpr;
+    canvas.style.width=W+'px'; canvas.style.height=H+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    rebuild();
+  }
+  function rebuild(){ wave=makeWaves(); if(!running && wave) wave(performance.now()/1000); }
+  function loop(now){ if(!running) return; wave(now/1000); raf=requestAnimationFrame(loop); }
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  running = true;   // keep the decorative waves flowing continuously, even under OS reduce-motion
+
+  /* pointer parallax + 3D card tilt (calm under reduced motion) */
+  window.addEventListener('pointermove', (e)=>{
+    pointer.x=(e.clientX/window.innerWidth)*2-1;
+    pointer.y=(e.clientY/window.innerHeight)*2-1;
+    if(!reduced) card.style.transform=`perspective(900px) rotateY(${pointer.x*4}deg) rotateX(${-pointer.y*4}deg)`;
+  });
+  document.body.addEventListener('pointerleave', ()=>{ pointer.x=0; pointer.y=0; card.style.transform=''; });
+  window.addEventListener('resize', resize);
+
+  /* =========================================================
+     Boot: theme → /api/me → mode → background
+     ========================================================= */
+  async function boot(){
+    let saved=null; try{ saved=localStorage.getItem(THEME_KEY); }catch(_){}
+    applyTheme(saved === 'light');           // default dark
+
+    try{
+      const res = await fetch('/api/me', { headers:{Accept:'application/json'} });
+      if (!res.ok) throw 0;
+      const d = await res.json();
+      if (d && d.auth === false){ location.href='/'; return; }   // auth disabled → app is open
+      if (d && d.user_id){ location.href='/'; return; }          // already signed in
+      CFG.signup = !!(d && d.signup);
+      CFG.google = !!(d && d.google);
+    } catch(_){
+      DEMO = true; CFG.signup = true; CFG.google = true;          // standalone preview
+      $('demoNote').classList.remove('hidden');
+    }
+
+    setMode('login');
+    // browser autofill populates values asynchronously after load — re-sync the labels a few times
+    [120, 400, 900, 1600].forEach((ms)=> setTimeout(syncFloats, ms));
+
+    const ee = new URLSearchParams(location.search).get('error');
+    if (ee && ERR[ee]) showMsg(ERR[ee], 'err');
+
+    palette(); resize();
+    if (running) raf=requestAnimationFrame(loop);
+  }
+  boot();
 })();
 </script>
 </body>

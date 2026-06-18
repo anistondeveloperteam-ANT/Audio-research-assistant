@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Research Assistant · Design Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230d9488' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M12 5a3 3 0 1 0-3 3M12 19a3 3 0 1 0 3-3M5 12a3 3 0 1 0 3 3M19 12a3 3 0 1 0-3-3'/%3E%3C/svg%3E" />
+<style>
+/* ============================ THEME TOKENS ============================ */
+:root{
+  /* shared accents (both themes) */
+  --teal:#0d9488; --teal-2:#14b8a6; --violet:#7c3aed; --violet-2:#8b5cf6;
+  --grad:linear-gradient(135deg,#0d9488 0%,#7c3aed 100%);
+  --grad-soft:linear-gradient(135deg,rgba(13,148,136,.16),rgba(124,58,237,.16));
+  --green:#10b981; --amber:#f59e0b; --blue:#3b82f6; --red:#ef4444;
+  --font:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --radius:14px; --radius-lg:20px; --radius-xl:26px;
+}
+/* DARK (default) */
+html[data-theme="dark"]{
+  --canvas:#0a0a12; --canvas-2:#0f0f1a;
+  --glass:rgba(17,21,34,.46); --glass-2:rgba(255,255,255,.05); --glass-3:rgba(255,255,255,.08);
+  --border:rgba(255,255,255,.10); --border-top:rgba(255,255,255,.16); --border-strong:rgba(255,255,255,.18);
+  --text:#e8e0f0; --text-soft:#a79fbb; --muted:#6f6886;
+  --shadow:0 22px 55px rgba(0,0,0,.42); --shadow-sm:0 6px 18px rgba(0,0,0,.35);
+  --veil:transparent; --code-bg:#0c0e1a; --ring:rgba(124,58,237,.30);
+  --bubble-user:rgba(124,58,237,.14); --scroll:rgba(255,255,255,.14);
+}
+/* LIGHT */
+html[data-theme="light"]{
+  --canvas:#eef1f7; --canvas-2:#f7f9fd;
+  --glass:rgba(255,255,255,.58); --glass-2:rgba(255,255,255,.55); --glass-3:rgba(255,255,255,.78);
+  --border:rgba(13,17,38,.10); --border-top:rgba(255,255,255,.85); --border-strong:rgba(13,17,38,.16);
+  --text:#0f0f1a; --text-soft:#475067; --muted:#8089a0;
+  --shadow:0 18px 44px rgba(26,30,55,.14); --shadow-sm:0 4px 14px rgba(26,30,55,.10);
+  --veil:rgba(244,247,252,.55); --code-bg:#0e1320; --ring:rgba(13,148,136,.22);
+  --bubble-user:rgba(124,58,237,.10); --scroll:rgba(13,17,38,.18);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:var(--font);color:var(--text);background:var(--canvas);
+  -webkit-font-smoothing:antialiased;overflow:hidden;
+  transition:background-color .45s ease,color .3s ease}
+#bg{position:fixed;inset:0;z-index:0;display:block}
+#veil{position:fixed;inset:0;z-index:1;pointer-events:none;background:var(--veil);
+  transition:background-color .45s ease}
+.app{position:relative;z-index:2;height:100vh;display:grid;
+  grid-template-columns:var(--sw,300px) 1fr;transition:grid-template-columns .28s cubic-bezier(.4,0,.2,1)}
+.app.collapsed{--sw:74px}
+
+/* ---- shared glass ---- */
+.glass{background:var(--glass);-webkit-backdrop-filter:blur(20px) saturate(1.4);
+  backdrop-filter:blur(20px) saturate(1.4);border:1px solid var(--border);
+  border-top-color:var(--border-top);box-shadow:var(--shadow)}
+button{font-family:inherit;cursor:pointer;color:inherit}
+.icon{width:18px;height:18px;display:block}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:20px;border:2px solid transparent;background-clip:content-box}
+
+/* gradient + glass buttons */
+.btn-grad{border:none;border-radius:var(--radius);color:#fff;font-weight:600;font-size:14px;
+  background:var(--grad);box-shadow:0 8px 22px rgba(124,58,237,.36),inset 0 1px 0 rgba(255,255,255,.28);
+  display:flex;align-items:center;justify-content:center;gap:8px;padding:0 16px;height:44px;
+  transition:transform .16s ease,box-shadow .16s ease,filter .16s ease}
+.btn-grad:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(124,58,237,.5),inset 0 1px 0 rgba(255,255,255,.35);filter:brightness(1.05)}
+.btn-grad:active{transform:translateY(0)}
+.btn-glass{background:var(--glass-2);border:1px solid var(--border);border-radius:var(--radius);
+  color:var(--text);font-weight:500;font-size:14px;display:flex;align-items:center;justify-content:center;gap:8px;
+  padding:0 14px;height:42px;transition:background .16s ease,border-color .16s ease,transform .16s ease}
+.btn-glass:hover{background:var(--glass-3);border-color:var(--border-strong);transform:translateY(-1px)}
+
+/* ============================ SIDEBAR ============================ */
+.sidebar{position:relative;margin:12px 0 12px 12px;border-radius:var(--radius-lg);
+  display:flex;flex-direction:column;min-height:0;padding:14px 12px;gap:12px;overflow:hidden}
+.brand{display:flex;align-items:center;gap:11px;padding:2px 4px 2px 4px}
+.brand .mk{width:38px;height:38px;border-radius:11px;flex:none;display:grid;place-items:center;
+  background:var(--grad);box-shadow:0 0 26px rgba(13,148,136,.5)}
+.brand .mk svg{width:21px;height:21px;color:#fff}
+.brand .bt{font-weight:700;font-size:15.5px;letter-spacing:-.01em;white-space:nowrap}
+.brand .bs{font-size:11px;color:var(--muted);white-space:nowrap}
+.collapse-btn{margin-left:auto;width:30px;height:30px;border-radius:9px;border:1px solid var(--border);
+  background:var(--glass-2);display:grid;place-items:center;color:var(--text-soft);flex:none}
+.collapse-btn:hover{background:var(--glass-3);color:var(--text)}
+.app.collapsed .brand .bt,.app.collapsed .brand .bs,.app.collapsed .lbl,
+.app.collapsed .convs,.app.collapsed .side-foot .grow,.app.collapsed .pill-row{display:none}
+.app.collapsed .sidebar{align-items:center;padding:14px 8px}
+.app.collapsed .btn-grad,.app.collapsed .btn-glass{padding:0;width:46px}
+.app.collapsed .collapse-btn{margin-left:0}
+
+.new-chat{height:46px;font-size:14.5px}
+.add-papers{height:42px}
+
+.convs{flex:1;min-height:0;overflow-y:auto;margin:2px -4px 0;padding:0 4px;display:flex;flex-direction:column;gap:3px}
+.date-h{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;
+  padding:12px 8px 5px}
+.conv{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:11px;cursor:pointer;
+  border:1px solid transparent;transition:background .14s ease,border-color .14s ease,transform .12s ease}
+.conv:hover{background:var(--glass-2);transform:translateX(2px)}
+.conv .ci{width:15px;height:15px;color:var(--muted);flex:none}
+.conv .ct{font-size:13.5px;color:var(--text-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.conv.active{background:var(--grad-soft);border-color:var(--border);box-shadow:inset 0 0 0 1px rgba(124,58,237,.25),0 0 22px -8px rgba(124,58,237,.5)}
+.conv.active .ct{color:var(--text);font-weight:600}
+.conv.active .ci{color:var(--teal-2)}
+.conv .acts{display:none;gap:2px;margin-left:auto}
+.conv:hover .acts{display:flex}
+.conv .acts button{width:24px;height:24px;border-radius:7px;border:none;background:transparent;color:var(--muted);display:grid;place-items:center}
+.conv .acts button:hover{background:var(--glass-3);color:var(--text)}
+.conv .acts svg{width:13px;height:13px}
+
+.side-foot{display:flex;flex-direction:column;gap:9px;border-top:1px solid var(--border);padding-top:11px}
+.pill-row{display:flex;gap:8px}
+.pill{flex:1;display:flex;align-items:center;gap:7px;padding:8px 11px;border-radius:11px;
+  background:var(--glass-2);border:1px solid var(--border);font-size:12px;color:var(--text-soft)}
+.pill svg{width:14px;height:14px;color:var(--teal-2);flex:none}
+.pill b{color:var(--text);font-weight:600}
+
+/* model picker */
+.dropdown{position:relative}
+.dd-btn{width:100%;height:42px;border-radius:11px;background:var(--glass-2);border:1px solid var(--border);
+  display:flex;align-items:center;gap:9px;padding:0 11px;font-size:13px;color:var(--text)}
+.dd-btn:hover{background:var(--glass-3)}
+.dd-btn .dot{width:8px;height:8px;border-radius:50%;background:var(--grad);box-shadow:0 0 8px var(--violet);flex:none}
+.dd-btn .nm{font-weight:600;flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dd-btn .chev{width:15px;height:15px;color:var(--muted);transition:transform .18s ease}
+.dropdown.open .dd-btn .chev{transform:rotate(180deg)}
+.dd-menu{position:absolute;bottom:50px;left:0;right:0;border-radius:13px;padding:6px;display:none;
+  flex-direction:column;gap:2px;z-index:20}
+.dropdown.open .dd-menu{display:flex;animation:pop .16s ease both}
+@keyframes pop{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
+.dd-opt{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;font-size:13px;
+  color:var(--text-soft);background:none;border:none;width:100%;text-align:left}
+.dd-opt:hover{background:var(--glass-2);color:var(--text)}
+.dd-opt .pv{font-size:10.5px;color:var(--muted);margin-left:auto}
+.dd-opt.sel{color:var(--text);font-weight:600}
+.dd-opt.sel .pv{color:var(--teal-2)}
+
+.foot-row{display:flex;align-items:center;gap:9px}
+.theme-toggle{width:42px;height:42px;border-radius:11px;flex:none;background:var(--glass-2);
+  border:1px solid var(--border);display:grid;place-items:center;color:var(--text);position:relative;overflow:hidden}
+.theme-toggle:hover{background:var(--glass-3)}
+.theme-toggle svg{width:18px;height:18px;position:absolute;transition:transform .4s cubic-bezier(.5,1.6,.4,1),opacity .3s ease}
+.theme-toggle .sun{opacity:0;transform:rotate(-90deg) scale(.4)}
+.theme-toggle .moon{opacity:1;transform:none}
+html[data-theme="light"] .theme-toggle .sun{opacity:1;transform:none}
+html[data-theme="light"] .theme-toggle .moon{opacity:0;transform:rotate(90deg) scale(.4)}
+.user-chip{flex:1;display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:11px;
+  background:var(--glass-2);border:1px solid var(--border)}
+.user-chip .av{width:30px;height:30px;border-radius:9px;flex:none;background:linear-gradient(135deg,#14b8a6,#8b5cf6);
+  display:grid;place-items:center;color:#fff;font-weight:700;font-size:13px;position:relative}
+.user-chip .av .on{position:absolute;right:-2px;bottom:-2px;width:10px;height:10px;border-radius:50%;
+  background:var(--green);border:2px solid var(--canvas-2)}
+.user-chip .un{font-size:13px;font-weight:600;line-height:1.1}
+.user-chip .ue{font-size:10.5px;color:var(--muted)}
+.user-chip .lo{margin-left:auto;width:28px;height:28px;border-radius:8px;border:none;background:transparent;color:var(--muted);display:grid;place-items:center}
+.user-chip .lo:hover{background:var(--glass-3);color:var(--red)}
+.user-chip .lo svg{width:15px;height:15px}
+
+/* ============================ MAIN ============================ */
+.main{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0}
+.topbar{display:flex;align-items:center;gap:12px;padding:16px 26px 6px}
+.topbar .tt{font-weight:600;font-size:15px}
+.topbar .tt .sub{color:var(--muted);font-weight:400;font-size:12.5px}
+.topbar .sp{flex:1}
+.tb-btn{height:36px;padding:0 13px;border-radius:10px;background:var(--glass);border:1px solid var(--border);
+  display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text-soft);font-weight:500}
+.tb-btn:hover{color:var(--text);border-color:var(--border-strong)}
+.tb-btn svg{width:15px;height:15px}
+
+.thread{flex:1;min-height:0;overflow-y:auto;padding:14px 0 150px;scroll-behavior:smooth}
+.thread-in{max-width:820px;margin:0 auto;padding:0 26px;display:flex;flex-direction:column;gap:26px}
+
+/* messages */
+.msg{display:flex;flex-direction:column;animation:rise .5s cubic-bezier(.2,.7,.2,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.msg.user{align-items:flex-end}
+.bubble-user{max-width:78%;padding:13px 17px;border-radius:18px 18px 6px 18px;font-size:14.5px;line-height:1.55;
+  background:var(--bubble-user);border:1px solid var(--border);border-top-color:var(--border-top);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)}
+.ai{max-width:100%}
+.ai-card{border-radius:var(--radius-lg);padding:18px 20px;position:relative;overflow:hidden}
+.badge{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:20px;
+  font-size:12px;font-weight:600;margin-bottom:13px;border:1px solid transparent}
+.badge .bd{width:7px;height:7px;border-radius:50%}
+.badge.lib{color:var(--green);background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3)}
+.badge.lib .bd{background:var(--green);box-shadow:0 0 8px var(--green)}
+.badge.mix{color:var(--amber);background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.3)}
+.badge.mix .bd{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.badge.web{color:var(--blue);background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.3)}
+.badge.web .bd{background:var(--blue);box-shadow:0 0 8px var(--blue)}
+.ai-body{font-size:14.5px;line-height:1.68;color:var(--text)}
+.ai-body p{margin:0 0 11px}
+.ai-body strong{font-weight:600}
+.cite{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:19px;padding:0 5px;
+  border-radius:6px;font-size:11.5px;font-weight:700;vertical-align:1px;margin:0 1px;cursor:pointer;
+  border:1px solid transparent;transition:transform .12s ease,box-shadow .12s ease}
+.cite:hover{transform:translateY(-1px)}
+.cite.pdf{color:var(--green);background:rgba(16,185,129,.14);border-color:rgba(16,185,129,.32)}
+.cite.pdf:hover{box-shadow:0 0 12px rgba(16,185,129,.5)}
+.cite.web{color:var(--blue);background:rgba(59,130,246,.14);border-color:rgba(59,130,246,.32)}
+.cite.web:hover{box-shadow:0 0 12px rgba(59,130,246,.5)}
+
+/* answer action row + version arrows */
+.ai-actions{display:flex;align-items:center;gap:4px;margin-top:11px;opacity:0;transition:opacity .2s ease}
+.ai:hover .ai-actions{opacity:1}
+.act{width:30px;height:30px;border-radius:9px;border:1px solid transparent;background:transparent;color:var(--muted);display:grid;place-items:center}
+.act:hover{background:var(--glass-2);border-color:var(--border);color:var(--text)}
+.act svg{width:15px;height:15px}
+.versions{display:flex;align-items:center;gap:3px;margin-left:6px;padding:3px 4px;border-radius:9px;background:var(--glass-2);border:1px solid var(--border)}
+.versions button{width:22px;height:22px;border-radius:6px;border:none;background:transparent;color:var(--text-soft);display:grid;place-items:center}
+.versions button:hover{background:var(--glass-3);color:var(--text)}
+.versions span{font-size:11.5px;color:var(--text-soft);min-width:26px;text-align:center;font-variant-numeric:tabular-nums}
+.versions svg{width:13px;height:13px}
+
+/* streaming shimmer */
+.shimmer{height:13px;border-radius:7px;background:linear-gradient(100deg,var(--glass-2) 30%,rgba(124,58,237,.25) 50%,var(--glass-2) 70%);
+  background-size:200% 100%;animation:sh 1.3s linear infinite}
+@keyframes sh{from{background-position:200% 0}to{background-position:-200% 0}}
+.shimmer.w1{width:92%}.shimmer.w2{width:78%;margin-top:9px}.shimmer.w3{width:60%;margin-top:9px}
+
+/* ============================ AGENT / CODING CARD ============================ */
+.agent-lead{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--text-soft);margin-bottom:14px}
+.agent-lead .dot{width:8px;height:8px;border-radius:50%;background:var(--grad);box-shadow:0 0 10px var(--violet)}
+.agent-lead .attempt{margin-left:auto;font-size:11px;font-weight:600;color:var(--muted);
+  padding:3px 9px;border-radius:20px;background:var(--glass-2);border:1px solid var(--border)}
+.timeline{position:relative;padding-left:30px;margin-bottom:16px}
+.timeline::before{content:"";position:absolute;left:11px;top:6px;bottom:18px;width:2px;border-radius:2px;
+  background:linear-gradient(to bottom,var(--teal),var(--violet));box-shadow:0 0 10px rgba(124,58,237,.5)}
+.step{position:relative;padding:7px 0;display:flex;align-items:flex-start;gap:11px}
+.step .si{position:absolute;left:-30px;top:6px;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;
+  background:var(--canvas-2);border:2px solid var(--teal);color:var(--teal-2)}
+.step.done .si{background:var(--green);border-color:var(--green);color:#04130d}
+.step.run .si{border-color:var(--violet);color:var(--violet-2)}
+.step .si svg{width:13px;height:13px}
+.spinner{width:12px;height:12px;border:2px solid rgba(139,92,246,.35);border-top-color:var(--violet-2);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.step .st{font-size:13.5px;font-weight:600;color:var(--text)}
+.step .ss{font-size:12px;color:var(--muted)}
+.step .sb{margin-left:auto;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px}
+.sb.ok{color:var(--green);background:rgba(16,185,129,.12)}
+.sb.score{color:var(--violet-2);background:rgba(124,58,237,.14)}
+
+.code-wrap{border-radius:14px;overflow:hidden;border:1px solid var(--border);margin-bottom:13px;background:var(--code-bg)}
+.code-head{display:flex;align-items:center;gap:8px;padding:9px 13px;background:rgba(255,255,255,.03);border-bottom:1px solid rgba(255,255,255,.07)}
+.code-head .dots{display:flex;gap:6px}
+.code-head .dots i{width:11px;height:11px;border-radius:50%}
+.code-head .dots i:nth-child(1){background:#ff5f57}.code-head .dots i:nth-child(2){background:#febc2e}.code-head .dots i:nth-child(3){background:#28c840}
+.code-head .fn{font-size:12px;color:#8b93a7;font-family:var(--mono);margin-left:4px}
+.code-head .copy{margin-left:auto;font-size:11.5px;color:#a7b0c4;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
+  border-radius:8px;padding:5px 11px;display:flex;align-items:center;gap:6px}
+.code-head .copy:hover{background:rgba(255,255,255,.12);color:#fff}
+.code-head .copy svg{width:13px;height:13px}
+pre{margin:0;padding:15px 16px;overflow-x:auto;font-family:var(--mono);font-size:12.7px;line-height:1.62;color:#d6deeb}
+.tok-kw{color:#c792ea}.tok-fn{color:#82aaff}.tok-str{color:#c3e88d}.tok-num{color:#f78c6c}.tok-cm{color:#5d6b8a;font-style:italic}.tok-bi{color:#ffcb6b}
+
+.console{border-radius:14px;border:1px solid var(--border);overflow:hidden;margin-bottom:14px;background:var(--code-bg)}
+.console .ch{display:flex;align-items:center;gap:8px;padding:8px 13px;background:rgba(255,255,255,.03);border-bottom:1px solid rgba(255,255,255,.07);
+  font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#7e879c}
+.console .ch svg{width:13px;height:13px;color:var(--teal-2)}
+.console pre{color:#b9c2d6;font-size:12.5px}
+.console .out-ok{color:#86efac}
+
+.verify-tag{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 14px;border-radius:11px;
+  font-size:13px;font-weight:600;border:1px solid transparent;cursor:pointer;user-select:none}
+.verify-tag svg{width:16px;height:16px}
+.verify-tag.ok{color:var(--green);background:rgba(16,185,129,.13);border-color:rgba(16,185,129,.32);box-shadow:0 0 22px -8px rgba(16,185,129,.7)}
+.verify-tag.partial{color:var(--amber);background:rgba(245,158,11,.13);border-color:rgba(245,158,11,.32);box-shadow:0 0 22px -8px rgba(245,158,11,.7)}
+.tag-hint{font-size:11px;color:var(--muted);margin-left:10px}
+
+/* ============================ COMPOSER ============================ */
+.composer-wrap{position:absolute;left:0;right:0;bottom:0;padding:0 26px 22px;
+  background:linear-gradient(to top,var(--canvas) 18%,transparent);pointer-events:none}
+.composer{max-width:820px;margin:0 auto;pointer-events:auto}
+.pill{border-radius:var(--radius-xl);padding:10px 10px 10px 18px;display:flex;align-items:flex-end;gap:10px}
+.pill:focus-within{border-color:var(--border-strong);box-shadow:var(--shadow),0 0 0 3px var(--ring)}
+.pill textarea{flex:1;border:none;outline:none;resize:none;background:none;color:var(--text);font:inherit;
+  font-size:15px;line-height:1.5;max-height:160px;padding:10px 0;min-height:24px}
+.pill textarea::placeholder{color:var(--muted)}
+.seg{display:flex;background:var(--glass-2);border:1px solid var(--border);border-radius:12px;padding:3px;height:40px;flex:none}
+.seg button{border:none;background:transparent;color:var(--text-soft);font-size:12.5px;font-weight:600;padding:0 13px;border-radius:9px;display:flex;align-items:center;gap:6px}
+.seg button svg{width:14px;height:14px}
+.seg button.on{background:var(--grad);color:#fff;box-shadow:0 4px 12px rgba(124,58,237,.4)}
+.send{width:44px;height:44px;border-radius:13px;border:none;background:var(--grad);color:#fff;flex:none;
+  display:grid;place-items:center;box-shadow:0 8px 22px rgba(124,58,237,.42),inset 0 1px 0 rgba(255,255,255,.3)}
+.send:hover{transform:translateY(-2px) scale(1.03);filter:brightness(1.06)}
+.send svg{width:20px;height:20px}
+.hint{text-align:center;font-size:11.5px;color:var(--muted);margin-top:9px}
+.hint kbd{font-family:var(--mono);font-size:10.5px;background:var(--glass-2);border:1px solid var(--border);border-radius:5px;padding:1px 6px}
+
+/* ============================ SOURCE DRAWER ============================ */
+.drawer{position:fixed;top:0;right:0;height:100vh;width:380px;max-width:90vw;z-index:30;
+  margin:12px 12px 12px 0;height:calc(100vh - 24px);border-radius:var(--radius-lg);
+  transform:translateX(calc(100% + 24px));transition:transform .34s cubic-bezier(.4,0,.2,1);
+  display:flex;flex-direction:column;overflow:hidden}
+.drawer.open{transform:none}
+.drawer-head{display:flex;align-items:center;gap:10px;padding:17px 18px;border-bottom:1px solid var(--border)}
+.drawer-head .dh-ic{width:32px;height:32px;border-radius:10px;background:var(--grad-soft);border:1px solid var(--border);display:grid;place-items:center;color:var(--violet-2)}
+.drawer-head .dh-ic svg{width:17px;height:17px}
+.drawer-head h3{margin:0;font-size:15px;font-weight:700}
+.drawer-head p{margin:1px 0 0;font-size:11.5px;color:var(--muted)}
+.drawer-head .x{margin-left:auto;width:32px;height:32px;border-radius:9px;border:1px solid var(--border);background:var(--glass-2);color:var(--text-soft);display:grid;place-items:center}
+.drawer-head .x:hover{color:var(--text);background:var(--glass-3)}
+.drawer-body{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:11px}
+.src{border-radius:14px;padding:13px 14px;background:var(--glass-2);border:1px solid var(--border);
+  border-left:3px solid var(--blue);transition:transform .14s ease,border-color .14s ease,box-shadow .14s ease;cursor:pointer}
+.src.pdf{border-left-color:var(--green)}
+.src:hover{transform:translateY(-2px);box-shadow:var(--shadow-sm)}
+.src.flash{animation:flash 1.1s ease}
+@keyframes flash{0%,100%{box-shadow:none}30%{box-shadow:0 0 0 2px var(--violet),0 0 26px -4px var(--violet)}}
+.src .sh{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.src .sn{width:21px;height:21px;border-radius:6px;font-size:11.5px;font-weight:700;display:grid;place-items:center;flex:none}
+.src.pdf .sn{color:var(--green);background:rgba(16,185,129,.15)}
+.src.web .sn{color:var(--blue);background:rgba(59,130,246,.15)}
+.src .stype{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.src.pdf .stype{color:var(--green)}.src.web .stype{color:var(--blue)}
+.src .pg{margin-left:auto;font-size:11px;color:var(--muted)}
+.src .stt{font-size:13.5px;font-weight:600;line-height:1.4;margin-bottom:4px}
+.src .sx{font-size:12px;color:var(--text-soft);line-height:1.5}
+.src .sl{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--teal-2);margin-top:8px;text-decoration:none}
+.src .sl svg{width:12px;height:12px}
+
+/* ============================ UPLOAD MODAL ============================ */
+.backdrop{position:fixed;inset:0;z-index:40;background:rgba(5,6,12,.5);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  display:grid;place-items:center;opacity:0;pointer-events:none;transition:opacity .25s ease}
+.backdrop.open{opacity:1;pointer-events:auto}
+.modal{width:560px;max-width:92vw;border-radius:var(--radius-xl);padding:24px;transform:scale(.96) translateY(10px);
+  transition:transform .28s cubic-bezier(.2,.8,.2,1)}
+.backdrop.open .modal{transform:none}
+.modal h2{margin:0 0 4px;font-size:19px;font-weight:700;display:flex;align-items:center;gap:10px}
+.modal h2 .hi{width:34px;height:34px;border-radius:11px;background:var(--grad);display:grid;place-items:center;box-shadow:0 0 22px rgba(13,148,136,.5)}
+.modal h2 .hi svg{width:18px;height:18px;color:#fff}
+.modal .msub{margin:0 0 18px;font-size:13px;color:var(--muted)}
+.dropzone{border:1.5px dashed var(--border-strong);border-radius:16px;padding:26px;text-align:center;background:var(--glass-2);margin-bottom:16px;transition:border-color .2s,background .2s}
+.dropzone:hover{border-color:var(--violet);background:var(--grad-soft)}
+.dropzone svg{width:34px;height:34px;color:var(--violet-2);margin-bottom:9px}
+.dropzone .dz1{font-size:14px;font-weight:600}
+.dropzone .dz2{font-size:12px;color:var(--muted);margin-top:3px}
+.file{display:flex;align-items:center;gap:12px;padding:12px 13px;border-radius:13px;background:var(--glass-2);border:1px solid var(--border);margin-bottom:10px}
+.file .fi{width:36px;height:36px;border-radius:10px;background:rgba(124,58,237,.14);display:grid;place-items:center;color:var(--violet-2);flex:none}
+.file .fi svg{width:18px;height:18px}
+.file .fm{flex:1;min-width:0}
+.file .fn{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file .fstat{font-size:11.5px;color:var(--text-soft);margin-top:5px;display:flex;align-items:center;gap:6px}
+.file .fstat .ok{color:var(--green);font-weight:600}
+.bar{height:6px;border-radius:4px;background:var(--glass-3);overflow:hidden;margin-top:7px;border:1px solid var(--border)}
+.bar i{display:block;height:100%;width:0;border-radius:4px;background:var(--grad);box-shadow:0 0 12px rgba(124,58,237,.7);transition:width .3s ease}
+.file .fpct{font-size:12px;font-weight:600;color:var(--text-soft);font-variant-numeric:tabular-nums;flex:none;width:38px;text-align:right}
+.file.done .fpct{color:var(--green)}
+.modal-foot{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+
+/* toast */
+.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);z-index:60;
+  padding:11px 18px;border-radius:12px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:9px;
+  opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease}
+.toast.show{opacity:1;transform:translateX(-50%)}
+.toast svg{width:16px;height:16px;color:var(--green)}
+
+/* design-preview helper banner */
+.demo-tag{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:50;font-size:11px;font-weight:600;
+  color:var(--text-soft);background:var(--glass);border:1px solid var(--border);border-radius:20px;padding:6px 14px;
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)}
+.demo-tag b{color:var(--teal-2)}
+
+@media (max-width:1024px){.app{grid-template-columns:74px 1fr}.app .brand .bt,.app .brand .bs,.app .lbl,.app .convs,.app .side-foot .grow,.app .pill-row{display:none}.app .sidebar{align-items:center;padding:14px 8px}.app .btn-grad,.app .btn-glass{padding:0;width:46px}}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;transition-duration:.05ms!important}}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<div id="veil"></div>
+<div class="demo-tag">Design preview · all 4 screens — toggle <b>☀/☾</b>, click a <b>[1]</b> chip, open <b>+ Add papers</b></div>
+
+<div class="app" id="app">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar glass">
+    <div class="brand">
+      <span class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.142 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588 4 4 0 0 0 7.967.273V5z"/><path d="M12 5a3 3 0 1 1 5.997.142 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588 4 4 0 0 1-7.967.273V5z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg></span>
+      <div><div class="bt">Research Assistant</div><div class="bs">Cited answers · code that runs</div></div>
+      <button class="collapse-btn" id="collapseBtn" title="Collapse"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+    </div>
+
+    <button class="btn-grad new-chat"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">New chat</span></button>
+    <button class="btn-glass add-papers" id="openUpload"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M12 18v-6M9 15l3-3 3 3"/></svg><span class="lbl">Add papers</span></button>
+
+    <div class="convs">
+      <div class="date-h lbl">Today</div>
+      <div class="conv active"><svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="ct">MVDR beamformer noise reduction</span><span class="acts"><button title="Rename"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button><button title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></span></div>
+      <div class="conv"><svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="ct">Simulate a 2-D N-body system</span><span class="acts"><button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button><button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></span></div>
+      <div class="conv"><svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="ct">Best DevOps resources 2026</span><span class="acts"></span></div>
+      <div class="date-h lbl">Yesterday</div>
+      <div class="conv"><svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="ct">Explain Huffman coding</span><span class="acts"></span></div>
+      <div class="conv"><svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="ct">Black-Scholes put-call parity</span><span class="acts"></span></div>
+      <div class="date-h lbl">Previous 7 days</div>
+      <div class="conv"><svg class="ci" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="ct">FFT &amp; Parseval energy check</span><span class="acts"></span></div>
+    </div>
+
+    <div class="side-foot">
+      <div class="pill-row">
+        <div class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/></svg><span><b>23</b> papers · <b>661</b> chunks</span></div>
+      </div>
+      <div class="dropdown" id="modelDD">
+        <button class="dd-btn" id="modelBtn"><span class="dot"></span><span class="nm" id="modelName">Gemini 2.5 Flash</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div class="dd-menu glass">
+          <button class="dd-opt sel" data-m="Gemini 2.5 Flash">Gemini 2.5 Flash <span class="pv">fast · default</span></button>
+          <button class="dd-opt" data-m="GPT-5.5">GPT-5.5 <span class="pv">reasoning</span></button>
+          <button class="dd-opt" data-m="Mistral Large">Mistral Large <span class="pv">balanced</span></button>
+          <button class="dd-opt" data-m="Codestral">Codestral <span class="pv">code</span></button>
+        </div>
+      </div>
+      <div class="foot-row">
+        <button class="theme-toggle" id="themeToggle" title="Toggle theme" aria-label="Toggle theme">
+          <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        </button>
+        <div class="user-chip grow">
+          <span class="av">A<span class="on"></span></span>
+          <div><div class="un">Aniston</div><div class="ue">ai@anistonav.com</div></div>
+          <button class="lo" title="Log out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <section class="main">
+    <div class="topbar">
+      <div class="tt">MVDR beamformer noise reduction <span class="sub">· 3 messages</span></div>
+      <div class="sp"></div>
+      <button class="tb-btn" id="openDrawerTop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>Sources · 3</button>
+    </div>
+
+    <div class="thread" id="thread">
+      <div class="thread-in">
+
+        <!-- user message -->
+        <div class="msg user">
+          <div class="bubble-user">How does MVDR beamforming reduce noise, and is the distortionless constraint actually preserved in practice?</div>
+        </div>
+
+        <!-- AI cited answer (SCREEN 1 / 2) -->
+        <div class="msg ai">
+          <div class="ai-card glass" id="answer1">
+            <span class="badge lib"><span class="bd"></span> From your library</span>
+            <div class="ai-body" id="ans1body">
+              <p>MVDR (Minimum Variance Distortionless Response) beamforming minimizes the output power while holding the array's response toward the look direction fixed at unity. By steering deep nulls toward interference and diffuse noise, it suppresses everything <em>except</em> the target, which is what reduces noise <span class="cite pdf" data-src="1">1</span>.</p>
+              <p>The key is the <strong>distortionless constraint</strong> <code>wᴴd = 1</code>: the optimal weights <code>w = (R⁻¹d)/(dᴴR⁻¹d)</code> are derived precisely so the desired signal passes undistorted while the noise covariance <code>R</code> is whitened <span class="cite pdf" data-src="2">2</span>.</p>
+              <p>In practice the constraint holds to numerical tolerance, but <strong>finite snapshots</strong> make the sample covariance ill-conditioned, so diagonal loading is added to keep <code>R⁻¹</code> stable — at the cost of slightly shallower nulls <span class="cite web" data-src="3">3</span>.</p>
+            </div>
+            <div class="ai-actions">
+              <button class="act" data-copy="#ans1body" title="Copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              <button class="act" title="Regenerate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg></button>
+              <button class="act" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+              <div class="versions">
+                <button id="vPrev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+                <span id="vLabel">2 / 3</span>
+                <button id="vNext"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- user message -> coding task -->
+        <div class="msg user">
+          <div class="bubble-user">Simulate a damped 2-D N-body system with RK4 and verify energy + momentum are conserved.</div>
+        </div>
+
+        <!-- AI coding-task card (SCREEN 3) -->
+        <div class="msg ai">
+          <div class="ai-card glass">
+            <div class="agent-lead"><span class="dot"></span> Coding task — wrote code, ran it in a sandbox, and verified it
+              <span class="attempt">Attempt 2 of 4</span></div>
+
+            <div class="timeline">
+              <div class="step done"><span class="si"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg></span><div><div class="st">Wrote a program</div><div class="ss">3 functions · rk4_step, total_energy, total_momentum</div></div></div>
+              <div class="step done"><span class="si"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg></span><div><div class="st">Ran in the Docker sandbox</div><div class="ss">No errors · exit 0</div></div><span class="sb ok">OK · 0.3s</span></div>
+              <div class="step done"><span class="si"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg></span><div><div class="st">Reviewed against held-out checks</div><div class="ss">9 / 9 invariants on 3 random seeds</div></div><span class="sb score">score 9.4</span></div>
+              <div class="step done"><span class="si"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg></span><div><div class="st">Verified</div><div class="ss">Energy &amp; momentum conserved within tolerance</div></div></div>
+            </div>
+
+            <div class="code-wrap">
+              <div class="code-head"><div class="dots"><i></i><i></i><i></i></div><span class="fn">nbody.py</span>
+                <button class="copy" data-copy="#pycode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button></div>
+<pre id="pycode"><span class="tok-kw">def</span> <span class="tok-fn">rk4_step</span>(bodies, G, dt):
+    <span class="tok-cm"># classic 4th-order Runge-Kutta for the gravitational ODE</span>
+    k1 = <span class="tok-fn">accel</span>(bodies, G)
+    k2 = <span class="tok-fn">accel</span>(<span class="tok-fn">advance</span>(bodies, k1, dt / <span class="tok-num">2</span>), G)
+    k3 = <span class="tok-fn">accel</span>(<span class="tok-fn">advance</span>(bodies, k2, dt / <span class="tok-num">2</span>), G)
+    k4 = <span class="tok-fn">accel</span>(<span class="tok-fn">advance</span>(bodies, k3, dt), G)
+    <span class="tok-kw">return</span> <span class="tok-fn">advance</span>(bodies, (k1 + <span class="tok-num">2</span>*k2 + <span class="tok-num">2</span>*k3 + k4) / <span class="tok-num">6</span>, dt)
+
+<span class="tok-kw">def</span> <span class="tok-fn">total_energy</span>(bodies, G):
+    ke = <span class="tok-num">0.5</span> * <span class="tok-bi">sum</span>(b.m * b.v @ b.v <span class="tok-kw">for</span> b <span class="tok-kw">in</span> bodies)
+    pe = -G * <span class="tok-fn">pair_potential</span>(bodies)
+    <span class="tok-kw">return</span> ke + pe   <span class="tok-cm"># conserved => dE/E ~ 1e-13</span></pre>
+            </div>
+
+            <div class="console">
+              <div class="ch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg> Output</div>
+<pre>Total energy at start: -9.061666666666667
+Total energy at end  : -9.061666666666731
+Max distance (Body 2): 99.83
+Energy conserved : <span class="out-ok">True</span>
+Momentum conserved: <span class="out-ok">True</span>
+Bodies bound     : <span class="out-ok">True</span></pre>
+            </div>
+
+            <span class="verify-tag ok" id="verifyTag" title="Click to preview the partial-verified variant">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+              <span id="verifyTxt">Verified · 9/9 checks on 3 seeds</span>
+            </span>
+            <span class="tag-hint">(click the tag to preview the amber partial state)</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- composer -->
+    <div class="composer-wrap">
+      <div class="composer">
+        <div class="pill glass">
+          <textarea id="input" rows="1" placeholder="Ask anything — or give it a coding task…"></textarea>
+          <div class="seg">
+            <button class="on" data-mode="fast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg>Fast</button>
+            <button data-mode="deep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Deep</button>
+          </div>
+          <button class="send" id="sendBtn" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+        </div>
+        <div class="hint">Press <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ============ SOURCE DRAWER (SCREEN 1 right) ============ -->
+<aside class="drawer glass" id="drawer">
+  <div class="drawer-head">
+    <span class="dh-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+    <div><h3>Sources</h3><p>3 cited · 2 from your library, 1 from the web</p></div>
+    <button class="x" id="closeDrawer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="drawer-body">
+    <div class="src pdf" data-n="1">
+      <div class="sh"><span class="sn">1</span><span class="stype">PDF · library</span><span class="pg">pp. 4–6</span></div>
+      <div class="stt">Optimum Array Processing — Part IV: Optimum Beamforming</div>
+      <div class="sx">"The MVDR weight vector minimizes output variance subject to a unity-gain distortionless constraint toward the desired direction…"</div>
+      <a class="sl" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/></svg>van_trees_ch7.pdf</a>
+    </div>
+    <div class="src pdf" data-n="2">
+      <div class="sh"><span class="sn">2</span><span class="stype">PDF · library</span><span class="pg">p. 211</span></div>
+      <div class="stt">Microphone Array Signal Processing — Adaptive Beamformers</div>
+      <div class="sx">"Diagonal loading regularizes the sample covariance matrix when the number of snapshots is limited, trading null depth for robustness."</div>
+      <a class="sl" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/></svg>benesty_arrays.pdf</a>
+    </div>
+    <div class="src web" data-n="3">
+      <div class="sh"><span class="sn">3</span><span class="stype">Web</span><span class="pg">accessed 2026</span></div>
+      <div class="stt">Robust adaptive beamforming: a review — IEEE Signal Processing</div>
+      <div class="sx">"Finite-sample effects and steering-vector mismatch are the dominant causes of MVDR performance loss; loading and worst-case designs mitigate them."</div>
+      <a class="sl" href="#" target="_blank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14L21 3"/></svg>ieeexplore.ieee.org →</a>
+    </div>
+  </div>
+</aside>
+
+<!-- ============ UPLOAD MODAL (SCREEN 4) ============ -->
+<div class="backdrop" id="uploadBackdrop">
+  <div class="modal glass">
+    <h2><span class="hi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M12 18v-6M9 15l3-3 3 3"/></svg></span> Add papers</h2>
+    <p class="msub">Drop PDFs — they're parsed, chunked and embedded into your library.</p>
+    <div class="dropzone" id="dropzone">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/></svg>
+      <div class="dz1">Drop PDFs here or click to browse</div>
+      <div class="dz2">Up to 50 MB each · indexed locally</div>
+    </div>
+    <div id="fileList">
+      <div class="file" data-prog="1">
+        <span class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/></svg></span>
+        <div class="fm"><div class="fn">spectral_clustering_2025.pdf</div>
+          <div class="fstat"><span class="ph">Reading &amp; chunking…</span></div>
+          <div class="bar"><i></i></div>
+        </div>
+        <span class="fpct">0%</span>
+      </div>
+      <div class="file done">
+        <span class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/></svg></span>
+        <div class="fm"><div class="fn">graph_attention_networks.pdf</div>
+          <div class="fstat"><span class="ok">Indexed ✓</span> · 142 chunks embedded</div>
+          <div class="bar"><i style="width:100%"></i></div>
+        </div>
+        <span class="fpct">100%</span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-glass" id="closeUpload" style="height:42px;padding:0 18px">Close</button>
+      <button class="btn-grad" style="height:42px" id="restartUpload"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>Replay indexing</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg><span id="toastTxt">Copied</span></div>
+
+<script src="https://ajax.googleapis.com/ajax/libs/threejs/r125/three.min.js"></script>
+<script>
+const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ===================== CONSTELLATION (Three.js) ===================== */
+const constellation = (function(){
+  if (typeof THREE === 'undefined') return {setTheme(){}};
+  const canvas = $('#bg');
+  const renderer = new THREE.WebGLRenderer({canvas, alpha:true, antialias:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 1, 2000);
+  camera.position.z = 420;
+
+  const N = innerWidth < 720 ? 70 : 120;
+  const SPREAD = 620, DEPTH = 360, LINK = 132, LINK2 = LINK*LINK;
+  const pos = new Float32Array(N*3), vel = new Float32Array(N*3);
+  for (let i=0;i<N;i++){
+    pos[i*3]   = (Math.random()-.5)*SPREAD;
+    pos[i*3+1] = (Math.random()-.5)*SPREAD*0.62;
+    pos[i*3+2] = (Math.random()-.5)*DEPTH;
+    vel[i*3]   = (Math.random()-.5)*0.22;
+    vel[i*3+1] = (Math.random()-.5)*0.22;
+    vel[i*3+2] = (Math.random()-.5)*0.18;
+  }
+  // soft round sprite
+  const sc = document.createElement('canvas'); sc.width=sc.height=64;
+  const sx = sc.getContext('2d');
+  const g = sx.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(.3,'rgba(255,255,255,.85)'); g.addColorStop(1,'rgba(255,255,255,0)');
+  sx.fillStyle=g; sx.beginPath(); sx.arc(32,32,32,0,Math.PI*2); sx.fill();
+  const sprite = new THREE.Texture(sc); sprite.needsUpdate=true;
+
+  const pGeo = new THREE.BufferGeometry();
+  pGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const pMat = new THREE.PointsMaterial({size:7, map:sprite, color:0x0d9488, transparent:true,
+    opacity:.95, depthWrite:false, blending:THREE.AdditiveBlending, sizeAttenuation:true});
+  const points = new THREE.Points(pGeo, pMat);
+  scene.add(points);
+
+  const MAXSEG = N*7;
+  const lpos = new Float32Array(MAXSEG*6), lcol = new Float32Array(MAXSEG*6);
+  const lGeo = new THREE.BufferGeometry();
+  lGeo.setAttribute('position', new THREE.BufferAttribute(lpos,3));
+  lGeo.setAttribute('color', new THREE.BufferAttribute(lcol,3));
+  const lMat = new THREE.LineBasicMaterial({vertexColors:true, transparent:true, opacity:.8,
+    blending:THREE.AdditiveBlending, depthWrite:false});
+  const lines = new THREE.LineSegments(lGeo, lMat);
+  scene.add(lines);
+
+  const group = new THREE.Group(); group.add(points); group.add(lines); scene.add(group);
+
+  let mx=0,my=0,trx=0,try_=0;
+  window.addEventListener('mousemove',e=>{ mx=(e.clientX/innerWidth-.5); my=(e.clientY/innerHeight-.5); });
+  function resize(){ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); }
+  window.addEventListener('resize',resize); resize();
+
+  const V = new THREE.Color(0x7c3aed);
+  function rebuild(){
+    let s=0;
+    for(let i=0;i<N;i++){
+      const ix=i*3, ax=pos[ix],ay=pos[ix+1],az=pos[ix+2];
+      for(let j=i+1;j<N;j++){
+        const jx=j*3, dx=ax-pos[jx],dy=ay-pos[jx+1],dz=az-pos[jx+2];
+        const d2=dx*dx+dy*dy+dz*dz;
+        if(d2<LINK2 && s<MAXSEG){
+          const a=1-Math.sqrt(d2)/LINK, k=s*6;
+          lpos[k]=ax;lpos[k+1]=ay;lpos[k+2]=az; lpos[k+3]=pos[jx];lpos[k+4]=pos[jx+1];lpos[k+5]=pos[jx+2];
+          const r=V.r*a,gg=V.g*a,b=V.b*a;
+          lcol[k]=r;lcol[k+1]=gg;lcol[k+2]=b; lcol[k+3]=r;lcol[k+4]=gg;lcol[k+5]=b;
+          s++;
+        }
+      }
+    }
+    lGeo.setDrawRange(0,s*2);
+    lGeo.attributes.position.needsUpdate=true; lGeo.attributes.color.needsUpdate=true;
+  }
+  function step(){
+    for(let i=0;i<N;i++){
+      const ix=i*3;
+      pos[ix]+=vel[ix]; pos[ix+1]+=vel[ix+1]; pos[ix+2]+=vel[ix+2];
+      if(pos[ix]>SPREAD/2||pos[ix]<-SPREAD/2)vel[ix]*=-1;
+      if(pos[ix+1]>SPREAD*.31||pos[ix+1]<-SPREAD*.31)vel[ix+1]*=-1;
+      if(pos[ix+2]>DEPTH/2||pos[ix+2]<-DEPTH/2)vel[ix+2]*=-1;
+    }
+    pGeo.attributes.position.needsUpdate=true;
+    rebuild();
+    trx+=(my*.32-trx)*.05; try_+=(mx*.5-try_)*.05;
+    group.rotation.x=trx; group.rotation.y=try_;
+    camera.position.x+=(mx*60-camera.position.x)*.04;
+    camera.position.y+=(-my*40-camera.position.y)*.04;
+    camera.lookAt(scene.position);
+    renderer.render(scene,camera);
+  }
+  function loop(){ step(); requestAnimationFrame(loop); }
+  if(reduce){ rebuild(); renderer.render(scene,camera); } else loop();
+
+  return { setTheme(dark){
+    pMat.opacity = dark?.95:.62;
+    lMat.opacity = dark?.8:.5;
+    pMat.blending = dark?THREE.AdditiveBlending:THREE.NormalBlending;
+    lMat.blending = dark?THREE.AdditiveBlending:THREE.NormalBlending;
+    pMat.color.set(dark?0x14b8a6:0x0d9488);
+    pMat.needsUpdate=true; lMat.needsUpdate=true;
+    if(reduce) renderer.render(scene,camera);
+  }};
+})();
+
+/* ===================== THEME ===================== */
+const root=document.documentElement;
+function applyTheme(t){ root.dataset.theme=t; try{localStorage.setItem('ara-theme',t);}catch(e){} constellation.setTheme(t==='dark'); }
+applyTheme((function(){try{return localStorage.getItem('ara-theme')||'dark';}catch(e){return 'dark';}})());
+$('#themeToggle').onclick=()=>applyTheme(root.dataset.theme==='dark'?'light':'dark');
+
+/* ===================== SIDEBAR ===================== */
+$('#collapseBtn').onclick=()=>$('#app').classList.toggle('collapsed');
+$$('.conv').forEach(c=>c.addEventListener('click',e=>{ if(e.target.closest('.acts'))return;
+  $$('.conv').forEach(x=>x.classList.remove('active')); c.classList.add('active'); }));
+
+/* model picker */
+const mdd=$('#modelDD');
+$('#modelBtn').onclick=e=>{e.stopPropagation();mdd.classList.toggle('open');};
+$$('.dd-opt').forEach(o=>o.onclick=()=>{ $$('.dd-opt').forEach(x=>x.classList.remove('sel'));
+  o.classList.add('sel'); $('#modelName').textContent=o.dataset.m; mdd.classList.remove('open'); });
+document.addEventListener('click',()=>mdd.classList.remove('open'));
+
+/* ===================== SOURCE DRAWER ===================== */
+const drawer=$('#drawer');
+function openDrawer(n){ drawer.classList.add('open');
+  if(n){ const s=drawer.querySelector('.src[data-n="'+n+'"]'); if(s){ s.classList.remove('flash'); void s.offsetWidth; s.classList.add('flash'); s.scrollIntoView({block:'nearest'});} } }
+$$('.cite').forEach(c=>c.onclick=()=>openDrawer(c.dataset.src));
+$('#openDrawerTop').onclick=()=>openDrawer();
+$('#closeDrawer').onclick=()=>drawer.classList.remove('open');
+
+/* ===================== COPY + TOAST ===================== */
+let toastT;
+function toast(msg){ const t=$('#toast'); $('#toastTxt').textContent=msg; t.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),1600); }
+$$('[data-copy]').forEach(b=>b.onclick=()=>{ const el=$(b.dataset.copy);
+  navigator.clipboard?.writeText(el.innerText).catch(()=>{}); toast('Copied to clipboard'); });
+
+/* ===================== VERSION ARROWS ===================== */
+let ver=2; const verN=3;
+const variants={1:'<p>MVDR keeps the array gain toward the look direction fixed while minimizing total output power — so interference and diffuse noise are nulled and the target survives <span class="cite pdf" data-src="1">1</span>.</p>',
+  3:'<p>Think of MVDR as an adaptive spatial filter: it solves <code>min wᴴRw s.t. wᴴd = 1</code>, placing nulls exactly where the noise lives while passing the look direction undistorted <span class="cite pdf" data-src="2">2</span>. Diagonal loading keeps it stable on few snapshots <span class="cite web" data-src="3">3</span>.</p>'};
+const orig1=$('#ans1body').innerHTML;
+function rewire(){ $('#ans1body').querySelectorAll('.cite').forEach(c=>c.onclick=()=>openDrawer(c.dataset.src)); }
+function setVer(v){ ver=(v+verN-1)%verN+1; $('#vLabel').textContent=ver+' / '+verN;
+  $('#ans1body').innerHTML = ver===2?orig1:(variants[ver]); rewire();
+  $('#ans1body').animate?.([{opacity:.3,transform:'translateY(5px)'},{opacity:1,transform:'none'}],{duration:240}); }
+$('#vPrev').onclick=()=>setVer(ver-1); $('#vNext').onclick=()=>setVer(ver+1);
+
+/* ===================== VERIFY TAG TOGGLE (green <-> amber) ===================== */
+$('#verifyTag').onclick=function(){ const ok=this.classList.toggle('ok'); this.classList.toggle('partial',!ok);
+  $('#verifyTxt').textContent = ok?'Verified · 9/9 checks on 3 seeds':'Partially verified — 7/9 tests passing'; };
+
+/* ===================== COMPOSER (send + streaming shimmer) ===================== */
+const input=$('#input');
+input.addEventListener('input',()=>{ input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,160)+'px'; });
+$$('.seg button').forEach(b=>b.onclick=()=>{ $$('.seg button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); });
+function send(){ const v=input.value.trim(); if(!v)return; input.value=''; input.style.height='auto';
+  const tin=$('.thread-in');
+  const u=document.createElement('div'); u.className='msg user'; u.innerHTML='<div class="bubble-user"></div>';
+  u.querySelector('.bubble-user').textContent=v; tin.appendChild(u);
+  const a=document.createElement('div'); a.className='msg ai';
+  a.innerHTML='<div class="ai-card glass"><span class="badge web"><span class="bd"></span> From the web</span><div class="ai-body"><div class="shimmer w1"></div><div class="shimmer w2"></div><div class="shimmer w3"></div></div></div>';
+  tin.appendChild(a); const th=$('#thread'); th.scrollTop=th.scrollHeight;
+  setTimeout(()=>{ a.querySelector('.ai-body').innerHTML='<p>Here’s a concise, cited take on “'+v.replace(/</g,'&lt;').slice(0,60)+'…” — searched the web and your library, then verified the claims against the retrieved sources <span class="cite web" data-src="3">3</span>.</p>';
+    a.querySelector('.cite').onclick=()=>openDrawer('3'); th.scrollTop=th.scrollHeight; },1500);
+}
+$('#sendBtn').onclick=send;
+input.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} });
+
+/* ===================== UPLOAD MODAL + progress ===================== */
+const bd=$('#uploadBackdrop');
+function openUpload(){ bd.classList.add('open'); runIndex(); }
+$('#openUpload').onclick=openUpload;
+$('#closeUpload').onclick=()=>bd.classList.remove('open');
+$('#restartUpload').onclick=runIndex;
+bd.addEventListener('click',e=>{ if(e.target===bd)bd.classList.remove('open'); });
+let idxT;
+function runIndex(){
+  const f=$('.file[data-prog="1"]'), bar=f.querySelector('.bar i'), pct=f.querySelector('.fpct'),
+        ph=f.querySelector('.ph');
+  clearInterval(idxT); f.classList.remove('done'); let p=0;
+  const phases=[[0,'Reading & chunking…'],[34,'Embedding…'],[78,'Indexing vectors…']];
+  idxT=setInterval(()=>{ p=Math.min(100,p+Math.random()*7+2); bar.style.width=p+'%'; pct.textContent=Math.round(p)+'%';
+    let lab=phases[0][1]; for(const [t,l] of phases) if(p>=t) lab=l;
+    if(p>=100){ clearInterval(idxT); f.classList.add('done'); pct.textContent='100%';
+      f.querySelector('.fstat').innerHTML='<span class="ok">Indexed ✓</span> · 96 chunks embedded'; }
+    else ph.textContent=lab;
+  },180);
+}
+</script>
+</body>
+</html>
