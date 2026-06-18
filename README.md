@@ -10,14 +10,13 @@ A self‑hosted research companion: a **FastAPI** backend, a **no‑build** HTML
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-526%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-589%20passing-2ea44f)
 ![Corrective RAG](https://img.shields.io/badge/retrieval-Corrective%20RAG-8A2BE2)
-[![License](https://img.shields.io/badge/license-All%20Rights%20Reserved-red)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
 **[Quick start](#-quick-start) · [Share with your team](#-share-with-your-team) · [What you can ask](#-what-you-can-ask) · [How it works](#-how-it-works) · [Features](#-features) · [Models](#-models) · [Config](#-configuration) · [Code map](#-code-map) · [Troubleshooting](#-troubleshooting)**
 
-> [!IMPORTANT]
-> **Portfolio showcase — © Aniston Developer Team, All Rights Reserved.** This repository is public so you can **read the code**. It is **not licensed for public use** (no run/copy/deploy/modify/redistribute) — see the [LICENSE](LICENSE). The steps below document how the system works and how authorized teammates run it; they are not a grant of permission. For any use, get in touch first.
+Open-source under the [MIT License](LICENSE) — use it, fork it, build on it.
 
 </div>
 
@@ -114,25 +113,31 @@ The accuracy bar is **identical** in both — Fast skips the *expensive* work, n
 ## ✅ How it works
 
 ```mermaid
-flowchart LR
-    Q([Your question]) --> M{Seen it<br/>before?}
-    M -- yes --> C[Answer from cache]
-    M -- no --> L[Search your PDFs first]
-    L --> G{Grade the<br/>evidence}
+flowchart TD
+    Q([Your question]) --> R{Route}
+    R -- coding task --> AGT["🤖 Code agent<br/>write → run in Docker → verify"]
+    R -- follow-up --> FUP["💬 Answer from the conversation<br/>or re-run the previous code"]
+    R -- new question --> CA{Seen it<br/>before?}
+    CA -- yes --> A
+    CA -- no --> FR{Time-sensitive?<br/>'latest / this year'}
+    FR -- yes --> WEB["🌐 Web-only, anchored<br/>to the current year"]
+    FR -- no --> L[Search your PDFs first]
+    L --> G{Grade the evidence<br/>Corrective RAG}
     G -- STRONG --> W[Write a cited answer]
-    G -- PARTIAL --> S[Also search the web<br/>papers · patents · GitHub]
-    G -- NONE --> S
+    G -- PARTIAL / NONE --> S["Also search web ·<br/>papers · patents · GitHub"]
+    WEB --> S
     S --> W
-    W -- code task? --> D[Run in Docker sandbox]
-    D --> V
     W --> V{Verify vs. evidence}
-    V -- holds up --> A([Answer])
-    V -- gaps / STRONG fell short --> S
+    V -- holds up --> A([✅ Cited, verified answer])
+    V -- gap / STRONG fell short --> S
+    AGT --> A
+    FUP --> A
 ```
 
+- **It routes before it answers.** A coding task goes to the autonomous agent; a follow-up ("what's the output of that?") is answered from the conversation — or re-runs your previous code — instead of launching a fresh web search; a new question goes to retrieval. Time-sensitive questions ("latest…") skip the static library and search the web anchored to today's date.
 - **It grades its own evidence before answering** (Corrective RAG). Strong match in your library → answer from it; thin/missing → it searches the web to fill the gap.
-- **Citations always point to real sources.** Every claim is tagged `[n]`; a citation to a non‑existent source number is **automatically removed**.
-- **It checks its own work.** A *draft → verify → refine* loop compares the answer to the retrieved evidence and rewrites until it holds — and a failed library‑only answer **escalates to the web** and retries (Self‑RAG).
+- **Citations always point to real sources.** Every claim is tagged `[n]`, only the sources the answer actually cited are shown, and a citation to a non‑existent source number is **automatically removed**.
+- **It checks its own work.** A *draft → verify → refine* loop compares the answer to the retrieved evidence and rewrites only where there's a concrete gap — and a failed library‑only answer **escalates to the web** and retries (Self‑RAG).
 - **It admits gaps** instead of guessing when the sources don't cover something.
 
 ### 🧠 Corrective RAG (grade‑then‑act)
@@ -162,7 +167,7 @@ When `ENABLE_AUTH=false` (default for solo local use), the app is open and owned
 <details>
 <summary><b>💻 The coding agent</b> — code that actually runs</summary>
 
-When a question needs a program, it doesn't just print code — it **runs** it. It writes Python, executes it in a throwaway Docker container, reads the output, and refines until it works. You watch each step inline (write → run → verify → review), and it's saved with the chat. The container is **network‑off, CPU/memory‑capped, hard‑timeout, non‑root, auto‑removed** — nothing it generates touches your machine. The scientific stack (numpy, scipy, pandas, scikit‑learn, …) is baked in.
+When a question needs a program, it doesn't just print code — it **runs** it. It writes Python, executes it in a throwaway Docker container, reads the output, and **refines autonomously until it's genuinely correct** — freezing the parts that already pass and fixing only what fails. Correctness is **machine-verified**, not assumed: it generates its own visible tests, held-out checks on unseen inputs, and an independent reference oracle, with an anti-reward-hacking scan so it can't "game" the tests. If it can't fully verify, it stops with an honest *"partially verified — N/M checks"* label instead of faking a pass. You watch each step inline (write → run → verify → refine), and it's saved with the chat. The container is **network‑off, CPU/memory‑capped, hard‑timeout, non‑root, auto‑removed** — nothing it generates touches your machine. The scientific stack (numpy, scipy, pandas, scikit‑learn, …) is baked in.
 </details>
 
 <details>
@@ -275,7 +280,7 @@ flowchart TD
 | **`backend/memory/`** | Conversations, facts, answer cache (SQLite) | `store.py` |
 | **`backend/auth/`** | Accounts, Google OAuth, password‑reset email | `users.py` |
 | **`backend/maintenance/`** | One‑shot factory reset (wipe all local data) | `factory_reset.py` |
-| **`tests/`** | 526 offline tests — Docker / LLM / network mocked | `test_*.py` |
+| **`tests/`** | 589 offline tests — Docker / LLM / network mocked | `test_*.py` |
 
 > 🧭 Deeper dives: **[docs/DEEP_DIVE.md](docs/DEEP_DIVE.md)** (one‑page system deep dive — diagrams · tools · measured accuracy/latency · how to improve) · [docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md) · [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PIPELINE.md](docs/PIPELINE.md) · [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md).
 
@@ -284,7 +289,7 @@ flowchart TD
 ## 🛠️ Development
 
 ```bash
-.venv\Scripts\python.exe -m pytest -q          # 526 passing (3 skipped), fully offline/mocked
+.venv\Scripts\python.exe -m pytest -q          # 589 passing (3 skipped), fully offline/mocked
 .venv\Scripts\pyflakes backend webapp           # lint
 python pipeline.py --status                     # what's indexed + device (GPU/CPU)
 python pipeline.py --corpus-report              # coverage + gaps report
@@ -308,5 +313,5 @@ Every change should run cleanly through `pytest` + `pyflakes` before it's done. 
 
 <div align="center">
 <sub>Python · FastAPI · vanilla JS · Docker · SQLite · CUDA — self‑hosted, no telemetry.</sub>
-<br><sub>© 2026 Aniston Developer Team — <b>All Rights Reserved</b>. Public for portfolio/showcase only; see the <a href="LICENSE">LICENSE</a>. Not licensed for public use.</sub>
+<br><sub>Released under the <a href="LICENSE">MIT License</a>. Contributions welcome.</sub>
 </div>

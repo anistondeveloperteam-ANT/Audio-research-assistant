@@ -470,5 +470,5 @@ python pipeline.py --corpus-report                    # coverage + gaps
 
 <div align="center">
 <sub>Python · FastAPI · Oracle 23ai · vanilla JS · Docker · SQLite · CUDA — self-hosted, no telemetry.</sub>
-<br><sub>© 2026 Aniston Developer Team — All Rights Reserved. Public for portfolio/showcase only; not licensed for use.</sub>
+<br><sub>Released under the <a href="../LICENSE">MIT License</a>.</sub>
 </div>
