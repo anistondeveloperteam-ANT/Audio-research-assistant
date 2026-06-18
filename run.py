@@ -34,12 +34,15 @@ ROOT = Path(__file__).resolve().parent
 
 # Print UTF-8 regardless of the Windows console code page, so the startup banner's
 # arrows/symbols (→, ✓, …) never crash with UnicodeEncodeError when stdout is a
-# redirected pipe/log (cp1252). Safe no-op where reconfigure isn't available.
+# redirected pipe/log (cp1252). `reconfigure` lives on TextIOWrapper at runtime; it's
+# fetched via getattr so this stays a safe no-op (and type-clean) when it's absent.
 for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if callable(_reconfigure):
+        try:
+            _reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 # Load .env so --share can read CLOUDFLARE_TUNNEL_TOKEN / ENABLE_AUTH for warnings.
 try:
