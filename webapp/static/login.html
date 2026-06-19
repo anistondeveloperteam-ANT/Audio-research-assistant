@@ -38,8 +38,9 @@
   .sr-only{position:absolute;width:1px;height:1px;clip:rect(0 0 0 0);overflow:hidden}
   .hidden{display:none !important}
 
-  /* ---------- animated Waves background ---------- */
-  #bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0}
+  /* ---------- sober static background ---------- */
+  #bg{position:fixed;inset:0;z-index:0;
+    background:radial-gradient(130% 130% at 25% 12%,var(--bg1),var(--bg0) 58%)}
   .vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
     background:radial-gradient(120% 120% at 50% 38%,transparent 46%,rgba(0,0,0,.34) 100%)}
   html.light .vignette{background:radial-gradient(120% 120% at 50% 38%,transparent 52%,rgba(20,30,45,.10) 100%)}
@@ -103,6 +104,49 @@
   .link{background:none;border:0;padding:0;color:var(--muted);font-size:12.5px;cursor:pointer;text-decoration:none}
   .link:hover{color:var(--text)}
 
+  /* ---------- date-of-birth calendar (premium, theme-aware) ---------- */
+  .dob-field input{cursor:pointer;padding-right:42px}
+  .dob-ic{position:absolute;right:13px;top:17px;width:18px;height:18px;color:var(--muted);pointer-events:none}
+  .cal{
+    position:absolute;left:0;right:0;top:calc(100% + 8px);z-index:50;padding:12px;border-radius:16px;
+    background:color-mix(in srgb,var(--bg1) 93%,transparent);border:1px solid var(--card-brd);
+    backdrop-filter:blur(26px) saturate(1.4);-webkit-backdrop-filter:blur(26px) saturate(1.4);
+    box-shadow:0 26px 64px -22px rgba(0,0,0,.62),inset 0 1px 0 rgba(255,255,255,.08);
+    opacity:0;transform:translateY(-6px) scale(.985);transform-origin:top center;pointer-events:none;
+    transition:opacity .16s ease,transform .16s ease;
+  }
+  .cal.show{opacity:1;transform:none;pointer-events:auto}
+  .cal-head{display:flex;align-items:center;gap:4px;margin-bottom:8px}
+  .cal-title{flex:1;text-align:left;background:none;border:0;cursor:pointer;color:#fff;
+    font-size:14px;font-weight:600;letter-spacing:-.01em;padding:6px 8px;border-radius:9px;transition:background .15s}
+  .cal-title:not(:disabled):hover{background:var(--input-bg)}
+  .cal-title:disabled{cursor:default}
+  html.light .cal-title{color:var(--text)}
+  .cal-nav{width:32px;height:32px;flex:none;display:grid;place-items:center;border:0;border-radius:9px;cursor:pointer;
+    background:transparent;color:var(--muted);transition:background .15s,color .15s}
+  .cal-nav:hover:not(:disabled){background:var(--input-bg);color:var(--text)}
+  .cal-nav:disabled{opacity:.3;cursor:default}
+  .cal-nav svg{width:17px;height:17px}
+  .cal-wd{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px}
+  .cal-wd span{text-align:center;font-size:10.5px;color:var(--muted);padding:4px 0;font-weight:500;letter-spacing:.02em}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+  .cal-grid.years,.cal-grid.months{grid-template-columns:repeat(3,1fr);gap:6px}
+  .cal-cell{height:38px;border:0;background:transparent;color:#fff;cursor:pointer;border-radius:10px;
+    font-size:13px;font-variant-numeric:tabular-nums;display:grid;place-items:center;transition:background .12s,color .12s}
+  .cal-grid.years .cal-cell,.cal-grid.months .cal-cell{height:46px;font-size:14px}
+  .cal-cell:hover:not(:disabled):not(.sel){background:var(--input-bg)}
+  .cal-cell.out{color:rgba(255,255,255,.42)}
+  .cal-cell.today:not(.sel){box-shadow:inset 0 0 0 1px var(--ring)}
+  .cal-cell.sel{background:#fff;color:#0a0a0b;font-weight:600}
+  .cal-cell:disabled{opacity:.25;cursor:default}
+  html.light .cal-cell{color:var(--text)}
+  html.light .cal-cell.out{color:var(--muted)}
+  html.light .cal-cell.sel{background:#0a0a0b;color:#fff}
+  .cal-foot{display:flex;justify-content:space-between;margin-top:8px;padding-top:9px;border-top:1px solid var(--card-brd)}
+  .cal-foot button{background:none;border:0;cursor:pointer;color:var(--muted);font-size:12.5px;font-weight:500;
+    padding:4px 8px;border-radius:8px;transition:color .15s,background .15s}
+  .cal-foot button:hover{color:var(--text);background:var(--input-bg)}
+
   /* ---------- message box ---------- */
   .msg{display:none;margin-top:14px;padding:10px 12px;border-radius:11px;font-size:13px;line-height:1.45;
     border:1px solid transparent}
@@ -142,7 +186,7 @@
 <body>
   <h2 class="sr-only">Sign in to Research Assistant. Switch between sign in, sign up, and password reset within one card.</h2>
 
-  <canvas id="bg"></canvas>
+  <div id="bg"></div>
   <div class="vignette"></div>
 
   <button class="theme" id="themeBtn" aria-label="Switch theme">
@@ -175,10 +219,11 @@
         <label for="email">Email</label>
       </div>
 
-      <!-- date of birth (signup, forgot) -->
-      <div class="field" id="dobField" data-modes="signup forgot">
-        <input id="dob" type="text" placeholder=" " autocomplete="bday" />
+      <!-- date of birth (signup, forgot) — custom calendar, see JS -->
+      <div class="field dob-field" id="dobField" data-modes="signup forgot">
+        <input id="dob" type="text" placeholder=" " autocomplete="bday" readonly aria-haspopup="dialog" />
         <label for="dob">Date of birth</label>
+        <svg class="dob-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="17" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/></svg>
       </div>
 
       <!-- password (login, signup) -->
@@ -320,10 +365,120 @@
   Object.keys(fields).forEach((k)=>{ const i = fields[k];
     if (i){ i.addEventListener('input', ()=> syncFloat(i)); i.addEventListener('change', ()=> syncFloat(i)); } });
 
-  fields.dob.setAttribute('max', new Date().toISOString().slice(0,10)); // no future dates
-  fields.dob.addEventListener('focus', ()=>{ fields.dob.type='date'; syncFloats(); });
-  fields.dob.addEventListener('blur',  ()=>{ if(!fields.dob.value) fields.dob.type='text'; syncFloats(); });
-  fields.dob.addEventListener('change', syncFloats);
+  /* ----- custom date-of-birth calendar (premium, theme-aware; value stays ISO yyyy-mm-dd) ----- */
+  (function(){
+    const input = fields.dob, field = $('dobField');
+    const MON  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const MON3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const WD   = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+    const CH_L = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+    const CH_R = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>';
+    const FOOT = '<div class="cal-foot"><button type="button" data-act="clear">Clear</button><button type="button" data-act="today">Today</button></div>';
+    const today = new Date(); today.setHours(0,0,0,0);
+    const cal = document.createElement('div');
+    cal.className = 'cal'; cal.setAttribute('role','dialog'); cal.setAttribute('aria-label','Choose date of birth');
+    field.appendChild(cal);
+
+    let selected = null;
+    let view = new Date(today.getFullYear()-20, today.getMonth(), 1); // a sensible starting point for a birthdate
+    let mode = 'years';                                               // pick order: year → month → day
+    let yearBase = view.getFullYear() - (view.getFullYear()%12);
+
+    const iso  = (d)=> d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    const same = (a,b)=> !!a && !!b && a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+
+    function head(title, up, prevAct, nextAct, nextOff){
+      return '<div class="cal-head">'
+           +   '<button type="button" class="cal-title"'+(up?' data-act="'+up+'"':' disabled')+'>'+title+'</button>'
+           +   '<button type="button" class="cal-nav" data-act="'+prevAct+'" aria-label="Previous">'+CH_L+'</button>'
+           +   '<button type="button" class="cal-nav" data-act="'+nextAct+'" aria-label="Next"'+(nextOff?' disabled':'')+'>'+CH_R+'</button>'
+           + '</div>';
+    }
+    function yearsHTML(){
+      let cells='';
+      for(let i=0;i<12;i++){
+        const y=yearBase+i, sel=selected&&selected.getFullYear()===y;
+        cells+='<button type="button" class="cal-cell'+(sel?' sel':'')+(y===today.getFullYear()?' today':'')+'" data-y="'+y+'"'+(y>today.getFullYear()?' disabled':'')+'>'+y+'</button>';
+      }
+      return head(yearBase+' – '+(yearBase+11), '', 'pdec', 'ndec', yearBase+12>today.getFullYear())
+           + '<div class="cal-grid years">'+cells+'</div>' + FOOT;
+    }
+    function monthsHTML(){
+      const y=view.getFullYear();
+      let cells='';
+      for(let m=0;m<12;m++){
+        const dis = y>today.getFullYear() || (y===today.getFullYear() && m>today.getMonth());
+        const sel = selected && selected.getFullYear()===y && selected.getMonth()===m;
+        const cur = y===today.getFullYear() && m===today.getMonth();
+        cells+='<button type="button" class="cal-cell'+(sel?' sel':'')+(cur?' today':'')+'" data-m="'+m+'"'+(dis?' disabled':'')+'>'+MON3[m]+'</button>';
+      }
+      return head(String(y), 'years', 'prevY', 'nextY', y>=today.getFullYear())
+           + '<div class="cal-grid months">'+cells+'</div>' + FOOT;
+    }
+    function daysHTML(){
+      const y=view.getFullYear(), m=view.getMonth(), first=new Date(y,m,1).getDay();
+      let cells='';
+      for(let i=0;i<42;i++){
+        const d=new Date(y,m,1-first+i); d.setHours(0,0,0,0);
+        const cls=['cal-cell'];
+        if(d.getMonth()!==m) cls.push('out');
+        if(same(d,today))    cls.push('today');
+        if(same(d,selected)) cls.push('sel');
+        cells+='<button type="button" class="'+cls.join(' ')+'" data-d="'+iso(d)+'"'+(d>today?' disabled':'')+'>'+d.getDate()+'</button>';
+      }
+      const nextOff = y>today.getFullYear() || (y===today.getFullYear() && m>=today.getMonth());
+      return head(MON[m]+' '+y, 'months', 'prev', 'next', nextOff)
+           + '<div class="cal-wd">'+WD.map(w=>'<span>'+w+'</span>').join('')+'</div>'
+           + '<div class="cal-grid">'+cells+'</div>' + FOOT;
+    }
+    function render(){ cal.innerHTML = mode==='years' ? yearsHTML() : mode==='months' ? monthsHTML() : daysHTML(); }
+
+    function open(){
+      if(cal.classList.contains('show')) return;
+      mode='years';                                                  // always start at the year picker
+      if(selected) view=new Date(selected.getFullYear(), selected.getMonth(), 1);
+      yearBase=view.getFullYear()-(view.getFullYear()%12);
+      render(); cal.classList.add('show');
+    }
+    function close(){ cal.classList.remove('show'); mode='years'; syncFloat(input); }
+    function pick(d){ selected=new Date(d.getFullYear(),d.getMonth(),d.getDate()); input.value=iso(selected); close(); }
+
+    input.addEventListener('focus', open);
+    input.addEventListener('click', open);
+    input.addEventListener('keydown', (e)=>{
+      if(e.key==='Enter'||e.key===' '){ e.preventDefault(); open(); }
+      else if(e.key==='Escape'){ close(); }
+    });
+
+    cal.addEventListener('click', (e)=>{
+      const b=e.target.closest('button'); if(!b || b.disabled) return;
+      if(b.dataset.d){ pick(new Date(b.dataset.d+'T00:00:00')); return; }
+      if(b.dataset.y!=null){ view=new Date(+b.dataset.y, view.getMonth(), 1); mode='months'; render(); return; }
+      if(b.dataset.m!=null){ view=new Date(view.getFullYear(), +b.dataset.m, 1); mode='days'; render(); return; }
+      switch(b.dataset.act){
+        case 'years':  mode='years'; yearBase=view.getFullYear()-(view.getFullYear()%12); render(); break;
+        case 'months': mode='months'; render(); break;
+        case 'prev':   view=new Date(view.getFullYear(), view.getMonth()-1, 1); render(); break;
+        case 'next':   view=new Date(view.getFullYear(), view.getMonth()+1, 1); render(); break;
+        case 'prevY':  view=new Date(view.getFullYear()-1, view.getMonth(), 1); render(); break;
+        case 'nextY':  view=new Date(view.getFullYear()+1, view.getMonth(), 1); render(); break;
+        case 'pdec':   yearBase-=12; render(); break;
+        case 'ndec':   yearBase+=12; render(); break;
+        case 'clear':  selected=null; input.value=''; close(); break;
+        case 'today':  pick(today); break;
+      }
+    });
+
+    document.addEventListener('mousedown', (e)=>{
+      if(cal.classList.contains('show') && !field.contains(e.target)) close();
+    });
+    document.addEventListener('keydown', (e)=>{
+      if(e.key==='Escape' && cal.classList.contains('show')) close();
+    });
+
+    // reflect any pre-existing value (e.g. browser back-navigation)
+    if(input.value){ const d=new Date(input.value); if(!isNaN(d)) selected=new Date(d.getFullYear(),d.getMonth(),d.getDate()); }
+  })();
 
   /* ----- password peek toggles ----- */
   document.querySelectorAll('.peek').forEach(btn=>{
@@ -448,57 +603,13 @@
     document.documentElement.classList.toggle('light', light);
     $('themeIcon').innerHTML = light ? MOON : SUN;
     try{ localStorage.setItem(THEME_KEY, light?'light':'dark'); }catch(_){}
-    palette(); rebuild();
   }
   $('themeBtn').addEventListener('click', ()=>
     applyTheme(!document.documentElement.classList.contains('light')));
 
-  /* =========================================================
-     Waves background — theme-aware, reduced-motion-aware
-     ========================================================= */
-  const canvas=$('bg'), ctx=canvas.getContext('2d');
+  /* ----- pointer state for the card tilt ----- */
   const pointer={x:0,y:0};
-  let dpr=1,W=0,H=0,pal={},wave=null,raf=0,running=true;
-  const css=(n)=> getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  function palette(){ pal={ bg0:css('--bg0'), bg1:css('--bg1'),
-                            light:document.documentElement.classList.contains('light') }; }
-  function makeWaves(){
-    const cols=['56,189,248','99,102,241','45,212,191','168,85,247']; // sky, indigo, teal, violet
-    const L=cols.map((c,i)=>({ c, base:0.30+i*0.16, amp:0.075+i*0.018,
-                               k:1.2+i*0.5, sp:0.34+i*0.13, ph:i*1.4 }));
-    return (t)=>{
-      const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,pal.bg1); g.addColorStop(1,pal.bg0);
-      ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1; ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-      ctx.globalCompositeOperation = pal.light ? 'multiply' : 'screen';
-      for(const w of L){
-        ctx.beginPath(); ctx.moveTo(0,H);
-        for(let x=0;x<=W;x+=10){
-          const y=H*( w.base
-            + w.amp*Math.sin(x/W*6.283185*w.k + t*w.sp + w.ph + pointer.x*0.15)
-            + w.amp*0.4*Math.sin(x/W*7 - t*w.sp*1.6) );
-          ctx.lineTo(x,y);
-        }
-        ctx.lineTo(W,H); ctx.closePath();
-        const lg=ctx.createLinearGradient(0,H*w.base,0,H); const a=pal.light?0.14:0.22;
-        lg.addColorStop(0,`rgba(${w.c},${a})`); lg.addColorStop(1,`rgba(${w.c},0)`);
-        ctx.fillStyle=lg; ctx.fill();
-      }
-      ctx.globalCompositeOperation='source-over';
-    };
-  }
-  function resize(){
-    dpr=Math.min(2, window.devicePixelRatio||1);
-    W=window.innerWidth; H=window.innerHeight;
-    canvas.width=W*dpr; canvas.height=H*dpr;
-    canvas.style.width=W+'px'; canvas.style.height=H+'px';
-    ctx.setTransform(dpr,0,0,dpr,0,0);
-    rebuild();
-  }
-  function rebuild(){ wave=makeWaves(); if(!running && wave) wave(performance.now()/1000); }
-  function loop(now){ if(!running) return; wave(now/1000); raf=requestAnimationFrame(loop); }
-
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  running = true;   // keep the decorative waves flowing continuously, even under OS reduce-motion
 
   /* pointer parallax + 3D card tilt (calm under reduced motion) */
   window.addEventListener('pointermove', (e)=>{
@@ -507,7 +618,6 @@
     if(!reduced) card.style.transform=`perspective(900px) rotateY(${pointer.x*4}deg) rotateX(${-pointer.y*4}deg)`;
   });
   document.body.addEventListener('pointerleave', ()=>{ pointer.x=0; pointer.y=0; card.style.transform=''; });
-  window.addEventListener('resize', resize);
 
   /* =========================================================
      Boot: theme → /api/me → mode → background
@@ -535,9 +645,6 @@
 
     const ee = new URLSearchParams(location.search).get('error');
     if (ee && ERR[ee]) showMsg(ERR[ee], 'err');
-
-    palette(); resize();
-    if (running) raf=requestAnimationFrame(loop);
   }
   boot();
 })();

@@ -130,14 +130,13 @@ def _index_html() -> str:
     so the browser always fetches the current build after a deploy — no hard-refresh needed."""
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     ver = 0
-    for name in ("app.js", "styles.css", "app-bg.js"):
+    for name in ("app.js", "styles.css"):
         try:
             ver = max(ver, int((STATIC / name).stat().st_mtime))
         except OSError:
             pass
     return (html.replace("/static/app.js", f"/static/app.js?v={ver}")
-                .replace("/static/styles.css", f"/static/styles.css?v={ver}")
-                .replace("/static/app-bg.js", f"/static/app-bg.js?v={ver}"))
+                .replace("/static/styles.css", f"/static/styles.css?v={ver}"))
 
 
 @app.get("/")

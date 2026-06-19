@@ -54,20 +54,12 @@ body {
   transition: background .6s ease, color .6s ease;
 }
 
-/* ---- Layered backgrounds ---- */
-#gradient, #network, #three { position: fixed; inset: 0; pointer-events: none; }
+/* ---- Sober static background ---- */
 #gradient {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
   background: radial-gradient(120% 120% at 30% 20%, var(--grad-a) 0%, var(--bg-0) 55%),
               radial-gradient(100% 100% at 80% 90%, var(--grad-b) 0%, transparent 60%);
-  animation: drift 26s ease-in-out infinite alternate;
-  z-index: 0;
 }
-@keyframes drift {
-  0%   { background-position: 0% 0%, 100% 100%; filter: brightness(1); }
-  100% { background-position: 18% 12%, 82% 88%; filter: brightness(1.08); }
-}
-#network { z-index: 1; }
-#three   { z-index: 2; }
 
 /* ---- Theme toggle ---- */
 .top-bar { position: fixed; top: 22px; right: 22px; z-index: 20; display: flex; gap: 10px; align-items: center; }
@@ -202,6 +194,5 @@ html.light .spinner { border-color: rgba(255,255,255,0.25); border-top-color: va
 
 @media (max-width: 440px) { .card { padding: 32px 26px 28px; } }
 @media (prefers-reduced-motion: reduce) {
-  #gradient { animation: none; }
   .btn-primary svg, .field label { transition: none; }
 }

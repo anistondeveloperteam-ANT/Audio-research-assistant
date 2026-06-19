@@ -40,15 +40,11 @@ body {
   overflow:hidden; -webkit-font-smoothing:antialiased; transition:background .6s,color .6s;
 }
 ::-webkit-scrollbar{width:8px;} ::-webkit-scrollbar-thumb{background:var(--glass-bg-3);border-radius:8px;}
-#gradient,#three{position:fixed;inset:0;pointer-events:none;}
 #gradient{
+  position:fixed;inset:0;pointer-events:none;z-index:0;
   background:radial-gradient(130% 130% at 25% 12%,var(--grad-a),var(--bg-0) 58%),
             radial-gradient(100% 100% at 85% 92%,var(--grad-b),transparent 62%);
-  animation:drift 34s ease-in-out infinite alternate;z-index:0;
 }
-@keyframes drift{0%{background-position:0 0,100% 100%;}100%{background-position:12% 8%,88% 92%;}}
-#three{z-index:1;}
-#three canvas{display:block;}
 
 .app{position:relative;z-index:10;height:100vh;display:flex;gap:18px;padding:18px;}
 
