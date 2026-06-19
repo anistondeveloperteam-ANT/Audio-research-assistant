@@ -131,6 +131,17 @@ def test_validation_enabled() -> bool:
     return os.getenv("AGENT_TEST_VALIDATION", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
+def nonunique_validation_enabled() -> bool:
+    """Live read (AGENT_NONUNIQUE_VALIDATION, default on): extend test-validation to catch tests that
+    assert EXACT equality on a NON-UNIQUE quantity — one defined only up to scaling / sign / ordering /
+    phase / basis / representation, or produced by an underdetermined procedure. The single oracle
+    trivially agrees with itself, so such a test slips past the normal quarantine yet fails a different
+    VALID solution. We detect it by EXECUTION: an independent cross-reference that returns a different
+    valid representation fails exactly those tests while still satisfying every property check, so they
+    are quarantined. Needs the reference oracle + test-validation; fail-open."""
+    return os.getenv("AGENT_NONUNIQUE_VALIDATION", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
 @dataclass
 class Attempt:
     iteration: int
@@ -457,7 +468,13 @@ _INVARIANTS_SYSTEM = (
     "general properties: the given input values and the answer they imply, stated units/conventions, "
     "named constraints, and known identities (e.g. a beamformer's distortionless constraint "
     "w^H d ~= 1; Black-Scholes put-call parity C - P ~= S - K*exp(-rT), price >= 0, monotonic in "
-    "volatility). Use RANDOM inputs where a property is general (use random / numpy.random; do NOT "
+    "volatility). For any result defined only UP TO scaling, sign, ordering, phase, basis, or "
+    "representation (an eigenvector/singular vector up to sign or scale, cluster labels up to "
+    "permutation, a factorization up to ordering, a basis up to rotation, a vector up to "
+    "normalization), do NOT assert one specific representation — assert the DEFINING PROPERTIES every "
+    "valid answer must satisfy (e.g. it solves A v = lambda v with unit norm; the clustering induces "
+    "the same partition up to relabelling; the factors multiply back to the input). "
+    "Use RANDOM inputs where a property is general (use random / numpy.random; do NOT "
     "seed — the harness seeds globally), and the request's own values where the spec pins an answer. "
     "Use tolerances DERIVED FROM THE PROBLEM (a few standard errors for a stochastic quantity, the "
     "method's error for a numerical one, tight only for an exact value — never an arbitrary fixed "
@@ -587,12 +604,27 @@ def _restate_requirements(provider, task: str, conversation: str, reference: str
     return out or f"- Implement the task: {task}"
 
 
-def _generate_reference(provider, task: str, requirements: str, task_type: str = "") -> str:
+def _generate_reference(provider, task: str, requirements: str, task_type: str = "",
+                        divergent: bool = False) -> str:
     """(oracle) A clear, correct reference implementation whose EXECUTED outputs become the expected
     values the tests assert against — so 'expected' is computed, never guessed. Returns '' on any
-    failure, and the caller falls back to property/legacy tests."""
+    failure, and the caller falls back to property/legacy tests.
+
+    `divergent=True` requests a SECOND, INDEPENDENT reference used only to DETECT non-unique results:
+    where the answer is defined merely up to scaling/sign/ordering/phase/basis/representation, it
+    deliberately returns a DIFFERENT-but-valid representation, so comparing the two references reveals
+    which exact tests are asserting one arbitrary representation of a non-unique quantity."""
     user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\n"
             "Write the reference implementation now — the SAME functions the task requires.")
+    if divergent:
+        user += (
+            "\n\nIMPORTANT — this is a SECOND, INDEPENDENT reference used to detect NON-UNIQUE results. "
+            "Use a genuinely DIFFERENT method from the most obvious one. Where the result is defined "
+            "ONLY up to scaling, sign, ordering, phase, basis, or representation (or comes from an "
+            "underdetermined / non-canonical procedure), deliberately RETURN A DIFFERENT BUT EQUALLY "
+            "VALID representation — e.g. the opposite-sign eigenvector, a different valid ordering, a "
+            "different basis, a differently-but-validly normalized vector. For results that ARE "
+            "uniquely determined, return the SAME correct value. Define ONLY the functions.")
     try:
         return _extract_code(_complete(provider, _REFERENCE_SYSTEM, user, GEN_MAX_TOKENS))
     except Exception:
@@ -949,6 +981,46 @@ def _heldout_quarantine(oracle_code: str, heldout_code: str, seeds: Optional[int
     return {x for x in invalid if not x.startswith("test_definition")}
 
 
+def _nonunique_exact_tests(provider, task: str, requirements: str, task_type: str,
+                           oracle_code: str, all_tests: str, seeds: int) -> set:
+    """Differential NON-UNIQUE detection (extends the quarantine). Many correct answers are defined
+    only up to scaling / sign / ordering / phase / basis / representation, or come from an
+    underdetermined procedure. A test asserting EXACT equality to ONE such representation passes the
+    single oracle (it agrees with itself) yet FAILS a different valid solution — so it is invalid.
+
+    We prove this by EXECUTION, not guesswork: generate an INDEPENDENT cross-reference that returns a
+    DIFFERENT valid representation for non-unique results, then — ONLY if that cross-reference satisfies
+    every PROPERTY check (`test_invariant_*` / `test_definition_*`), confirming it is a genuinely
+    CORRECT alternative — any EXACT test it FAILS that the primary oracle PASSES is quarantined. A
+    uniquely-determined quantity makes the cross-reference return the SAME value, so its exact tests are
+    never quarantined. Fail-OPEN (empty set) when disabled, no cross-reference, the cross-reference
+    can't be validated, or on any error — a hiccup must never drop a genuine exact test."""
+    if not nonunique_validation_enabled() or not (oracle_code or "").strip() or not (all_tests or "").strip():
+        return set()
+    try:
+        alt = _generate_reference(provider, task, requirements, task_type, divergent=True)
+        if not (alt or "").strip():
+            return set()
+        nonunique: set = set()
+        for s in range(max(1, seeds)):
+            footer = _seeded_footer(2000 + s)
+            oracle_fail = _invalid_tests(oracle_code, all_tests, footer)   # tests even the oracle can't satisfy
+            res, _p, _t = _run_against_tests(alt, all_tests, footer, reference_src=oracle_code)
+            results = _test_results(res.stdout or "")
+            if not results:
+                return set()                                              # cross-reference crashed -> trust nothing
+            props = {x: ok for x, ok in results.items()
+                     if x.startswith(("test_invariant", "test_definition"))}
+            if not props or not all(props.values()):
+                return set()       # cross-reference is NOT a validated correct alternative -> fail open
+            nonunique |= {x for x, ok in results.items()
+                          if not ok and x not in oracle_fail
+                          and not x.startswith(("test_invariant", "test_definition"))}
+        return nonunique
+    except Exception:              # noqa: BLE001 - best-effort; never drop a genuine test on a hiccup
+        return set()
+
+
 def _valid_counts(stdout: str, quarantine: set):
     """Recompute (passed, total) over only the NON-quarantined tests, from the per-test PASS/FAIL
     lines. Returns None when no per-test lines parse (script crashed before the runner) or every test
@@ -1265,7 +1337,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
     stall = 0                 # consecutive rounds with no reduction in remaining failures
     stop_reason = "max_attempts"
     mem = _AttemptMemory()
-    hstate: Dict[str, Any] = {"code": None, "strict": False, "quarantine": set()}   # lazy held-out
+    hstate: Dict[str, Any] = {"code": None, "strict": False, "quarantine": set(),
+                              "nonunique": set()}                                    # lazy held-out
     _heldout_lock = threading.Lock()                            # parallel candidates share it
 
     def _ensure_heldout(hp, strict: bool) -> str:
@@ -1301,9 +1374,32 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
                       "quarantined": sorted(quarantine),
                       "message": (f"Quarantined {len(quarantine)} held-out check(s) the reference "
                                   "itself fails: " + ", ".join(sorted(quarantine)))})
-            hstate["code"], hstate["strict"], hstate["quarantine"] = combined, strict, quarantine
+            # Carry the non-unique-exact quarantine across a stricter held-out rebuild too.
+            hstate["code"], hstate["strict"] = combined, strict
+            hstate["quarantine"] = quarantine | hstate.get("nonunique", set())
             emit({"type": "heldout", "count": _count_tests(combined), "strict": strict})
             return combined
+
+    # NON-UNIQUE quantity validation (extends the quarantine, before the loop). Many correct answers
+    # are defined only up to scaling/sign/ordering/phase/basis; a test asserting exact equality to one
+    # such representation passes the self-agreeing oracle but FAILS a different valid solution. Detect
+    # those by executing an INDEPENDENT cross-reference (validated against the property checks) and
+    # quarantine the exact tests it fails that the oracle passes. Gated + fail-open.
+    if (nonunique_validation_enabled() and use_reference and (oracle or "").strip()
+            and test_validation_enabled()):
+        _heldout0 = _ensure_heldout(provider, False)        # property checks live here (cached for the loop)
+        _all_tests = (tests + "\n\n" + _heldout0) if (_heldout0 or "").strip() else tests
+        _nu = _nonunique_exact_tests(provider, task, requirements, task_type, oracle,
+                                     _all_tests, verify_seeds())
+        if _nu:
+            visible_quarantine |= _nu
+            with _heldout_lock:
+                hstate["nonunique"] = set(hstate.get("nonunique") or set()) | _nu
+                hstate["quarantine"] = set(hstate.get("quarantine") or set()) | _nu
+            emit({"type": "test_validation", "scope": "nonunique", "quarantined": sorted(_nu),
+                  "message": (f"Quarantined {len(_nu)} test(s) asserting exact equality on a NON-UNIQUE "
+                              "quantity (defined up to scaling/sign/ordering/phase/basis) — a valid "
+                              "alternative solution fails them: " + ", ".join(sorted(_nu)))})
 
     attempts_taken = 0
     for i in range(1, budget + 1):

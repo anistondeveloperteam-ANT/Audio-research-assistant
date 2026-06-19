@@ -10,7 +10,7 @@ A self‑hosted research companion: a **FastAPI** backend, a **no‑build** HTML
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-589%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-598%20passing-2ea44f)
 ![Corrective RAG](https://img.shields.io/badge/retrieval-Corrective%20RAG-8A2BE2)
 [![License](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
@@ -280,7 +280,7 @@ flowchart TD
 | **`backend/memory/`** | Conversations, facts, answer cache (SQLite) | `store.py` |
 | **`backend/auth/`** | Accounts, Google OAuth, password‑reset email | `users.py` |
 | **`backend/maintenance/`** | One‑shot factory reset (wipe all local data) | `factory_reset.py` |
-| **`tests/`** | 589 offline tests — Docker / LLM / network mocked | `test_*.py` |
+| **`tests/`** | 598 offline tests — Docker / LLM / network mocked | `test_*.py` |
 
 > 🧭 Deeper dives: **[docs/DEEP_DIVE.md](docs/DEEP_DIVE.md)** (one‑page system deep dive — diagrams · tools · measured accuracy/latency · how to improve) · [docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md) · [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PIPELINE.md](docs/PIPELINE.md) · [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md).
 
@@ -289,7 +289,7 @@ flowchart TD
 ## 🛠️ Development
 
 ```bash
-.venv\Scripts\python.exe -m pytest -q          # 589 passing (3 skipped), fully offline/mocked
+.venv\Scripts\python.exe -m pytest -q          # 598 passing (3 skipped), fully offline/mocked
 .venv\Scripts\pyflakes backend webapp           # lint
 python pipeline.py --status                     # what's indexed + device (GPU/CPU)
 python pipeline.py --corpus-report              # coverage + gaps report
