@@ -500,6 +500,18 @@
     const b = u && u.querySelector(".user-bubble");
     return b ? b.textContent : "";
   }
+  // A coding-agent answer is recognisable from the markdown result_to_markdown() produces — so even a
+  // run saved BEFORE the kind column existed is re-run via the AGENT on Regenerate (not the chat path).
+  function looksLikeAgentAnswer(md) {
+    if (!md) return false;
+    return /\b(fully|partially) verified\b/i.test(md)
+        || /genuine checks pass/i.test(md)
+        || /possible test gaming/i.test(md)
+        || /the agent (could not produce|run was interrupted)/i.test(md);
+  }
+  function isAgentCard(cardEl) {
+    return cardEl && (cardEl.dataset.kind === "agent" || looksLikeAgentAnswer(cardEl._h && cardEl._h.md ? cardEl._h.md.innerText : ""));
+  }
 
   // ---- versions ----
   function updateQuestionSwitcher(row) {
@@ -553,6 +565,10 @@
     if (!a) return;
     const h = addAssistantMessage();
     staticCard(h);
+    // Mark agent runs (by the stored kind, or — for runs saved before the column existed — by content)
+    // so Regenerate re-runs the AGENT, not the chat path.
+    if (a.kind === "agent" || looksLikeAgentAnswer(a.content)) h.card.dataset.kind = "agent";
+    else if (a.kind) h.card.dataset.kind = a.kind;
     h.card._sources = a.sources || [];
     renderMarkdown(h.md, a.content || "");
     finalizeActs(h, a.sources || []);
@@ -614,6 +630,12 @@
     if (state.streaming) { toast("Please wait for the answer to finish."); return; }
     const qvId = cardEl.dataset.qversionId;
     if (!qvId) { toast("Can't regenerate this answer yet."); return; }
+    if (isAgentCard(cardEl)) {                         // re-run the coding AGENT, not the chat path
+      const task = questionForAnswer(cardEl);
+      if (!task) { toast("Can't regenerate this answer yet."); return; }
+      sendAgent(task, { regenQid: parseInt(qvId, 10) });
+      return;
+    }
     send({ regenQversionId: parseInt(qvId, 10) });
   }
   async function deleteExchange(cardEl) {
@@ -906,21 +928,27 @@
     }
   }
 
-  async function sendAgent(text) {
+  async function sendAgent(text, opts) {
+    opts = opts || {};
+    const regenQid = (opts.regenQid != null) ? opts.regenQid : null;
+    const isRegen = regenQid != null;
     const wel = thread().querySelector(".welcome"); if (wel) wel.remove();
-    $("composerInput").value = ""; autosize();
+    if (!isRegen) { $("composerInput").value = ""; autosize(); }
     const sess = state.sessions.find((s) => s.id === state.currentId);
-    const wasEmpty = isUnnamed(sess);
-    addUserMessage(text);
+    const wasEmpty = !isRegen && isUnnamed(sess);
+    if (!isRegen) addUserMessage(text);
     setStreaming(true);
     const h = addAssistantMessage();
     if (h.reason) h.reason.remove();
     revealCard(h);
+    h.card.dataset.kind = "agent";   // tag the live card so Regenerate routes back to the agent
     const genStart = performance.now();
     const handle = makeAgentUI(h.md);
     const controller = new AbortController(); state.abort = controller;
     try {
-      const resp = await fetch("/api/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: text, session_id: state.currentId }), signal: controller.signal });
+      const reqBody = { question: text, session_id: state.currentId };
+      if (isRegen) reqBody.regen_qversion_id = regenQid;
+      const resp = await fetch("/api/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(reqBody), signal: controller.signal });
       const reader = resp.body.getReader(); const decoder = new TextDecoder(); let buf = "";
       while (true) {
         const { done, value } = await reader.read(); if (done) break;

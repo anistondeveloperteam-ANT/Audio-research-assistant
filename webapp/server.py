@@ -599,14 +599,29 @@ def _recent_conversation(request: Request, session_id: str,
     return "\n".join(lines)
 
 
-def _persist_agent_run(mem, session_id: str, task: str, res) -> None:
-    """Save a coding-agent run as a normal user+assistant turn pair so it reloads like any
-    other chat. The live step cards are ephemeral; the saved turn is the final code + output,
-    rendered as markdown on reopen. Never raises — persistence must not break the response."""
+def _persist_agent_markdown(mem, session_id: str, task: str, markdown: str,
+                            regen_qversion_id=None) -> None:
+    """Persist an agent run's final markdown so it RELOADS and can be REGENERATED like any other
+    answer. Saved as an assistant turn marked kind='agent' (reopening shows it; Regenerate re-runs the
+    AGENT, not the chat path). With regen_qversion_id it adds a new answer version under that existing
+    question; otherwise it opens a fresh question node. Never raises — persistence must not break the
+    response."""
+    try:
+        if regen_qversion_id:
+            mem.add_answer_version(int(regen_qversion_id), markdown, kind="agent")
+        else:
+            info = mem.start_question(session_id, task)            # question node, version 1
+            mem.add_answer_version(info["turn_id"], markdown, kind="agent")  # answer version 1
+    except Exception:
+        pass
+
+
+def _persist_agent_run(mem, session_id: str, task: str, res, regen_qversion_id=None) -> None:
+    """Save a FINISHED agent run (its final code + output as markdown) so it survives a reopen — a thin
+    wrapper over _persist_agent_markdown. Never raises."""
     try:
         from backend.agent.loop import result_to_markdown
-        info = mem.start_question(session_id, task)            # question node, version 1
-        mem.add_answer_version(info["turn_id"], result_to_markdown(res))  # answer version 1
+        _persist_agent_markdown(mem, session_id, task, result_to_markdown(res), regen_qversion_id)
     except Exception:
         pass
 
@@ -618,10 +633,12 @@ def agent(request: Request, body: dict = Body(...)):
     if not task:
         return JSONResponse({"error": "task is required"}, status_code=400)
     session_id = (body.get("session_id") or "").strip()
+    regen_qid = body.get("regen_qversion_id")          # set when REGENERATING an agent answer
     if session_id:
         _require_owner(request, session_id)   # 403/404 before streaming if not the caller's
     conversation = _recent_conversation(request, session_id)
     mem = chat_logic.memory()
+    user_id = webauth.current_user(request)
 
     import queue
     import threading
@@ -632,11 +649,17 @@ def agent(request: Request, body: dict = Body(...)):
     def worker():
         try:
             from backend.agent.loop import run_agent
-            res = run_agent(task, use_search=use_search, conversation=conversation, on_event=q.put)
+            res = run_agent(task, use_search=use_search, conversation=conversation, on_event=q.put,
+                            result_memory=mem, user_id=user_id)
             if session_id:
-                _persist_agent_run(mem, session_id, task, res)   # survives reopen
+                _persist_agent_run(mem, session_id, task, res, regen_qid)
         except Exception as exc:
             q.put({"type": "error", "message": str(exc)})
+            if session_id:   # an interrupted run is STILL saved so it reloads and can be retried
+                _persist_agent_markdown(
+                    mem, session_id, task,
+                    f"**The agent run was interrupted.**\n\n`{exc}`\n\n"
+                    "_It did not finish — press **Regenerate** to retry._", regen_qid)
         finally:
             q.put(DONE)
 
@@ -650,6 +673,21 @@ def agent(request: Request, body: dict = Body(...)):
             yield json.dumps(event) + "\n"
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+@app.get("/api/agent/patterns")
+def agent_patterns(request: Request):
+    """Recurring code-agent failure patterns for a DEVELOPER to review (read-only — the system never
+    changes its own code or behaviour from this; it is accumulated evidence). Scoped to the caller's
+    runs. Optional `?days=N` limits the look-back window."""
+    mem = chat_logic.memory()
+    try:
+        days = float(request.query_params.get("days", "0"))
+    except (TypeError, ValueError):
+        days = 0.0
+    max_age = days * 86400 if days > 0 else None
+    report = mem.agent_failure_patterns(user_id=webauth.current_user(request), max_age_seconds=max_age)
+    return {"generated_at": _time.time(), "scope": "user", **report}
 
 
 # ----------------------------------------------------------------------
