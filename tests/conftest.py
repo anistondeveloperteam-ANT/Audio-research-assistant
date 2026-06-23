@@ -34,3 +34,13 @@ os.environ["QUERY_REFINE"] = "false"
 # question) before drafting. Disable it suite-wide so retrieval/routing tests are deterministic +
 # offline; test_source_relevance_gate opts back in and mocks the provider.
 os.environ["SOURCE_RELEVANCE_GATE"] = "false"
+
+# The conclusion-matches-work gate makes a live LLM call (confirming the stated result equals what the
+# answer's own derivation yields) during verification. Disable it suite-wide for deterministic +
+# offline chat tests; test_conclusion_matches_work opts back in and mocks the provider.
+os.environ["AGENTIC_CONSISTENCY_CHECK"] = "false"
+
+# The source router makes a live LLM call (deciding reasoning vs web vs corpus) for non-calc,
+# non-freshness questions. Disable it suite-wide so chat tests keep the deterministic retrieve-first
+# (fail-open 'corpus') behaviour; test_source_router opts back in and mocks/forces the verdict.
+os.environ["SOURCE_ROUTER"] = "false"

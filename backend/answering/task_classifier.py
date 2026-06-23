@@ -39,7 +39,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import List, Optional
 
-from backend.answering.code_intent import is_code_intent
+from backend.answering.code_intent import is_code_intent, is_reasoning_question
 
 # ----------------------------------------------------------------------
 # Types + constants
@@ -264,6 +264,12 @@ def classify(query: Optional[str]) -> TaskClass:
     falls back to the regex verdict on disabled/empty input or any LLM failure."""
     q = (query or "").strip()
     regex = _regex_verdict(q)
+    # DETERMINISTIC reasoning veto (overrides the semantic model): a clear calculation / reasoning
+    # question ("how much/many", "show your reasoning/steps", "explain", ...) with NO code-production
+    # signal is ANSWERED BY REASONING, never the code agent — even if the LLM misclassifies it as code.
+    # is_reasoning_question already excludes anything is_code_intent flags, so genuine code is untouched.
+    if q and is_reasoning_question(q):
+        return TaskClass(False, "none", 0.9, "reasoning")
     try:
         if not q or not _semantic_enabled():
             return regex

@@ -171,7 +171,10 @@ def _drive(sid, question):
     return done, last_sources, events
 
 
-_AUDIO_Q = "How much storage for 3 minutes of 44.1 kHz 16-bit stereo audio, in MB? Show your reasoning."
+# A RESEARCH question (not a self-contained calculation), so it flows through retrieval + the relevance
+# gate. (A bare calculation is answered directly by reasoning and never reaches retrieval — see
+# test_simple_reasoning.py — so it would not exercise the gate.)
+_AUDIO_Q = "What is the standard formula for uncompressed PCM audio storage size?"
 
 
 def test_irrelevant_sources_are_discarded_and_answered_from_reasoning(tmp_path, monkeypatch):

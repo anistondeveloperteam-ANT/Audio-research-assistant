@@ -113,12 +113,14 @@ def _run(monkeypatch, tmp_path, agrees, answer):
     return done, hit
 
 
-def test_self_consistent_but_wrong_answer_is_not_verified(monkeypatch, tmp_path):
-    # The DEPENDENT (self) check passes (the answer is internally consistent), but the INDEPENDENT
-    # re-derivation DISAGREES on units/magnitude (300 MB is ~10x too big). It must NOT be verified.
-    done, hit = _run(monkeypatch, tmp_path, "false", "The storage required is 300 MB. " * 6)
-    assert "independent re-derivation" in done["answer"].lower()    # flagged, not silently verified
-    assert hit is None                                             # NOT cached as verified -> not reused
+def test_simplified_reasoning_does_not_append_a_fabricated_rederivation(monkeypatch, tmp_path):
+    # The reasoning/calculation path is now SIMPLE: it computes once and ships the answer. It no longer
+    # runs an LLM 're-derivation' that could append a contradicting note (the independent layer now gates
+    # the EVIDENCE path; its logic stays covered by the is_truly_verified / independent_check unit tests
+    # above). So a reasoning answer ships directly, with no fabricated re-derivation.
+    done, _hit = _run(monkeypatch, tmp_path, "false", "Approximately 30.3 MB of storage. " * 6)
+    assert "independent re-derivation" not in done["answer"].lower()   # no fabricated re-derivation
+    assert "30.3" in done["answer"]                                    # the computed answer is shipped
 
 
 def test_independently_confirmed_answer_is_verified(monkeypatch, tmp_path):

@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS answer_cache (
     -- Origin-independent ANSWER QUALITY: 1 = judged high-quality/verified (safe to reuse),
     -- 0 = not verified / downgraded by dissatisfaction. Reuse admits ONLY verified=1.
     verified              INTEGER NOT NULL DEFAULT 0,
+    -- The ANSWERING-LOGIC version that produced this entry. Reuse requires logic_version >= the
+    -- current version, so a deploy of answering fixes invalidates older entries (they re-answer on
+    -- next access). 0 = produced before this marker existed (treated as stale).
+    logic_version         INTEGER NOT NULL DEFAULT 0,
     UNIQUE (user_id, normalized_question)
 );
 
@@ -221,6 +225,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if ac_cols and "verified" not in ac_cols:
         cur.execute("ALTER TABLE answer_cache ADD COLUMN verified INTEGER NOT NULL DEFAULT 0")
         cur.execute("UPDATE answer_cache SET verified = 1")
+    # Answering-logic version marker. Existing rows default to 0 (= produced by older logic), so they
+    # are treated as stale and re-answered on next access — that is how a deploy of answering fixes
+    # takes effect instead of replaying outdated cached answers forever.
+    if ac_cols and "logic_version" not in ac_cols:
+        cur.execute("ALTER TABLE answer_cache ADD COLUMN logic_version INTEGER NOT NULL DEFAULT 0")
     # Created AFTER the columns exist (a legacy turns table gets them via ALTER above).
     if turn_cols:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_turns_node ON turns(session_id, node_id)")
@@ -1025,11 +1034,14 @@ class MemoryStore:
         embedding: Optional[List[float]] = None,
         embedding_meta: Optional[str] = None,
         verified: bool = True,
+        logic_version: int = 0,
     ) -> Optional[int]:
         """Persist an answer for reuse, WITH its origin-independent quality status. `verified=True`
         (judged high-quality) makes it reusable; an unverified/low-quality answer is recorded but
-        NEVER reused (find_cached_answer admits only verified=1). One row per (user, normalized
-        question): a fresh verified answer UPGRADES (replaces) any prior low-quality record."""
+        NEVER reused (find_cached_answer admits only verified=1). `logic_version` stamps the
+        answering-logic version that produced it, so a later deploy can invalidate older entries.
+        One row per (user, normalized question): a fresh verified answer UPGRADES (replaces) any
+        prior low-quality record."""
         norm = normalize_question(question)
         if not norm or not (answer or "").strip():
             return None
@@ -1051,8 +1063,8 @@ class MemoryStore:
                 "INSERT INTO answer_cache (user_id, session_id, question, "
                 "normalized_question, question_tokens_json, answer, sources_json, "
                 "created_at, updated_at, last_used_at, hit_count, "
-                "question_embedding, embedding_meta, verified) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?)",
+                "question_embedding, embedding_meta, verified, logic_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?)",
                 (
                     user,
                     session_id or "",
@@ -1066,6 +1078,7 @@ class MemoryStore:
                     emb,
                     embedding_meta if emb else None,
                     1 if verified else 0,
+                    int(logic_version),
                 ),
             )
             row = conn.execute(
@@ -1085,13 +1098,16 @@ class MemoryStore:
         min_semantic: float = 0.88,
         max_age_seconds: Optional[float] = None,
         limit: int = 200,
+        min_logic_version: int = 0,
     ) -> Optional[Dict[str, Any]]:
         """Return the best safely-reusable cached answer for this user, or None.
 
         A candidate is reused only if it clears the lexical bar (`min_similarity`)
         OR the semantic bar (`min_semantic`, when an embedding is available AND was
         produced by the same provider/model as the cached vector) AND passes the
-        `unsafe_to_reuse` guard that blocks swaps/identifier changes.
+        `unsafe_to_reuse` guard that blocks swaps/identifier changes. `min_logic_version`
+        excludes entries produced by older answering logic, so a deploy of answering fixes
+        forces those questions to re-answer instead of replaying a stale cached answer.
         """
         now = time.time()
         user = user_id or "local"
@@ -1101,9 +1117,12 @@ class MemoryStore:
         # is never replayed; the caller re-answers fresh and may upgrade the record.
         sql = (
             "SELECT id, session_id, question, answer, sources_json, updated_at, "
-            "last_used_at, hit_count, question_embedding, embedding_meta "
+            "last_used_at, hit_count, question_embedding, embedding_meta, logic_version "
             "FROM answer_cache WHERE user_id = ? AND verified = 1"
         )
+        if min_logic_version > 0:
+            sql += " AND logic_version >= ?"
+            params.append(int(min_logic_version))
         if cutoff is not None:
             sql += " AND updated_at >= ?"
             params.append(cutoff)
@@ -1160,6 +1179,16 @@ class MemoryStore:
                 "UPDATE answer_cache SET verified = 0 WHERE user_id = ? AND normalized_question = ?",
                 (user_id or "local", norm),
             )
+            return cur.rowcount > 0
+
+    def mark_cache_unverified(self, cache_id: int) -> bool:
+        """Mark a specific cached row NOT reusable by id (used when a serve-time re-check finds the
+        stored answer inconsistent). By-id is required because a semantic match's stored question can
+        differ from the asked one, so a normalized-question update would miss it. Returns True if a
+        row was changed."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE answer_cache SET verified = 0 WHERE id = ?", (int(cache_id),))
             return cur.rowcount > 0
 
     # ------------------------------------------------------------------

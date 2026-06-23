@@ -1,3 +1,4 @@
+from backend.answering.agentic_answer import answer_logic_version
 from backend.memory.store import MemoryStore, question_similarity
 from webapp import chat_logic
 
@@ -82,6 +83,7 @@ def test_chat_stream_reuses_cached_answer_without_search(tmp_path, monkeypatch):
         question="How does MVDR beamforming reduce noise?",
         answer=answer,
         sources=[{"n": 1, "title": "MVDR paper", "text": "source"}],
+        logic_version=answer_logic_version(),       # a current-logic entry is eligible for reuse
     )
 
     monkeypatch.setattr(chat_logic, "_memory", mem)

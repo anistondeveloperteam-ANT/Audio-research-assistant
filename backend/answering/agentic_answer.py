@@ -64,6 +64,36 @@ def independent_verify_enabled() -> bool:
     return env_flag("AGENTIC_INDEPENDENT_VERIFY", default=True)
 
 
+def consistency_check_enabled() -> bool:
+    """Conclusion-matches-work layer (default on): before an answer is labelled 'verified', confirm its
+    final STATED result equals the value its OWN reasoning/derivation produces. An internally
+    self-contradictory answer (the summary line disagrees with the work) is a defect, not a verdict."""
+    return env_flag("AGENTIC_CONSISTENCY_CHECK", default=True)
+
+
+# Answering-logic version. BUMP THIS when answering-correctness logic changes (a new gate, a fixed
+# verifier, etc.) so cached answers produced by the OLD logic are treated as stale and re-answered on
+# next access — instead of replaying outdated answers that bypass the fix. Overridable via env.
+ANSWER_LOGIC_VERSION = 1
+
+
+def answer_logic_version() -> int:
+    """Current answering-logic version stamped onto newly cached answers and required (as a minimum)
+    for reuse. A cached entry below this is re-answered on next access (the deploy's fixes take
+    effect). Read live so it can be bumped via env without a code change."""
+    try:
+        return max(0, int(os.getenv("ANSWER_LOGIC_VERSION", str(ANSWER_LOGIC_VERSION))))
+    except (TypeError, ValueError):
+        return ANSWER_LOGIC_VERSION
+
+
+def cache_revalidate_enabled() -> bool:
+    """Re-validate a cached answer with a lightweight conclusion-matches-work check BEFORE serving it
+    (default on). The cache is a speed optimization for VERIFIED answers only — never a way to skip the
+    correctness/consistency checks a fresh answer must pass."""
+    return env_flag("ANSWER_CACHE_REVALIDATE", default=True)
+
+
 def complete_text(
     provider: Any,
     messages: List[Dict[str, str]],
@@ -216,14 +246,22 @@ _VERIFY_REASONING_SYSTEM = (
 # Draft prompt for the reasoning basis: answer a solvable question from knowledge/derivation, never
 # refuse for lack of sources, never fabricate external facts.
 REASONING_ANSWER_SYSTEM = (
-    "You are an expert research assistant. Answer the user's question DIRECTLY and CORRECTLY using your "
-    "own knowledge and step-by-step reasoning — there is no retrieved document for this question, and "
-    "that is fine: a correct answer from reasoning is exactly what is wanted. SHOW your reasoning / "
-    "derivation / calculation so the answer is checkable, then give a clear final answer. Do NOT refuse "
-    "for lack of sources, and do NOT invent specific external facts, figures, dates, or citations you "
-    "cannot verify — if part of the question truly needs current or external data you don't have, say so "
-    "plainly for that part and answer the rest. Prefer an honest 'I'm not certain' over a confident "
-    "guess on anything you cannot derive."
+    "Answer the user's question DIRECTLY, CORRECTLY, and CONCISELY from your own knowledge and "
+    "step-by-step reasoning (there is no retrieved document — a correct reasoned answer is exactly what "
+    "is wanted). For a calculation: give the parameters, the formula, the steps, and the final result — "
+    "in that order, ONCE. Keep it short.\n"
+    "COMPUTE ONCE. Do the calculation a single time, carefully. Do NOT add 'Correction', 'Revised', "
+    "'Wait', or 'on second thought' passages that change a result you already computed. If you spot a "
+    "real mistake, fix it silently and state only the final correct value — NEVER show a correct value "
+    "and then override it with a different one.\n"
+    "ARITHMETIC MUST BE LITERALLY TRUE. Before writing any equality 'A op B = C', confirm C is the "
+    "actual result of A op B; the final stated number must equal what the arithmetic yields.\n"
+    "NO PADDING. A self-contained question needs NO citations, no 'state of the art', no 'why this "
+    "matters', and no unrelated sections — do not add them unless explicitly asked. Answer the question, "
+    "show the steps, give the final result, and stop.\n"
+    "Do NOT invent external facts, figures, dates, or citations you cannot derive; if part of the "
+    "question truly needs current/external data you don't have, say so plainly for that part and answer "
+    "the rest. Prefer an honest 'I'm not certain' over a confident guess on anything you cannot derive."
 )
 
 
@@ -348,16 +386,111 @@ def independent_check(provider: Any, *, question: str, answer: str) -> Dict[str,
             "issues": [str(x) for x in issues][:6], "confidence": conf}
 
 
-def is_truly_verified(dependent_passed: bool, independent: Optional[Dict[str, Any]] = None) -> bool:
-    """SELF-CONSISTENT != VERIFIED. An answer is 'verified' ONLY when the dependent check passes AND an
+def is_truly_verified(dependent_passed: bool, independent: Optional[Dict[str, Any]] = None,
+                      *, consistent: bool = True) -> bool:
+    """SELF-CONSISTENT != VERIFIED. An answer is 'verified' ONLY when the dependent check passes, the
+    answer is INTERNALLY consistent (its stated result equals what its own work yields), AND an
     INDEPENDENT check AGREES. A dependent pass with no independent confirmation (agrees None) or a
-    refutation (agrees False) is NOT verified — show the answer with honest confidence instead. With the
-    independent layer disabled, fall back to the legacy dependent-only result."""
+    refutation (agrees False) is NOT verified — show the answer with honest confidence instead. A
+    self-contradictory answer (`consistent=False`) is NEVER verified, even with the independent layer
+    off. With the independent layer disabled, fall back to the legacy dependent-only result."""
     if not dependent_passed:
+        return False
+    if not consistent:                      # the stated result contradicts the answer's own derivation
         return False
     if not independent_verify_enabled():
         return True
     return bool(independent and independent.get("agrees") is True)
+
+
+_CONSISTENCY_SYSTEM = (
+    "You are an INTERNAL-CONSISTENCY checker. Given a QUESTION and an ANSWER, judge ONE thing: does the "
+    "answer's FINAL STATED result (its headline figure, summary line, or concluding claim) EQUAL the "
+    "value the answer's OWN reasoning / derivation / work actually produces?\n"
+    "Steps:\n"
+    "1. Read the answer's work and determine the result it ACTUALLY yields (the DERIVED result).\n"
+    "2. Find the answer's STATED result — what a reader is told as the conclusion / headline.\n"
+    "3. Compare them, allowing reasonable rounding. Also check that EVERY place the result appears "
+    "(intro, body, conclusion) agrees, and that the stated result's UNIT / CONVENTION matches how it "
+    "was computed (a converted value must name its conversion).\n"
+    "consistent = true when the stated result equals the derived result and all mentions + units agree. "
+    "consistent = false when the stated result contradicts the work, mentions disagree, or the unit is "
+    "inconsistent — report the value the WORK yields as derived_result. consistent = null only when the "
+    "answer states NO result and derives none (pure prose) — nothing to contradict.\n"
+    "This is purely INTERNAL: do NOT judge whether the work itself is correct (another layer does that) "
+    "— only whether the conclusion matches the work shown. Reply with ONLY JSON:\n"
+    '{"consistent": true|false|null, "derived_result": "what the work yields", '
+    '"stated_result": "what the answer concludes", "issues": ["stated-vs-derived / mention / unit problems"]}'
+)
+
+
+def consistency_check(provider: Any, *, question: str, answer: str) -> Dict[str, Any]:
+    """CONCLUSION-MATCHES-WORK: confirm the answer's final stated result equals the value its own
+    derivation yields (and that every mention + the unit/convention agree). Returns
+    {consistent: bool, derived_result, stated_result, issues}. `consistent` is False ONLY on a genuine
+    stated-vs-derived contradiction; a null verdict (no result to check) or any disabled / empty /
+    unparseable / error case FAILS OPEN to consistent=True — this gate never invents a contradiction."""
+    if not consistency_check_enabled() or not (answer or "").strip():
+        return {"consistent": True, "derived_result": "", "stated_result": "", "issues": []}
+    user = (f"QUESTION:\n{question}\n\nANSWER (check its STATED result against what its own work "
+            f"yields):\n{answer}")
+    try:
+        raw = complete_text(
+            provider, [{"role": "user", "content": user}], system=_CONSISTENCY_SYSTEM,
+            max_tokens=int(os.getenv("AGENTIC_CONSISTENCY_MAX_TOKENS", "500")), temperature=0.0)
+    except Exception:                       # noqa: BLE001 - consistency is best-effort, never fatal
+        return {"consistent": True, "derived_result": "", "stated_result": "", "issues": []}
+    v = parse_json_object(raw)
+    raw_c = v.get("consistent", None)
+    # Only an EXPLICIT false counts as inconsistent; true / null / missing / unparseable -> consistent.
+    inconsistent = (raw_c is False) or (isinstance(raw_c, str) and raw_c.strip().lower() == "false")
+    issues = v.get("issues") or []
+    if not isinstance(issues, list):
+        issues = [str(issues)]
+    return {
+        "consistent": not inconsistent,
+        "derived_result": str(v.get("derived_result", ""))[:500],
+        "stated_result": str(v.get("stated_result", ""))[:500],
+        "issues": [str(x) for x in issues][:6],
+    }
+
+
+_CONSISTENCY_FIX_SYSTEM = (
+    "The ANSWER's stated result contradicts its OWN work (an internal-consistency check flagged it). "
+    "Rewrite the answer so it is internally consistent, under ONE rule: SINGLE SOURCE OF TRUTH — the "
+    "stated result is taken DIRECTLY from the value the answer's derivation produces. Specifically:\n"
+    "- Make the final/summary result, and EVERY other mention of it, equal the value the work yields.\n"
+    "- Remove or correct any headline/summary figure that does not equal the derived result.\n"
+    "- Keep the unit / convention consistent with how it was computed; if converted, state the conversion.\n"
+    "- Do NOT change the derivation, the method, or anything else — only reconcile the STATED result(s) "
+    "to the work. Do not add commentary about the fix.\n"
+    "Output ONLY the corrected answer text."
+)
+
+
+def reconcile_answer(provider: Any, *, question: str, answer: str,
+                     check: Optional[Dict[str, Any]] = None) -> str:
+    """Rewrite `answer` so its stated result equals the value its own work yields (single source of
+    truth), every mention agrees, and units are consistent. Returns the corrected answer, or "" when
+    reconciliation is disabled / unavailable / fails (the caller then keeps the original and withholds
+    the 'verified' label)."""
+    if not consistency_check_enabled() or not (answer or "").strip():
+        return ""
+    derived = ((check or {}).get("derived_result") or "").strip()
+    issues = "; ".join((check or {}).get("issues") or [])[:300]
+    hint = ""
+    if derived:
+        hint += f"\n\nThe value the work actually yields (use THIS as the stated result): {derived}"
+    if issues:
+        hint += f"\nFlagged inconsistencies: {issues}"
+    user = f"QUESTION:\n{question}\n\nANSWER TO RECONCILE:\n{answer}{hint}"
+    try:
+        fixed = complete_text(
+            provider, [{"role": "user", "content": user}], system=_CONSISTENCY_FIX_SYSTEM,
+            max_tokens=int(os.getenv("ANSWER_MAX_TOKENS", "2000")), temperature=0.0)
+    except Exception:                       # noqa: BLE001 - reconciliation is best-effort, never fatal
+        return ""
+    return fixed.strip()
 
 
 # Placeholder used when the verifier returns nothing usable — NOT actionable guidance.

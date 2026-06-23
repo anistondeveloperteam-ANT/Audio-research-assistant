@@ -36,9 +36,13 @@ from backend.memory.store import MemoryStore, default_db_path, estimate_tokens  
 from backend.answering.query_sanity import check_query_sanity  # noqa: E402
 from backend.answering.agentic_answer import (  # noqa: E402
     agentic_loop_enabled,
+    answer_logic_version,
     auto_review_enabled,
     build_revision_message,
+    cache_revalidate_enabled,
     complete_text,
+    consistency_check,
+    consistency_check_enabled,
     followup_query,
     has_actionable_feedback,
     has_concrete_gap,
@@ -49,6 +53,7 @@ from backend.answering.agentic_answer import (  # noqa: E402
     python_blocks_in_order,
     max_verify_rounds,
     REASONING_ANSWER_SYSTEM,
+    reconcile_answer,
     run_best_python_block,
     verification_passed,
     verify_answer,
@@ -56,6 +61,14 @@ from backend.answering.agentic_answer import (  # noqa: E402
 from backend.llm.streaming_provider import get_provider  # noqa: E402
 from backend.external_search import gather_external_evidence, is_web_search_enabled  # noqa: E402
 from backend.observability import tracing  # noqa: E402  (no-op unless LANGFUSE_ENABLED=true)
+from backend.answering.arithmetic_check import fix_false_equalities  # noqa: E402
+from backend.answering.code_intent import is_self_contained_calculation  # noqa: E402
+from backend.answering.source_router import (  # noqa: E402
+    REASONING as SR_REASONING,
+    WEB as SR_WEB,
+    decide_source,
+    source_router_enabled,
+)
 from backend.answering.citations import find_citations, repair_citations  # noqa: E402
 from backend.answering.evidence_grader import (  # noqa: E402
     NONE,
@@ -1330,6 +1343,25 @@ def _av_meta(node_id, q_version_id, av: Dict[str, Any]) -> Dict[str, Any]:
             "answer_version_index": av["version_index"], "answer_total": av["total"]}
 
 
+def _enforce_conclusion_matches_work(provider, question: str, answer: str):
+    """CONCLUSION-MATCHES-WORK gate: confirm the answer's final stated result equals what its own
+    derivation yields; on a contradiction, reconcile the answer so the stated result is taken directly
+    from the work (single source of truth). Returns (answer, consistency_ok, corrected, derived):
+      - consistency_ok=False -> a contradiction that could NOT be reconciled (caller withholds 'verified')
+      - corrected=True       -> the answer was rewritten to remove the contradiction
+    Fail-open: a disabled / empty / already-consistent answer returns (answer, True, False, "")."""
+    if not consistency_check_enabled() or not (answer or "").strip() or answer == "(no answer)":
+        return answer, True, False, ""
+    check = consistency_check(provider, question=question, answer=answer)
+    if check.get("consistent") is not False:           # consistent (or nothing to check) -> unchanged
+        return answer, True, False, ""
+    derived = (check.get("derived_result") or "").strip()
+    fixed = reconcile_answer(provider, question=question, answer=answer, check=check)
+    if fixed.strip() and fixed.strip() != (answer or "").strip():
+        return fixed.strip(), True, True, derived       # reconciled -> now internally consistent
+    return answer, False, False, derived                # contradiction stands -> not verified
+
+
 def _reasoning_fallback(q: str, mem, session_id: str, q_version_id, node_id, user_id: str,
                         cache_on: bool, query_emb, query_meta, trace,
                         *, no_sources_enabled: bool = False) -> Iterator[Dict[str, Any]]:
@@ -1348,7 +1380,7 @@ def _reasoning_fallback(q: str, mem, session_id: str, q_version_id, node_id, use
         yield {"type": "done", "answer": msg, **_ans_meta(_av)}
         return
 
-    yield {"type": "status", "message": "No matching documents — reasoning it out..."}
+    yield {"type": "status", "message": "Reasoning it out..."}
     _ctx = _build_compact_context(mem, session_id, q)
     sys_prompt = _today_note() + REASONING_ANSWER_SYSTEM + _ctx["system_extra"]
     parts: List[str] = []
@@ -1372,26 +1404,20 @@ def _reasoning_fallback(q: str, mem, session_id: str, q_version_id, node_id, use
         yield {"type": "done", "answer": msg, **_ans_meta(_av)}
         return
 
+    # SIMPLE, CORRECT, DIRECT: the answer is computed ONCE by the draft. Do NOT run an LLM 're-derivation'
+    # or 'reconcile' pass here — those can hallucinate a different value and OVERRIDE correct work (the
+    # "computes 1.44, then declares 14.4" bug). The only post-processing is a DETERMINISTIC arithmetic
+    # check that silently corrects any stated 'A op B = C' whose result is literally wrong (it recomputes,
+    # so it can never introduce a wrong value). A light quality check then decides only whether to cache.
+    answer = fix_false_equalities(answer)
+
     yield {"type": "status", "message": "Checking the answer's quality..."}
     try:
         verdict = verify_answer(provider, question=q, evidence="", answer=answer, basis="reasoning")
     except Exception:                                          # noqa: BLE001 - never drop a real answer
         verdict = {"ok": True, "score": 100}
-    dep_good = verification_passed(verdict)
-    # INDEPENDENT confirmation: self-consistent reasoning is NOT enough. Re-derive + sanity-check by a
-    # route that doesn't share the answer's assumptions — this is where a unit / magnitude slip is caught.
-    if dep_good and independent_verify_enabled():
-        yield {"type": "status",
-               "message": "Independently re-deriving and sanity-checking the result (units, magnitude)..."}
-    ind = independent_check(provider, question=q, answer=answer) if dep_good else {"agrees": None}
-    good = is_truly_verified(dep_good, ind)
-    if dep_good and ind.get("agrees") is False:
-        issues = "; ".join(str(x) for x in (ind.get("issues") or []))[:200]
-        note = ("\n\n_Note: an independent re-derivation / sanity-check disagreed with this answer"
-                + (f" ({issues})" if issues else "") + " — treat it as unverified and double-check._")
-        yield {"type": "token", "text": note}
-        answer = (answer + note).strip()
-    elif not good and verdict.get("needs_more_search"):
+    good = verification_passed(verdict)
+    if not good and verdict.get("needs_more_search"):
         note = "\n\n_Note: parts of this may need up-to-date or external information I don't have"
         if no_sources_enabled:
             note += " (enable web or local sources in `.env` for document-grounded answers)"
@@ -1404,7 +1430,8 @@ def _reasoning_fallback(q: str, mem, session_id: str, q_version_id, node_id, use
         try:
             mem.cache_answer(user_id=user_id, session_id=session_id, question=q,
                              answer=_strip_answer_footers(answer), sources=[],
-                             embedding=query_emb, embedding_meta=query_meta, verified=good)
+                             embedding=query_emb, embedding_meta=query_meta, verified=good,
+                             logic_version=answer_logic_version())
         except Exception:                                      # noqa: BLE001 - caching is best-effort
             pass
     trace.set(n_sources=0).end()
@@ -1599,37 +1626,73 @@ def stream_chat_events(
                 min_semantic=answer_cache_min_semantic(),
                 max_age_seconds=answer_cache_max_age_seconds(),
                 limit=answer_cache_limit(),
+                # Entries produced by OLDER answering logic are excluded here -> they re-answer below
+                # so a deploy of answering fixes takes effect instead of replaying a stale answer.
+                min_logic_version=answer_logic_version(),
             )
             _sp.set(hit=bool(cached))
     if cached:
-        sources = cached.get("sources") or []
-        answer = cached.get("answer") or ""
-        pct = int(float(cached.get("similarity", 0.0)) * 100)
-        kind = cached.get("match_kind", "lexical")
-        mem.record_answer_cache_hit(int(cached["id"]))
-        _av = mem.add_answer_version(q_version_id, answer, sources=sources)
-        trace.set(cached=True).end()
-        yield {"type": "status", "message":
-               f"Reusing a saved answer from memory ({pct}% {kind} match)."}
-        yield {"type": "sources", "sources": sources}
-        yield {"type": "token", "text": answer}
-        yield {"type": "done", "answer": answer, "cached": True,
-               "similarity": pct, "match_kind": kind, **_ans_meta(_av)}
+        # NEVER serve a cached answer BLINDLY. A stored answer is a speed optimization for VERIFIED
+        # answers only — it must still pass a lightweight conclusion-matches-work re-check before
+        # reuse. If the stored answer now contradicts its own work, retire it and re-answer fresh
+        # (the full pipeline below produces + verifies + re-caches a corrected answer).
+        cached_answer = cached.get("answer") or ""
+        serve_cached = True
+        if cache_revalidate_enabled() and consistency_check_enabled() and cached_answer.strip():
+            yield {"type": "status", "message": "Re-checking the saved answer before reusing it..."}
+            provider = get_provider()
+            if getattr(provider, "is_available", False):
+                chk = consistency_check(provider, question=q, answer=cached_answer)
+                if chk.get("consistent") is False:
+                    serve_cached = False
+                    mem.mark_cache_unverified(int(cached["id"]))    # retire it; don't serve again
+                    logger.info("cached answer failed serve-time consistency re-check -> re-answering")
+        if serve_cached:
+            sources = cached.get("sources") or []
+            answer = cached_answer
+            pct = int(float(cached.get("similarity", 0.0)) * 100)
+            kind = cached.get("match_kind", "lexical")
+            mem.record_answer_cache_hit(int(cached["id"]))
+            _av = mem.add_answer_version(q_version_id, answer, sources=sources)
+            trace.set(cached=True).end()
+            yield {"type": "status", "message":
+                   f"Reusing a saved answer from memory ({pct}% {kind} match)."}
+            yield {"type": "sources", "sources": sources}
+            yield {"type": "token", "text": answer}
+            yield {"type": "done", "answer": answer, "cached": True,
+                   "similarity": pct, "match_kind": kind, **_ans_meta(_av)}
+            return
+        # else: fall through to the full fresh pipeline (retrieval / reasoning + verification).
+
+    # --- SOURCE ROUTER: decide WHICH source the question NEEDS before answering, so the indexed corpus
+    #     is never the default for everything. 'reasoning' -> answer directly from the model's own
+    #     knowledge (no retrieval, no corpus citations, no "the sources" framing); 'web' -> a current
+    #     web search anchored to today (never the stale corpus); 'corpus' -> the existing CRAG
+    #     retrieve-grade-cite path. Deterministic fast-paths (calculation -> reasoning, recency -> web)
+    #     settle the obvious cases; the LLM router decides the rest and FAILS OPEN to 'corpus'. ---
+    is_fresh = _freshness_sensitive(q)
+    calc = is_self_contained_calculation(q)
+    route_provider = get_provider() if (source_router_enabled() and not is_fresh and not calc) else None
+    source = decide_source(route_provider, q, freshness=is_fresh, calc=calc)
+    if source == SR_REASONING:
+        no_src = not local_rag_enabled() and not is_web_search_enabled()
+        yield {"type": "status", "message": "Answering directly from reasoning..."}
+        yield from _reasoning_fallback(q, mem, session_id, q_version_id, node_id, user_id, cache_on,
+                                       query_emb, query_meta, trace, no_sources_enabled=no_src)
         return
 
     items: List[Dict[str, Any]] = []
     local_on = local_rag_enabled()
     crag_grade = NONE                 # set by the CRAG branch; read later by the Self-RAG escalation
 
-    # --- Freshness ('latest/current/this year') handling: the static local PDF library can't hold
-    #     'the latest', so a time-sensitive question goes WEB-ONLY (skip the stale local corpus) and
-    #     the search is anchored to the current year so external results target recent content. Only
-    #     when web search is actually available — otherwise keep local rather than returning nothing.
-    is_fresh = _freshness_sensitive(q)
-    if is_fresh and local_on and is_web_search_enabled():
+    # --- WEB route (a recency cue, or the router judged the question needs current info): go WEB-ONLY,
+    #     anchored to the present, so 'latest/current/this-year' is answered from fresh web sources and
+    #     the static corpus / stale training content is never presented as current. ---
+    force_web = (source == SR_WEB)
+    if (force_web or is_fresh) and local_on and is_web_search_enabled():
         local_on = False
-        logger.info("freshness query -> web-only (skipping the static local library)")
-    if is_fresh:
+        logger.info("source=%s -> web-only (skipping the static local library)", source)
+    if force_web or is_fresh:
         _yr = str(datetime.now().year)
         if _yr not in search_q:
             search_q = f"{search_q} {_yr}"
@@ -1733,8 +1796,9 @@ def stream_chat_events(
     if not items:
         no_src = not local_on and not is_web_search_enabled()
         yield {"type": "sources", "sources": []}
-        if _freshness_sensitive(q):
-            # Genuinely depends on current/external data we couldn't find -> honest, never fabricate.
+        if force_web or _freshness_sensitive(q):
+            # Genuinely depends on current/external data we couldn't find -> honest, never fabricate
+            # (and never fall back to stale corpus/training content presented as current).
             msg = "I couldn't find current information for that in the available sources."
             yield {"type": "token", "text": msg}
             _av = mem.add_answer_version(q_version_id, msg, sources=[])
@@ -1766,6 +1830,7 @@ def stream_chat_events(
     answer_rewritten = False    # auto-review replaced the answer post-verification
     self_rag_escalated = False  # STRONG answer failed verification -> escalated to web once
     reroute_to_reasoning = False  # evidence draft refused a self-contained Q -> answer from reasoning
+    consistency_ok = True       # stated result matched the answer's own derivation (or was reconciled)
     clean_body = ""             # the answer body to cache (no review/verify footers)
     try:
         provider = get_provider()
@@ -2038,6 +2103,13 @@ def stream_chat_events(
                 answer_parts.append(final_answer)
                 yield {"type": "token", "text": final_answer}
             else:
+                # CONCLUSION-MATCHES-WORK: reconcile the stated result to the answer's own derivation
+                # BEFORE emitting, so the displayed + saved answer is internally consistent (the wrong
+                # headline figure is removed, not shipped). Runs ahead of the independent check below.
+                if consistency_check_enabled():
+                    yield {"type": "status", "message": "Checking the conclusion matches the work..."}
+                    answer, consistency_ok, _corr, _dv = _enforce_conclusion_matches_work(provider, q, answer)
+                    clean_body = answer
                 final_answer = answer   # clean body; no internal verifier/review jargon
                 answer_parts.append(final_answer)
                 yield {"type": "token", "text": final_answer}
@@ -2047,6 +2119,10 @@ def stream_chat_events(
                     yield {"type": "low_confidence", "message": (
                         "This answer couldn't be fully verified against the available sources — "
                         "treat the key claims with caution and double-check anything critical.")}
+                if not consistency_ok:
+                    yield {"type": "low_confidence", "message": (
+                        "The stated result appears to contradict the answer's own derivation and "
+                        "couldn't be reconciled — treat the key result with caution.")}
         else:
             provider_ok = True
             yield {"type": "status", "message": "Writing the answer..."}
@@ -2113,7 +2189,7 @@ def stream_chat_events(
             yield {"type": "status",
                    "message": "Independently re-deriving and sanity-checking the answer..."}
             ind_check = independent_check(provider, question=q, answer=answer)
-        verified = is_truly_verified(dep_verified, ind_check)
+        verified = is_truly_verified(dep_verified, ind_check, consistent=consistency_ok)
         if dep_verified and ind_check.get("agrees") is False:
             issues = "; ".join(str(x) for x in (ind_check.get("issues") or []))[:200]
             yield {"type": "low_confidence", "message": (
@@ -2137,6 +2213,7 @@ def stream_chat_events(
                 embedding=query_emb,
                 embedding_meta=query_meta,
                 verified=quality_ok,
+                logic_version=answer_logic_version(),
             )
             did_cache = True
         _sp.set(cached=did_cache, citations_removed=len(removed_citations))
