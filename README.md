@@ -10,7 +10,7 @@ A self‑hosted research companion: a **FastAPI** backend, a **no‑build** HTML
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-598%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-760%20passing-2ea44f)
 ![Corrective RAG](https://img.shields.io/badge/retrieval-Corrective%20RAG-8A2BE2)
 [![License](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
@@ -25,7 +25,7 @@ Open-source under the [MIT License](LICENSE) — use it, fork it, build on it.
 Most "chat with AI" tools answer from the model's memory and hope it's right. **This one doesn't.** It searches real sources first — the open web, research papers, Wikipedia, patents, GitHub, and any PDFs you add — answers **only** from what it found, **cites every claim**, and checks the draft against that evidence before showing it. When the sources fall short, it says so instead of inventing. And when a question is really a coding task, it writes the program, runs it in a **locked‑down Docker sandbox**, and refines until it works.
 
 > [!NOTE]
-> **Deep dive:** [📊 How It Works — Interactive Pipeline Guide](docs/HOW_IT_WORKS.md) — every stage explained with real accuracy/latency numbers and clickable diagrams.
+> **Deep dive:** [🧭 The Complete Pipeline Guide](docs/PIPELINE_GUIDE.md) — every stage from question to verified answer, diagram-first (route → retrieve → grade → relevance-gate → verify → independent-check → cite), PDF-ready. See also [📊 How It Works](docs/HOW_IT_WORKS.md) for accuracy/latency numbers.
 
 ---
 
@@ -134,10 +134,11 @@ flowchart TD
     FUP --> A
 ```
 
-- **It routes before it answers.** A coding task goes to the autonomous agent; a follow-up ("what's the output of that?") is answered from the conversation — or re-runs your previous code — instead of launching a fresh web search; a new question goes to retrieval. Time-sensitive questions ("latest…") skip the static library and search the web anchored to today's date.
+- **It routes by intent, not keywords.** A coding task goes to the autonomous agent; a *calculation* ("how much storage for 3 min of audio?") is **reasoned**, not sent to the code agent just because it has numbers; a follow-up ("what's the output of that?") is answered from the conversation — or re-runs your previous code — instead of a fresh web search. Time-sensitive questions ("latest…") skip the static library and search the web anchored to today's date.
 - **It grades its own evidence before answering** (Corrective RAG). Strong match in your library → answer from it; thin/missing → it searches the web to fill the gap.
+- **It refuses to be misled by irrelevant sources.** A relevance gate keeps only sources that *directly* address the question — a topically-similar-but-irrelevant hit can't steer or be cited; if none are relevant, it answers from reasoning with no spurious citation.
 - **Citations always point to real sources.** Every claim is tagged `[n]`, only the sources the answer actually cited are shown, and a citation to a non‑existent source number is **automatically removed**.
-- **It checks its own work.** A *draft → verify → refine* loop compares the answer to the retrieved evidence and rewrites only where there's a concrete gap — and a failed library‑only answer **escalates to the web** and retries (Self‑RAG).
+- **It checks its own work — twice.** A *draft → verify → refine* loop compares the answer to the evidence and rewrites only where there's a concrete gap (a failed library‑only answer **escalates to the web** and retries — Self‑RAG). Then an **independent** re-derivation plus unit/magnitude/limiting-case sanity must agree before the answer is labeled *verified* — because self-consistent isn't the same as correct.
 - **It admits gaps** instead of guessing when the sources don't cover something.
 
 ### 🧠 Corrective RAG (grade‑then‑act)
@@ -280,16 +281,16 @@ flowchart TD
 | **`backend/memory/`** | Conversations, facts, answer cache (SQLite) | `store.py` |
 | **`backend/auth/`** | Accounts, Google OAuth, password‑reset email | `users.py` |
 | **`backend/maintenance/`** | One‑shot factory reset (wipe all local data) | `factory_reset.py` |
-| **`tests/`** | 598 offline tests — Docker / LLM / network mocked | `test_*.py` |
+| **`tests/`** | 760 offline tests — Docker / LLM / network mocked | `test_*.py` |
 
-> 🧭 Deeper dives: **[docs/DEEP_DIVE.md](docs/DEEP_DIVE.md)** (one‑page system deep dive — diagrams · tools · measured accuracy/latency · how to improve) · [docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md) · [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PIPELINE.md](docs/PIPELINE.md) · [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md).
+> 🧭 Deeper dives: **[docs/PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md)** (the complete diagram-first pipeline guide, PDF-ready) · **[docs/DEEP_DIVE.md](docs/DEEP_DIVE.md)** (one‑page system deep dive — diagrams · tools · measured accuracy/latency) · [docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md) · [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PIPELINE.md](docs/PIPELINE.md) · [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md).
 
 ---
 
 ## 🛠️ Development
 
 ```bash
-.venv\Scripts\python.exe -m pytest -q          # 598 passing (3 skipped), fully offline/mocked
+.venv\Scripts\python.exe -m pytest -q          # 760 passing (3 skipped), fully offline/mocked
 .venv\Scripts\pyflakes backend webapp           # lint
 python pipeline.py --status                     # what's indexed + device (GPU/CPU)
 python pipeline.py --corpus-report              # coverage + gaps report
