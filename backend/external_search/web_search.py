@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
-from backend.external_search.base import ExternalSource, cached, logger, safe_get
+from backend.external_search.base import ExternalSource, cached, safe_get
 
 _BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -82,17 +82,13 @@ class TavilyProvider(WebSearchProvider):
         key = os.getenv("TAVILY_API_KEY")
         if not key:
             return []
-        try:
-            import requests
-            resp = requests.post(self.ENDPOINT, timeout=15, json={
-                "api_key": key, "query": query, "max_results": max_results,
-                "search_depth": "advanced", "include_raw_content": True,
-            })
-            if resp.status_code >= 400:
-                return []
-            data = resp.json()
-        except Exception as exc:
-            logger.info("tavily search failed: %s", type(exc).__name__)
+        # Routed through safe_get (not a raw requests.post) so a 429 is retried with
+        # backoff like every other channel, instead of silently dropping the web results.
+        data = safe_get(self.ENDPOINT, expect="json", timeout=15, json_body={
+            "api_key": key, "query": query, "max_results": max_results,
+            "search_depth": "advanced", "include_raw_content": True,
+        })
+        if not isinstance(data, dict):
             return []
         out: List[ExternalSource] = []
         for r in (data.get("results") or [])[:max_results]:

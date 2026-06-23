@@ -409,3 +409,52 @@ def test_external_gather_429_degrades_to_warning(monkeypatch):
     assert items == []
     assert warnings and "429" in warnings[0]
     cl._EXT_CACHE.clear()
+
+
+def test_gather_pass_results_identical_serial_vs_concurrent(monkeypatch):
+    # Concurrency must change only HOW FAST, never WHAT comes back. The same queries + gather, run
+    # serially (AGENT_PARALLELISM=1) and concurrently (=4), produce byte-identical merged items in
+    # the same order (the merge iterates futures in submission order -> deterministic).
+    tr = tracing.start_trace("test")
+
+    def gather(q, k):
+        time.sleep(0.01)
+        return ([{"source_type": "web", "title": q, "text": "t-" + q, "url": "http://x/" + q}], [])
+
+    queries = [f"q{i}" for i in range(5)]
+
+    monkeypatch.setenv("AGENT_PARALLELISM", "1")
+    serial, _w1, _t1 = cl._gather_pass(queries, gather, lambda i, q: 1,
+                                       trace=tr, span_name="external_search")
+    monkeypatch.setenv("AGENT_PARALLELISM", "4")
+    concurrent_items, _w2, _t2 = cl._gather_pass(queries, gather, lambda i, q: 1,
+                                                 trace=tr, span_name="external_search")
+
+    assert [s["title"] for s in serial] == [s["title"] for s in concurrent_items] == queries
+    assert serial == concurrent_items            # identical content + order, regardless of parallelism
+
+
+def test_verify_refine_loop_runs_strictly_sequentially(tmp_path, monkeypatch):
+    # The dependent verify->refine loop must stay SEQUENTIAL: each round consumes the previous
+    # round's result, so two verifies must never run at once. A re-entrancy flag would trip if the
+    # loop ever parallelized the rounds — it must not.
+    state = {"inside": False, "overlapped": False, "order": []}
+
+    def verify(round_no):
+        if state["inside"]:
+            state["overlapped"] = True
+        state["inside"] = True
+        state["order"].append(round_no)
+        state["inside"] = False
+        if round_no >= 2:                                  # round 2 passes -> stop
+            return {"ok": True, "score": 95, "needs_more_search": False}
+        return {"ok": False, "score": 40, "needs_more_search": True,   # round 1: concrete gap
+                "followup_query": "more", "missing_evidence": ["a detail"]}
+
+    events, counters = _drive(
+        monkeypatch, tmp_path, code_task=False, task_type="none",
+        provider=_FakeProvider(), verify=verify, verify_rounds=3, deep_loops=3)
+
+    assert state["overlapped"] is False          # never two verify rounds at once -> sequential
+    assert state["order"] == [1, 2]              # rounds ran in order, one after another
+    assert counters["verify"] == 2

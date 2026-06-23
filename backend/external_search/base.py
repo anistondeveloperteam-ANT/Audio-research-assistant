@@ -184,11 +184,14 @@ def safe_get(
     max_bytes: int = MAX_BYTES,
     expect: str = "text",          # "text" | "bytes" | "json"
     retries: int = MAX_RETRIES,
-    data: Optional[Dict[str, Any]] = None,   # if set -> POST
+    data: Optional[Dict[str, Any]] = None,        # if set -> POST (form-encoded)
+    json_body: Optional[Dict[str, Any]] = None,   # if set -> POST (JSON body)
 ) -> Optional[Any]:
-    """HTTP GET (or POST when `data` is given) with URL validation, timeout, size
-    cap, and retries. Returns the text / bytes / parsed-json body, or None on any
-    failure (never raises)."""
+    """HTTP GET (or POST when `data`/`json_body` is given) with URL validation,
+    timeout, size cap, and retry-with-backoff on 429/5xx. Returns the text / bytes /
+    parsed-json body, or None on any failure (never raises). Routing a JSON POST
+    through here (instead of a raw requests.post) gives it the same rate-limit
+    backoff the rest of external search already gets."""
     ok, reason = is_safe_url(url)
     if not ok:
         logger.warning("skipped invalid url (%s)", reason)
@@ -197,12 +200,13 @@ def safe_get(
     hdrs = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"}
     if headers:
         hdrs.update(headers)
-    method = "POST" if data is not None else "GET"
+    method = "POST" if (data is not None or json_body is not None) else "GET"
 
     for attempt in range(retries + 1):
         try:
             with requests.request(method, url, headers=hdrs, params=params, data=data,
-                                  timeout=timeout, stream=True, allow_redirects=True) as resp:
+                                  json=json_body, timeout=timeout, stream=True,
+                                  allow_redirects=True) as resp:
                 # Re-validate the final URL after redirects (scheme/host sanity).
                 ok, reason = is_safe_url(resp.url)
                 if not ok:

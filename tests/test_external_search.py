@@ -91,17 +91,13 @@ def test_get_web_provider_falls_back_to_free_duckduckgo(monkeypatch):
 
 
 def test_tavily_parses_mocked_response(monkeypatch):
-    import requests
     monkeypatch.setenv("TAVILY_API_KEY", "test-key")
-
-    class FakeResp:
-        status_code = 200
-        def json(self):
-            return {"results": [{"title": "T", "url": "https://ex.com/a",
-                                 "content": "snippet", "raw_content": "full body text",
-                                 "score": 0.9, "published_date": "2026-01-01"}]}
-
-    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResp())
+    # Tavily is routed through safe_get (so it gets the shared 429 backoff); safe_get returns the
+    # already-parsed JSON body, so the mock returns a dict, not a response object.
+    monkeypatch.setattr("backend.external_search.web_search.safe_get",
+                        lambda *a, **k: {"results": [{"title": "T", "url": "https://ex.com/a",
+                                                      "content": "snippet", "raw_content": "full body text",
+                                                      "score": 0.9, "published_date": "2026-01-01"}]})
     results = TavilyProvider().search("query", max_results=3)
     assert len(results) == 1
     s = results[0]
