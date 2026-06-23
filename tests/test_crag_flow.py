@@ -205,7 +205,7 @@ def _drive_code(monkeypatch, tmp_path, local_items, *, crag=True, queries=None):
 
     captured = {}
 
-    def fake_run_agent(task, *, brief="", use_search=True, conversation="", on_event=None):
+    def fake_run_agent(task, *, brief="", use_search=True, conversation="", on_event=None, **kwargs):
         captured.update(task=task, brief=brief, use_search=use_search)
         if on_event:
             on_event({"type": "status", "message": "agent working"})

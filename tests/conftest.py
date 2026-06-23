@@ -29,3 +29,8 @@ os.environ["COMPACT_MEMORY"] = "false"
 # suite-wide so the chat path stays fully offline + deterministic. test_query_refine opts back in
 # and mocks the provider.
 os.environ["QUERY_REFINE"] = "false"
+
+# The source-relevance gate makes a live LLM call (judging which retrieved sources address the
+# question) before drafting. Disable it suite-wide so retrieval/routing tests are deterministic +
+# offline; test_source_relevance_gate opts back in and mocks the provider.
+os.environ["SOURCE_RELEVANCE_GATE"] = "false"

@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 # ----------------------------------------------------------------------
@@ -76,7 +76,10 @@ CREATE TABLE IF NOT EXISTS turns (
     node_id           TEXT,
     parent_version_id INTEGER,
     version_index     INTEGER NOT NULL DEFAULT 1,
-    is_active         INTEGER NOT NULL DEFAULT 1
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    -- Turn kind: NULL for a normal chat turn, 'agent' for a coding-agent run — so a reloaded run is
+    -- rendered + REGENERATED via the agent (not the chat path).
+    kind              TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_turns_session
@@ -111,6 +114,9 @@ CREATE TABLE IF NOT EXISTS answer_cache (
     hit_count             INTEGER NOT NULL DEFAULT 0,
     question_embedding    TEXT,
     embedding_meta        TEXT,
+    -- Origin-independent ANSWER QUALITY: 1 = judged high-quality/verified (safe to reuse),
+    -- 0 = not verified / downgraded by dissatisfaction. Reuse admits ONLY verified=1.
+    verified              INTEGER NOT NULL DEFAULT 0,
     UNIQUE (user_id, normalized_question)
 );
 
@@ -119,6 +125,43 @@ CREATE INDEX IF NOT EXISTS idx_answer_cache_user_updated
 
 CREATE INDEX IF NOT EXISTS idx_answer_cache_user_norm
     ON answer_cache(user_id, normalized_question);
+
+-- Code-agent result memory: every run's outcome (verified / partial / failed) is recorded for the
+-- developer failure-pattern report AND for VERIFIED-ONLY reuse as a starting point. The agent never
+-- edits its own source; this is accumulated evidence, not autonomous behaviour change.
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id              TEXT NOT NULL DEFAULT 'local',
+    task                 TEXT NOT NULL,
+    normalized_task      TEXT NOT NULL,
+    task_tokens_json     TEXT NOT NULL DEFAULT '[]',
+    requirements         TEXT,
+    task_type            TEXT,
+    code                 TEXT,
+    output               TEXT,
+    verification         TEXT NOT NULL DEFAULT 'failed',
+    verified             INTEGER NOT NULL DEFAULT 0,
+    tests_passed         INTEGER NOT NULL DEFAULT 0,
+    tests_total          INTEGER NOT NULL DEFAULT 0,
+    hidden_passed        INTEGER NOT NULL DEFAULT 0,
+    hidden_total         INTEGER NOT NULL DEFAULT 0,
+    attempts_taken       INTEGER NOT NULL DEFAULT 0,
+    stop_reason          TEXT,
+    cheat_reasons_json   TEXT,
+    diagnosis            TEXT,
+    gate_fail            TEXT,
+    failing_checks_json  TEXT,
+    created_at           REAL NOT NULL,
+    updated_at           REAL NOT NULL,
+    last_used_at         REAL,
+    reuse_count          INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_user_verified
+    ON agent_runs(user_id, verified, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_created
+    ON agent_runs(created_at DESC);
 """
 
 
@@ -170,6 +213,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
         cur.execute("ALTER TABLE turns ADD COLUMN version_index INTEGER NOT NULL DEFAULT 1")
     if turn_cols and "is_active" not in turn_cols:
         cur.execute("ALTER TABLE turns ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+    if turn_cols and "kind" not in turn_cols:
+        cur.execute("ALTER TABLE turns ADD COLUMN kind TEXT")
+    # Answer-quality flag on the answer cache. Existing rows were cached under the old verified-only
+    # gate, so backfill them to verified=1 (runs once, when the column is first added).
+    ac_cols = {r[1] for r in cur.execute("PRAGMA table_info(answer_cache)").fetchall()}
+    if ac_cols and "verified" not in ac_cols:
+        cur.execute("ALTER TABLE answer_cache ADD COLUMN verified INTEGER NOT NULL DEFAULT 0")
+        cur.execute("UPDATE answer_cache SET verified = 1")
     # Created AFTER the columns exist (a legacy turns table gets them via ALTER above).
     if turn_cols:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_turns_node ON turns(session_id, node_id)")
@@ -418,6 +469,7 @@ class MemoryStore:
             try:
                 _migrate(conn)
                 conn.execute("DROP TABLE IF EXISTS answer_cache")
+                conn.execute("DROP TABLE IF EXISTS agent_runs")
                 conn.commit()
             finally:
                 conn.close()
@@ -570,7 +622,8 @@ class MemoryStore:
         return uuid.uuid4().hex[:16]
 
     def _insert_turn(self, conn, session_id, role, content, sources,
-                     node_id, parent_version_id, version_index, is_active) -> Dict[str, Any]:
+                     node_id, parent_version_id, version_index, is_active,
+                     kind: Optional[str] = None) -> Dict[str, Any]:
         """Low-level versioned insert (caller owns the transaction). Returns id/turn_index."""
         now = time.time()
         next_idx = conn.execute(
@@ -579,10 +632,10 @@ class MemoryStore:
         ).fetchone()[0]
         cur = conn.execute(
             "INSERT INTO turns (session_id, turn_index, role, content, sources_json, "
-            "created_at, node_id, parent_version_id, version_index, is_active) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_at, node_id, parent_version_id, version_index, is_active, kind) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, next_idx, role, content, json.dumps(sources) if sources else None,
-             now, node_id, parent_version_id, version_index, int(is_active)),
+             now, node_id, parent_version_id, version_index, int(is_active), kind),
         )
         conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
         return {"id": int(cur.lastrowid), "turn_index": int(next_idx), "version_index": version_index}
@@ -664,9 +717,9 @@ class MemoryStore:
 
     def add_answer_version(self, question_version_id: int, content: str,
                            sources: Optional[List[Dict[str, Any]]] = None,
-                           role: str = "assistant") -> Dict[str, Any]:
+                           role: str = "assistant", kind: Optional[str] = None) -> Dict[str, Any]:
         """Add a new answer version under a specific question version (regenerate). Becomes
-        active; prior answers are kept but deactivated."""
+        active; prior answers are kept but deactivated. `kind='agent'` marks a coding-agent run."""
         with self._conn() as conn:
             row = conn.execute("SELECT session_id FROM turns WHERE id = ?",
                                (question_version_id,)).fetchone()
@@ -678,7 +731,7 @@ class MemoryStore:
                          (question_version_id,))
             info = self._insert_turn(conn, sid, role, content, sources,
                                      node_id=None, parent_version_id=question_version_id,
-                                     version_index=vi, is_active=1)
+                                     version_index=vi, is_active=1, kind=kind)
         return {"turn_id": info["id"], "version_index": vi, "total": vi}
 
     def set_active_question_version(self, session_id: str, node_id: str, version_index: int) -> bool:
@@ -718,7 +771,7 @@ class MemoryStore:
         with self._conn() as conn:
             r = conn.execute(
                 "SELECT id, session_id, role, content, sources_json, node_id, "
-                "parent_version_id, version_index, is_active, created_at "
+                "parent_version_id, version_index, is_active, kind, created_at "
                 "FROM turns WHERE id = ?",
                 (turn_id,),
             ).fetchone()
@@ -737,7 +790,7 @@ class MemoryStore:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT id, turn_index, role, content, sources_json, node_id, "
-                "parent_version_id, version_index, is_active "
+                "parent_version_id, version_index, is_active, kind "
                 "FROM turns WHERE session_id = ? ORDER BY turn_index ASC",
                 (session_id,),
             ).fetchall()
@@ -759,6 +812,7 @@ class MemoryStore:
                 "turn_id": int(a["id"]),
                 "version_index": int(a["version_index"]),
                 "is_active": bool(a["is_active"]),
+                "kind": a["kind"],
                 "content": a["content"] if include_content else None,
                 "sources": (json.loads(sj) if sj else None) if include_content else None,
             }
@@ -970,7 +1024,12 @@ class MemoryStore:
         sources: Optional[List[Dict[str, Any]]] = None,
         embedding: Optional[List[float]] = None,
         embedding_meta: Optional[str] = None,
+        verified: bool = True,
     ) -> Optional[int]:
+        """Persist an answer for reuse, WITH its origin-independent quality status. `verified=True`
+        (judged high-quality) makes it reusable; an unverified/low-quality answer is recorded but
+        NEVER reused (find_cached_answer admits only verified=1). One row per (user, normalized
+        question): a fresh verified answer UPGRADES (replaces) any prior low-quality record."""
         norm = normalize_question(question)
         if not norm or not (answer or "").strip():
             return None
@@ -992,8 +1051,8 @@ class MemoryStore:
                 "INSERT INTO answer_cache (user_id, session_id, question, "
                 "normalized_question, question_tokens_json, answer, sources_json, "
                 "created_at, updated_at, last_used_at, hit_count, "
-                "question_embedding, embedding_meta) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?)",
+                "question_embedding, embedding_meta, verified) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?)",
                 (
                     user,
                     session_id or "",
@@ -1006,6 +1065,7 @@ class MemoryStore:
                     now,
                     emb,
                     embedding_meta if emb else None,
+                    1 if verified else 0,
                 ),
             )
             row = conn.execute(
@@ -1037,10 +1097,12 @@ class MemoryStore:
         user = user_id or "local"
         cutoff = None if max_age_seconds is None else now - max_age_seconds
         params: List[Any] = [user]
+        # ONLY verified=1 rows are reusable — a stored low-quality / dissatisfaction-downgraded answer
+        # is never replayed; the caller re-answers fresh and may upgrade the record.
         sql = (
             "SELECT id, session_id, question, answer, sources_json, updated_at, "
             "last_used_at, hit_count, question_embedding, embedding_meta "
-            "FROM answer_cache WHERE user_id = ?"
+            "FROM answer_cache WHERE user_id = ? AND verified = 1"
         )
         if cutoff is not None:
             sql += " AND updated_at >= ?"
@@ -1085,6 +1147,206 @@ class MemoryStore:
                 "last_used_at = ? WHERE id = ?",
                 (time.time(), int(cache_id)),
             )
+
+    def downgrade_cached_answer(self, user_id: str, question: str) -> bool:
+        """Mark this question's cached answer NOT reusable (user dissatisfaction / regenerate), so the
+        next matching query re-answers fresh instead of replaying it. A later high-quality answer
+        re-upgrades the record via cache_answer. Returns True if a row was downgraded."""
+        norm = normalize_question(question)
+        if not norm:
+            return False
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE answer_cache SET verified = 0 WHERE user_id = ? AND normalized_question = ?",
+                (user_id or "local", norm),
+            )
+            return cur.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Code-agent result memory (learning layer). Every run is recorded for the developer
+    # failure-pattern report; only VERIFIED runs are ever reused, and reuse only SEEDS a fresh
+    # attempt that still passes the full gate stack. The agent never edits its own source.
+    # ------------------------------------------------------------------
+    def record_agent_run(
+        self,
+        *,
+        user_id: str,
+        task: str,
+        code: str = "",
+        output: str = "",
+        verification: str = "failed",
+        requirements: str = "",
+        task_type: str = "",
+        tests_passed: int = 0,
+        tests_total: int = 0,
+        hidden_passed: int = 0,
+        hidden_total: int = 0,
+        attempts_taken: int = 0,
+        stop_reason: str = "",
+        cheat_reasons: Optional[List[str]] = None,
+        diagnosis: str = "",
+        gate_fail: str = "",
+        failing_checks: Optional[List[str]] = None,
+    ) -> Optional[int]:
+        """Persist one code-agent run's outcome. Returns the row id, or None on an empty task."""
+        norm = normalize_question(task)
+        if not norm:
+            return None
+        now = time.time()
+        user = user_id or "local"
+        verified = 1 if (verification or "") == "verified" else 0
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO agent_runs (user_id, task, normalized_task, task_tokens_json, "
+                "requirements, task_type, code, output, verification, verified, tests_passed, "
+                "tests_total, hidden_passed, hidden_total, attempts_taken, stop_reason, "
+                "cheat_reasons_json, diagnosis, gate_fail, failing_checks_json, created_at, "
+                "updated_at, last_used_at, reuse_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)",
+                (
+                    user, task, norm, json.dumps(question_tokens(task)),
+                    requirements or "", task_type or "", code or "", output or "",
+                    verification or "failed", verified, int(tests_passed), int(tests_total),
+                    int(hidden_passed), int(hidden_total), int(attempts_taken), stop_reason or "",
+                    json.dumps(list(cheat_reasons or [])), diagnosis or "", gate_fail or "",
+                    json.dumps(list(failing_checks or [])), now, now,
+                ),
+            )
+            row = conn.execute("SELECT last_insert_rowid() AS id").fetchone()
+            return int(row["id"]) if row else None
+
+    def find_verified_solution(
+        self,
+        *,
+        user_id: str,
+        task: str,
+        min_similarity: float = 0.90,
+        max_age_seconds: Optional[float] = None,
+        limit: int = 200,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the best near-identical, VERIFIED prior solution for this user to ADAPT as a
+        starting point, or None. Never returns an unverified/failed run, and applies the same
+        `unsafe_to_reuse` guard (swaps / identifier changes / polarity flips) the answer cache uses,
+        so a different-but-similar task is not reused. The caller still re-verifies the seeded code
+        through the full gate stack — this only seeds the first attempt, it never bypasses a gate."""
+        now = time.time()
+        user = user_id or "local"
+        cutoff = None if max_age_seconds is None else now - max_age_seconds
+        params: List[Any] = [user]
+        sql = ("SELECT id, task, code, verification, updated_at, reuse_count "
+               "FROM agent_runs WHERE user_id = ? AND verified = 1 AND code IS NOT NULL AND code <> ''")
+        if cutoff is not None:
+            sql += " AND updated_at >= ?"
+            params.append(cutoff)
+        sql += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(max(1, int(limit)))
+        best: Optional[Dict[str, Any]] = None
+        with self._conn() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+        for row in rows:
+            if unsafe_to_reuse(task, row["task"]):
+                continue
+            lex = question_similarity(task, row["task"])
+            if lex < min_similarity:
+                continue
+            if best is None or lex > best["similarity"]:
+                best = {"id": int(row["id"]), "task": row["task"], "code": row["code"],
+                        "verification": row["verification"], "similarity": float(lex)}
+        return best
+
+    def record_agent_run_reuse(self, run_id: int) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE agent_runs SET reuse_count = reuse_count + 1, last_used_at = ? WHERE id = ?",
+                (time.time(), int(run_id)),
+            )
+
+    def agent_failure_patterns(
+        self,
+        *,
+        user_id: Optional[str] = None,
+        max_age_seconds: Optional[float] = None,
+        limit: int = 5000,
+    ) -> Dict[str, Any]:
+        """Aggregate recorded NON-verified runs into recurring failure patterns for a developer to
+        review (read-only — the system changes nothing). Returns overall totals plus, per pattern, a
+        count and a few example tasks. Verified runs are counted but never flagged as a pattern."""
+        now = time.time()
+        cutoff = None if max_age_seconds is None else now - max_age_seconds
+        clauses: List[str] = []
+        params: List[Any] = []
+        if user_id:
+            clauses.append("user_id = ?")
+            params.append(user_id)
+        if cutoff is not None:
+            clauses.append("created_at >= ?")
+            params.append(cutoff)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT task, verification, verified, stop_reason, cheat_reasons_json, diagnosis, "
+                "gate_fail, failing_checks_json, hidden_passed, hidden_total FROM agent_runs"
+                + where + " ORDER BY created_at DESC LIMIT ?",
+                tuple(params) + (max(1, int(limit)),),
+            ).fetchall()
+
+        total = len(rows)
+        verified_n = sum(1 for r in rows if r["verified"])
+        buckets: Dict[str, Dict[str, Any]] = {}
+
+        def _bump(key: str, label: str, task: str, note: str) -> None:
+            b = buckets.setdefault(key, {"pattern": label, "count": 0, "examples": []})
+            b["count"] += 1
+            if len(b["examples"]) < 5:
+                b["examples"].append({"task": (task or "")[:140], "note": (note or "")[:240]})
+
+        def _loads(s: str) -> List[Any]:
+            try:
+                return list(json.loads(s or "[]"))
+            except Exception:
+                return []
+
+        for r in rows:
+            if r["verified"]:
+                continue
+            cheats = _loads(r["cheat_reasons_json"])
+            fails = [str(f) for f in _loads(r["failing_checks_json"])]
+            diag = (r["diagnosis"] or "").lower()
+            gate = r["gate_fail"] or ""
+            matched = False
+            if any(("mask" in c.lower() or "renormalis" in c.lower() or "clamp" in c.lower())
+                   for c in cheats):
+                _bump("masking", "reward-hacking: masking (forced a check to pass)", r["task"],
+                      "; ".join(cheats)); matched = True
+            elif cheats:
+                _bump("gaming", "reward-hacking: test-gaming / hardcoding", r["task"],
+                      "; ".join(cheats)); matched = True
+            if gate:
+                _bump("delivery", "missing / empty output (delivery gate)", r["task"], gate)
+                matched = True
+            if any(f.startswith("test_definition") for f in fails):
+                _bump("definition", "wrong reported quantity (definition gate)", r["task"],
+                      ", ".join(fails)); matched = True
+            if ("shape" in diag or "structure" in diag or "contract" in diag or "arity" in diag):
+                _bump("contract", "input-rigidity / wrong shape-or-type (return-contract)",
+                      r["task"], r["diagnosis"] or ""); matched = True
+            if ("tolerance" in diag or "stochastic" in diag or "standard error" in diag):
+                _bump("tolerance", "false-failure from a fixed tolerance on stochastic code",
+                      r["task"], r["diagnosis"] or ""); matched = True
+            if (r["hidden_total"] or 0) and (r["hidden_passed"] or 0) < (r["hidden_total"] or 0) \
+                    and not matched:
+                _bump("overfit", "fails on unseen inputs (overfit to the examples)", r["task"],
+                      r["diagnosis"] or ""); matched = True
+            if r["stop_reason"] in ("stall", "max_attempts") and not matched:
+                _bump("stall", "stalled / hit the attempt cap without verifying", r["task"],
+                      r["diagnosis"] or ""); matched = True
+            if not matched:
+                _bump("other", "other unverified outcome", r["task"],
+                      (r["verification"] or "") + " " + (r["diagnosis"] or ""))
+
+        patterns = sorted(buckets.values(), key=lambda b: b["count"], reverse=True)
+        return {"total_runs": total, "verified": verified_n,
+                "unverified": total - verified_n, "patterns": patterns}
 
     def clear_answer_cache(
         self,

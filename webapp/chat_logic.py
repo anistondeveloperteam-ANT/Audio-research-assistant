@@ -42,9 +42,13 @@ from backend.answering.agentic_answer import (  # noqa: E402
     followup_query,
     has_actionable_feedback,
     has_concrete_gap,
+    independent_check,
+    independent_verify_enabled,
+    is_truly_verified,
     max_deep_loops,
     python_blocks_in_order,
     max_verify_rounds,
+    REASONING_ANSWER_SYSTEM,
     run_best_python_block,
     verification_passed,
     verify_answer,
@@ -61,6 +65,10 @@ from backend.answering.evidence_grader import (  # noqa: E402
     extract_algorithm_spec,
     grade_evidence,
     paper_is_thin,
+)
+from backend.answering.relevance_gate import (  # noqa: E402
+    relevance_gate_enabled,
+    relevant_source_indices,
 )
 
 
@@ -123,8 +131,19 @@ SYSTEM_PROMPT = (
     "  when a cited source EXPLICITLY ties them together. If a source is about a DIFFERENT entity\n"
     "  than the one asked about (e.g. a model from another lab/company), do NOT present it as the\n"
     "  asked-about entity's work — say the evidence doesn't cover that entity instead.\n"
-    "- If the sources genuinely don't cover part of the question, say so plainly and\n"
-    "  answer what you can from what is available.\n"
+    "- RELEVANCE: use ONLY sources that directly address THIS question. A citation must directly\n"
+    "  support the specific claim it is attached to — if a numbered source does not support a claim,\n"
+    "  do NOT cite it and do NOT bend the answer to fit it. If NONE of the sources address the\n"
+    "  question, ignore them and answer from your own reasoning, noting the sources weren't relevant.\n"
+    "- SELF-CONTAINED questions (a calculation, unit conversion, derivation, definition, or standard\n"
+    "  textbook / general-knowledge reasoning question whose answer does NOT depend on these specific\n"
+    "  sources): ANSWER DIRECTLY and CORRECTLY from your own knowledge and reasoning, showing the\n"
+    "  working — do NOT reply that the sources don't cover it. A correct reasoned answer is exactly\n"
+    "  what's wanted; you do not need a source to do arithmetic or apply standard knowledge.\n"
+    "- If the sources don't cover part of the question, answer THAT part from your own reasoning when\n"
+    "  it is self-contained or standard, and say the evidence is insufficient ONLY for an EXTERNAL or\n"
+    "  empirical fact you genuinely cannot reason out (a specific dataset value, a paper's result, a\n"
+    "  current event) — never refuse a whole question the answer to which you can simply reason out.\n"
     "- For code / implementation / simulation requests: you MAY use your OWN expert knowledge\n"
     "  of the algorithm to write COMPLETE, RUNNABLE, ORIGINAL code (imports + a small runnable\n"
     "  example). Do NOT refuse because the sources lack code. Cite sources for the surrounding\n"
@@ -364,7 +383,30 @@ def _strip_answer_footers(text: str) -> str:
     return (text or "")[:cut].strip()
 
 
+_EVIDENCE_REFUSAL_RE = re.compile(
+    r"\b(the\s+)?(provided\s+|retrieved\s+|available\s+|numbered\s+|given\s+)?"
+    r"(evidence|sources?|excerpts?|context|documents?|passages?|references?)\b"
+    r"[^.]{0,60}?\b(do(es)?\s+not|don'?t|doesn'?t|did\s+not|didn'?t|lack|fail(s|ed)?\s+to|cannot|"
+    r"can'?t|no\b|without)[^.]{0,40}?\b(contain|cover|address|include|mention|discuss|provide|have|"
+    r"specify|describe|support|answer|information|detail)", re.I)
+
+
+def _is_evidence_refusal(answer: str) -> bool:
+    """True when the answer is essentially 'the evidence/sources don't cover this' — a non-answer that a
+    self-contained / reasoning-answerable question must NOT receive (the retrieved sources were just
+    irrelevant). Matched on the OPENING SENTENCE only: a real answer LEADS with the answer (per the
+    system prompt), so a brief later caveat inside a genuine answer is not mistaken for a refusal."""
+    text = (answer or "").strip()
+    if not text:
+        return False
+    first_sentence = re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0][:240].lower()
+    return bool(_EVIDENCE_REFUSAL_RE.search(first_sentence))
+
+
 def _cacheable_answer(question: str, answer: str, sources: List[Dict[str, Any]]) -> bool:
+    """A real answer is cacheable on its QUALITY, not on whether it carries sources — so a high-quality
+    REASONING answer (no sources) is stored too. The verified flag (passed separately to cache_answer)
+    governs reuse; this only screens out non-answers (too short, provider/refusal failure markers)."""
     if not answer_cache_enabled() or _freshness_sensitive(question):
         return False
     text = (answer or "").strip()
@@ -374,12 +416,14 @@ def _cacheable_answer(question: str, answer: str, sources: List[Dict[str, Any]])
     failure_markers = (
         "answer generation failed",
         "i couldn't find relevant information",
+        "i couldn't find current information",
+        "i couldn't produce a confident answer",
         "no knowledge source is enabled",
         "the language model isn't available",
     )
     if any(marker in low for marker in failure_markers):
         return False
-    return bool(sources)
+    return True
 
 
 def _score(r: Dict[str, Any]) -> float:
@@ -549,6 +593,40 @@ def _relevant_sources(answer: str, sources: List[Dict[str, Any]]) -> List[Dict[s
         return sources
     kept = [s for s in sources if s.get("n") in cited]
     return kept or sources
+
+
+def _apply_relevance_gate(items: List[Dict[str, Any]], question: str, trace):
+    """PRE-DRAFT relevance gate: keep only retrieved sources that genuinely address the question,
+    so an irrelevant (topically-similar) source can never ground or be cited in the answer. Returns
+    the filtered items — possibly EMPTY, in which case the caller's no-items branch answers from
+    reasoning with no citation. Generator: yields status events, returns the filtered list.
+
+    Fail-open: if the gate is off / the provider is unavailable / the judge can't be parsed, the
+    judge returns ALL indices, so nothing is dropped and behaviour is unchanged."""
+    if not items or not relevance_gate_enabled():
+        return items
+    try:
+        provider = get_provider()
+    except Exception:
+        return items
+    if not getattr(provider, "is_available", False):
+        return items
+    with trace.span("source_relevance_gate") as _sp:
+        keep = relevant_source_indices(provider, question=question, items=items)
+        _sp.set(kept=len(keep), total=len(items))
+    if len(keep) >= len(items):                 # all relevant (or fail-open) -> unchanged
+        return items
+    filtered = [it for i, it in enumerate(items, 1) if i in keep]
+    dropped = len(items) - len(filtered)
+    if filtered:
+        yield {"type": "status",
+               "message": f"Set aside {dropped} retrieved source(s) that didn't address your "
+                          f"question; using only the relevant ones."}
+    else:
+        yield {"type": "status",
+               "message": "The retrieved sources didn't address your question — answering from "
+                          "reasoning instead."}
+    return filtered
 
 
 # UI badge text per CRAG grade — the frontend renders {"type":"grade",...} as a small chip on
@@ -1077,6 +1155,7 @@ def _run_code_agent(question: str, session_id: str, mem,
         _convo_parts.append("Summary of earlier conversation:\n" + _ctx["summary"])
     _convo_parts += [f"{t['role']}: {t['content']}" for t in _ctx["history"] if t.get("content")]
     conversation = "\n".join(_convo_parts)[:3000]
+    _uid = (mem.session_owner(session_id) or "local")    # record/reuse agent runs per owner
 
     ev: "queue.Queue" = queue.Queue()
     DONE = object()
@@ -1085,7 +1164,8 @@ def _run_code_agent(question: str, session_id: str, mem,
     def worker():
         try:
             box["res"] = run_agent(question, brief=paper_spec, use_search=supplement_github,
-                                   conversation=conversation, on_event=ev.put)
+                                   conversation=conversation, on_event=ev.put,
+                                   result_memory=mem, user_id=_uid)
         except Exception as exc:
             ev.put({"type": "error", "message": str(exc)})
         finally:
@@ -1244,6 +1324,93 @@ def _answer_from_conversation(question: str, mem, session_id: str,
 # ----------------------------------------------------------------------
 # The streaming orchestration
 # ----------------------------------------------------------------------
+def _av_meta(node_id, q_version_id, av: Dict[str, Any]) -> Dict[str, Any]:
+    """Answer-version fields for the `done` event (module-level so helpers can build it too)."""
+    return {"node_id": node_id, "qversion_id": q_version_id, "answer_turn_id": av["turn_id"],
+            "answer_version_index": av["version_index"], "answer_total": av["total"]}
+
+
+def _reasoning_fallback(q: str, mem, session_id: str, q_version_id, node_id, user_id: str,
+                        cache_on: bool, query_emb, query_meta, trace,
+                        *, no_sources_enabled: bool = False) -> Iterator[Dict[str, Any]]:
+    """No usable retrieved evidence — answer a SOLVABLE question from the model's own reasoning instead
+    of refusing. Judge the answer's quality ORIGIN-INDEPENDENTLY (basis='reasoning'); return it when it
+    is good, append an honest note when it genuinely needs external facts, and cache it WITH its quality
+    status (reusable only if verified)."""
+    def _ans_meta(av: Dict[str, Any]) -> Dict[str, Any]:
+        return _av_meta(node_id, q_version_id, av)
+    provider = get_provider()
+    if not provider.is_available:
+        msg = "The language model isn't available right now, so I can't answer this."
+        yield {"type": "token", "text": msg}
+        _av = mem.add_answer_version(q_version_id, msg, sources=[])
+        trace.set(n_sources=0).end()
+        yield {"type": "done", "answer": msg, **_ans_meta(_av)}
+        return
+
+    yield {"type": "status", "message": "No matching documents — reasoning it out..."}
+    _ctx = _build_compact_context(mem, session_id, q)
+    sys_prompt = _today_note() + REASONING_ANSWER_SYSTEM + _ctx["system_extra"]
+    parts: List[str] = []
+    try:
+        for piece in provider.stream_chat(
+                _ctx["history"] + [{"role": "user", "content": q}], system=sys_prompt,
+                max_tokens=_answer_max_tokens(), temperature=0.3, yield_reasoning=True):
+            if isinstance(piece, dict):
+                yield {"type": "thinking", "text": piece.get("reasoning", "")}
+            else:
+                parts.append(piece)
+                yield {"type": "token", "text": piece}
+    except Exception as exc:                                   # noqa: BLE001 - degrade, don't crash
+        logger.info("reasoning fallback draft failed: %s", exc)
+    answer = "".join(parts).strip()
+    if not answer:
+        msg = "I couldn't produce a confident answer for this."
+        yield {"type": "token", "text": msg}
+        _av = mem.add_answer_version(q_version_id, msg, sources=[])
+        trace.set(n_sources=0).end()
+        yield {"type": "done", "answer": msg, **_ans_meta(_av)}
+        return
+
+    yield {"type": "status", "message": "Checking the answer's quality..."}
+    try:
+        verdict = verify_answer(provider, question=q, evidence="", answer=answer, basis="reasoning")
+    except Exception:                                          # noqa: BLE001 - never drop a real answer
+        verdict = {"ok": True, "score": 100}
+    dep_good = verification_passed(verdict)
+    # INDEPENDENT confirmation: self-consistent reasoning is NOT enough. Re-derive + sanity-check by a
+    # route that doesn't share the answer's assumptions — this is where a unit / magnitude slip is caught.
+    if dep_good and independent_verify_enabled():
+        yield {"type": "status",
+               "message": "Independently re-deriving and sanity-checking the result (units, magnitude)..."}
+    ind = independent_check(provider, question=q, answer=answer) if dep_good else {"agrees": None}
+    good = is_truly_verified(dep_good, ind)
+    if dep_good and ind.get("agrees") is False:
+        issues = "; ".join(str(x) for x in (ind.get("issues") or []))[:200]
+        note = ("\n\n_Note: an independent re-derivation / sanity-check disagreed with this answer"
+                + (f" ({issues})" if issues else "") + " — treat it as unverified and double-check._")
+        yield {"type": "token", "text": note}
+        answer = (answer + note).strip()
+    elif not good and verdict.get("needs_more_search"):
+        note = "\n\n_Note: parts of this may need up-to-date or external information I don't have"
+        if no_sources_enabled:
+            note += " (enable web or local sources in `.env` for document-grounded answers)"
+        note += "; treat the above as best-effort reasoning._"
+        yield {"type": "token", "text": note}
+        answer = (answer + note).strip()
+
+    _av = mem.add_answer_version(q_version_id, answer, sources=[])
+    if cache_on and _cacheable_answer(q, answer, []):
+        try:
+            mem.cache_answer(user_id=user_id, session_id=session_id, question=q,
+                             answer=_strip_answer_footers(answer), sources=[],
+                             embedding=query_emb, embedding_meta=query_meta, verified=good)
+        except Exception:                                      # noqa: BLE001 - caching is best-effort
+            pass
+    trace.set(n_sources=0).end()
+    yield {"type": "done", "answer": answer, **_ans_meta(_av)}
+
+
 def stream_chat_events(
     session_id: str,
     question: str,
@@ -1276,6 +1443,9 @@ def stream_chat_events(
             yield {"type": "error", "message": "That question version is no longer available."}
             return
         q = (_regen_qv.get("content") or "").strip()
+        # Regenerate signals dissatisfaction with the prior answer: mark any cached copy NOT reusable so
+        # it is never replayed; the fresh answer re-upgrades the record if it is judged high-quality.
+        mem.downgrade_cached_answer(user_id, q)
 
     sanity = check_query_sanity(q)
     if not sanity.ok:
@@ -1414,10 +1584,12 @@ def stream_chat_events(
     # Embed the question ONCE (if semantic reuse is on); reused for lookup AND save.
     query_emb, query_meta = (None, None)
     cache_on = answer_cache_enabled() and not _freshness_sensitive(q)
+    reuse_on = cache_on and regen_qversion_id is None      # regenerate re-answers fresh; never replays
     cached = None
-    with trace.span("cache_check", enabled=cache_on) as _sp:
-        if cache_on:
-            query_emb, query_meta = _query_embedding(q)
+    if cache_on:
+        query_emb, query_meta = _query_embedding(q)        # used for the reuse lookup AND for saving
+    with trace.span("cache_check", enabled=reuse_on) as _sp:
+        if reuse_on:
             cached = mem.find_cached_answer(
                 user_id=user_id,
                 question=q,
@@ -1550,19 +1722,28 @@ def stream_chat_events(
         yield from _legacy_sweep(queries, local_on=local_on, mode=mode, trace=trace,
                                  items=items, seen_warnings=seen_warnings)
 
-    # --- Nothing available at all -> explain instead of guessing ---
+    # --- RELEVANCE GATE: keep only the retrieved sources that genuinely address the question.
+    #     Topically-similar-but-irrelevant hits (which reranker scores can't catch) must never
+    #     ground or be cited; if the gate empties `items`, the no-items branch below answers from
+    #     reasoning with no spurious citation. ---
+    items = yield from _apply_relevance_gate(items, q, trace)
+
+    # --- Nothing retrieved (or nothing relevant) -> ANSWER FROM REASONING, don't refuse a
+    #     solvable question; don't bend it to an irrelevant source ---
     if not items:
-        if not local_on and not is_web_search_enabled():
-            msg = ("No knowledge source is enabled. Set `ENABLE_WEB_SEARCH=true` (and "
-                   "optionally `TAVILY_API_KEY` for web pages & patents) in `.env`, or "
-                   "turn on local papers with `ENABLE_LOCAL_RAG=true`.")
-        else:
-            msg = "I couldn't find relevant information for that question in the available sources."
+        no_src = not local_on and not is_web_search_enabled()
         yield {"type": "sources", "sources": []}
-        yield {"type": "token", "text": msg}
-        _av = mem.add_answer_version(q_version_id, msg, sources=[])
-        trace.set(n_sources=0).end()
-        yield {"type": "done", "answer": msg, **_ans_meta(_av)}
+        if _freshness_sensitive(q):
+            # Genuinely depends on current/external data we couldn't find -> honest, never fabricate.
+            msg = "I couldn't find current information for that in the available sources."
+            yield {"type": "token", "text": msg}
+            _av = mem.add_answer_version(q_version_id, msg, sources=[])
+            trace.set(n_sources=0).end()
+            yield {"type": "done", "answer": msg, **_ans_meta(_av)}
+            return
+        # Self-contained / reasoning-answerable: answer from reasoning, judge it, return or refine.
+        yield from _reasoning_fallback(q, mem, session_id, q_version_id, node_id, user_id, cache_on,
+                                       query_emb, query_meta, trace, no_sources_enabled=no_src)
         return
 
     with trace.span("source_selection") as _sp:
@@ -1584,6 +1765,7 @@ def stream_chat_events(
     loop_run_failed = False     # generated Python failed in the sandbox
     answer_rewritten = False    # auto-review replaced the answer post-verification
     self_rag_escalated = False  # STRONG answer failed verification -> escalated to web once
+    reroute_to_reasoning = False  # evidence draft refused a self-contained Q -> answer from reasoning
     clean_body = ""             # the answer body to cache (no review/verify footers)
     try:
         provider = get_provider()
@@ -1838,7 +2020,12 @@ def stream_chat_events(
                                 pass
 
             clean_body = answer or ""
-            if not (answer or "").strip():
+            # ROOT FIX: an "evidence doesn't cover this" non-answer on a non-time-sensitive question
+            # means the retrieved sources were IRRELEVANT to a self-contained / reasoning-answerable
+            # question — do NOT ship the refusal. Skip emitting it and re-answer from REASONING below.
+            if (answer or "").strip() and _is_evidence_refusal(answer) and not _freshness_sensitive(q):
+                reroute_to_reasoning = True
+            elif not (answer or "").strip():
                 # Empty draft (e.g. an OpenRouter 402 capped output to ~0 tokens): show a
                 # real, actionable message instead of "(no answer)" + a fake verification.
                 final_answer = (
@@ -1848,16 +2035,18 @@ def stream_chat_events(
                     "has credits (a local Ollama model is free), or lower `ANSWER_MAX_TOKENS` "
                     "and `EVIDENCE_BUDGET_CHARS` in `.env`."
                 )
+                answer_parts.append(final_answer)
+                yield {"type": "token", "text": final_answer}
             else:
                 final_answer = answer   # clean body; no internal verifier/review jargon
-            answer_parts.append(final_answer)
-            yield {"type": "token", "text": final_answer}
-            # Below the verification bar (or flagged off-topic) -> one clean styled warning,
-            # never raw "(40/100, 5 round(s))" or "minor revision (novelty 7 ...)".
-            if (answer or "").strip() and ((verdict and not verification_passed(verdict)) or review_offtopic):
-                yield {"type": "low_confidence", "message": (
-                    "This answer couldn't be fully verified against the available sources — "
-                    "treat the key claims with caution and double-check anything critical.")}
+                answer_parts.append(final_answer)
+                yield {"type": "token", "text": final_answer}
+                # Below the verification bar (or flagged off-topic) -> one clean styled warning,
+                # never raw "(40/100, 5 round(s))" or "minor revision (novelty 7 ...)".
+                if (verdict and not verification_passed(verdict)) or review_offtopic:
+                    yield {"type": "low_confidence", "message": (
+                        "This answer couldn't be fully verified against the available sources — "
+                        "treat the key claims with caution and double-check anything critical.")}
         else:
             provider_ok = True
             yield {"type": "status", "message": "Writing the answer..."}
@@ -1885,6 +2074,14 @@ def stream_chat_events(
         answer_parts.append(msg)
         yield {"type": "token", "text": msg}
 
+    # The evidence draft refused a self-contained question (irrelevant sources) -> answer it from
+    # REASONING instead of shipping the refusal. _reasoning_fallback yields its own answer + done.
+    if reroute_to_reasoning:
+        yield {"type": "status", "message": "The sources didn't cover this — answering from reasoning instead..."}
+        yield from _reasoning_fallback(q, mem, session_id, q_version_id, node_id, user_id,
+                                       cache_on, query_emb, query_meta, trace)
+        return
+
     answer = "".join(answer_parts).strip() or "(no answer)"
     with trace.span("memory_save") as _sp:
         sources = _public_sources(items)
@@ -1907,12 +2104,30 @@ def stream_chat_events(
         # Save for reuse ONLY when the generation truly succeeded: provider worked, no
         # exception, the agentic answer passed verification AND its code didn't fail, and
         # the answer wasn't rewritten post-verification. Cache the clean body (no footers).
-        verified = (not agentic_loop_enabled()) or (verification_passed(verdict) and not loop_run_failed)
+        dep_verified = (not agentic_loop_enabled()) or (verification_passed(verdict) and not loop_run_failed)
+        # SELF-CONSISTENT != VERIFIED: confirm by an INDEPENDENT route (re-derive + unit / magnitude /
+        # limiting-case sanity) before trusting or caching as verified. A disagreement -> honest confidence.
+        ind_check: Dict[str, Any] = {"agrees": None}
+        if (dep_verified and provider_ok and not gen_failed and independent_verify_enabled()
+                and (answer or "").strip() and answer != "(no answer)"):
+            yield {"type": "status",
+                   "message": "Independently re-deriving and sanity-checking the answer..."}
+            ind_check = independent_check(provider, question=q, answer=answer)
+        verified = is_truly_verified(dep_verified, ind_check)
+        if dep_verified and ind_check.get("agrees") is False:
+            issues = "; ".join(str(x) for x in (ind_check.get("issues") or []))[:200]
+            yield {"type": "low_confidence", "message": (
+                "An independent re-derivation disagreed with this answer"
+                + (f" ({issues})" if issues else "")
+                + " — it couldn't be independently confirmed, so treat the key claims with caution.")}
+        quality_ok = bool(verified and not answer_rewritten)   # reusable only when independently verified
         body = (clean_body or "").strip() or _strip_answer_footers(answer)
         body, _ = repair_citations(body, full_n)
         did_cache = False
-        if (cache_on and provider_ok and not gen_failed and verified
-                and not answer_rewritten and _cacheable_answer(q, body, display_sources)):
+        if (cache_on and provider_ok and not gen_failed
+                and _cacheable_answer(q, body, display_sources)):
+            # Store WITH its quality status: a verified answer is reusable; a low-quality one is recorded
+            # (verified=0) but NEVER replayed, and a later verified answer upgrades it.
             mem.cache_answer(
                 user_id=user_id,
                 session_id=session_id,
@@ -1921,6 +2136,7 @@ def stream_chat_events(
                 sources=display_sources,
                 embedding=query_emb,
                 embedding_meta=query_meta,
+                verified=quality_ok,
             )
             did_cache = True
         _sp.set(cached=did_cache, citations_removed=len(removed_citations))

@@ -57,6 +57,13 @@ def auto_review_enabled() -> bool:
     return env_flag("AUTO_REVIEW", default=True)
 
 
+def independent_verify_enabled() -> bool:
+    """Independent confirmation layer (default on): before an answer is labelled 'verified', confirm it
+    by a route that does NOT share its derivation (re-derive from scratch + unit/magnitude/limiting-case
+    sanity). Self-consistent self-tests are the DEPENDENT layer; this adds the independent one on top."""
+    return env_flag("AGENTIC_INDEPENDENT_VERIFY", default=True)
+
+
 def complete_text(
     provider: Any,
     messages: List[Dict[str, str]],
@@ -185,6 +192,40 @@ _VERIFY_SYSTEM = (
     '"missing_evidence": ["gap"], "citation_issues": ["issue"]}'
 )
 
+# ORIGIN-INDEPENDENT quality judge for an answer produced from the model's OWN reasoning (no retrieved
+# evidence). It judges CORRECTNESS / COMPLETENESS / HONESTY — NOT whether sources are cited — so a
+# correct self-contained answer is not failed merely for lacking citations, and a wrong or fact-
+# fabricating one is still caught.
+_VERIFY_REASONING_SYSTEM = (
+    "You are a strict ANSWER-QUALITY judge for a research assistant. This answer was produced from the "
+    "model's OWN REASONING / GENERAL KNOWLEDGE — there is no retrieved evidence, because the question is "
+    "self-contained or answerable without external documents. Judge the answer ON ITS MERITS, NOT by "
+    "whether it cites sources: is it CORRECT (internally consistent; the reasoning/derivation is sound "
+    "and, where it matters, shown; any calculation checks out), COMPLETE (addresses the whole question), "
+    "and HONEST (it does NOT fabricate specific external facts, figures, dates, or citations it cannot "
+    "know)? Do NOT require citations for a self-contained answer. Score HIGH when it is correct and "
+    "complete. Score LOW when it is wrong, incomplete, or invents external facts — and if the question "
+    "GENUINELY needs up-to-date or external information the model cannot supply, set needs_more_search="
+    "true with a followup_query. Reply with ONLY JSON:\n"
+    '{"ok": true|false, "score": 0-100, "needs_more_search": true|false, '
+    '"followup_query": "short search query if external facts are required", '
+    '"feedback": "specific corrections needed", '
+    '"missing_evidence": ["gap"], "citation_issues": []}'
+)
+
+# Draft prompt for the reasoning basis: answer a solvable question from knowledge/derivation, never
+# refuse for lack of sources, never fabricate external facts.
+REASONING_ANSWER_SYSTEM = (
+    "You are an expert research assistant. Answer the user's question DIRECTLY and CORRECTLY using your "
+    "own knowledge and step-by-step reasoning — there is no retrieved document for this question, and "
+    "that is fine: a correct answer from reasoning is exactly what is wanted. SHOW your reasoning / "
+    "derivation / calculation so the answer is checkable, then give a clear final answer. Do NOT refuse "
+    "for lack of sources, and do NOT invent specific external facts, figures, dates, or citations you "
+    "cannot verify — if part of the question truly needs current or external data you don't have, say so "
+    "plainly for that part and answer the rest. Prefer an honest 'I'm not certain' over a confident "
+    "guess on anything you cannot derive."
+)
+
 
 def verify_answer(
     provider: Any,
@@ -193,7 +234,11 @@ def verify_answer(
     evidence: str,
     answer: str,
     run_info: Optional[Dict[str, Any]] = None,
+    basis: str = "evidence",
 ) -> Dict[str, Any]:
+    """Judge an answer's quality. `basis="evidence"` (default) checks grounding + citations against the
+    numbered evidence; `basis="reasoning"` (or no evidence) judges correctness/completeness/honesty of a
+    self-contained answer WITHOUT requiring citations — the SAME quality bar, origin-independent."""
     run_text = ""
     if run_info:
         run_text = (
@@ -203,16 +248,19 @@ def verify_answer(
             f"stderr:\n{run_info.get('stderr') or '(none)'}\n"
             f"error: {run_info.get('error') or '(none)'}"
         )
+    reasoning = basis == "reasoning" or not (evidence or "").strip()
+    system = _VERIFY_REASONING_SYSTEM if reasoning else _VERIFY_SYSTEM
+    evidence_section = "" if reasoning else f"NUMBERED EVIDENCE:\n{evidence}\n\n"
     user = (
         f"QUESTION:\n{question}\n\n"
-        f"NUMBERED EVIDENCE:\n{evidence}\n\n"
+        f"{evidence_section}"
         f"ANSWER TO VERIFY:\n{answer}"
         f"{run_text}"
     )
     raw = complete_text(
         provider,
         [{"role": "user", "content": user}],
-        system=_VERIFY_SYSTEM,
+        system=system,
         max_tokens=int(os.getenv("AGENTIC_VERIFY_MAX_TOKENS", "1200")),
         temperature=0.0,
     )
@@ -235,6 +283,81 @@ def verify_answer(
 
 def verification_passed(verdict: Dict[str, Any]) -> bool:
     return bool(verdict.get("ok")) and int(verdict.get("score", 0)) >= min_verify_score()
+
+
+# INDEPENDENT verification: confirm the answer by a route that does NOT share its derivation, so an
+# error baked into the answer's own assumptions (a missed unit conversion, a wrong factor, an
+# implausible magnitude) cannot pass undetected — a self-derived check inherits that very error.
+_INDEPENDENT_VERIFY_SYSTEM = (
+    "You are an INDEPENDENT checker. You are given a QUESTION and a PROPOSED ANSWER. Do NOT trust or "
+    "reuse HOW the answer was derived — SOLVE THE PROBLEM YOURSELF FROM SCRATCH, by a DIFFERENT method "
+    "or decomposition than the answer appears to use, then COMPARE your independent result to the "
+    "answer's conclusion. ALSO run assumption-level SANITY CHECKS that a same-assumptions test would "
+    "MISS:\n"
+    "1. UNIT CONSISTENCY — track units end to end; the final unit must be exactly what the question "
+    "asks (e.g. Hz x bits x seconds = bits, then / 8 = bytes, then / 1e6 = MB). A dropped, extra, or "
+    "wrong conversion is a DISAGREEMENT.\n"
+    "2. ORDER OF MAGNITUDE / PLAUSIBILITY — is the result physically and numerically plausible: not off "
+    "by ~10x / 1000x, not negative or zero where impossible, within any obvious bound the problem "
+    "implies?\n"
+    "3. LIMITING / KNOWN CASES — does it behave correctly at a boundary, or match a well-known reference "
+    "value (a standard constant, a textbook figure)?\n"
+    "A flaw SHARED between the answer and a same-assumption check surfaces as a MISMATCH between YOUR "
+    "independent derivation (or a sanity check) and the answer — call it out specifically. Judge "
+    "AGREEMENT on the substantive result, allowing reasonable rounding/tolerance. If the question is a "
+    "matter of opinion or has nothing independently checkable, set agrees to null (do NOT force a "
+    "verdict). Reply with ONLY JSON:\n"
+    '{"agrees": true|false|null, "independent_answer": "your from-scratch result", '
+    '"issues": ["unit / magnitude / limiting-case / mismatch problems"], "confidence": 0-100}'
+)
+
+
+def independent_check(provider: Any, *, question: str, answer: str) -> Dict[str, Any]:
+    """INDEPENDENT confirmation by a route that does NOT share the answer's derivation: re-derive the
+    answer from scratch + assumption-level sanity (unit consistency, order-of-magnitude/plausibility,
+    limiting/known cases). Returns {agrees: True|False|None, independent_answer, issues, confidence}.
+    agrees=None means NO independent confirmation exists (an opinion, nothing checkable, or a hiccup) ->
+    the answer must NOT be labelled 'verified' on the dependent check alone. Fail-OPEN to None; never
+    raises."""
+    if not independent_verify_enabled() or not (answer or "").strip():
+        return {"agrees": None, "independent_answer": "", "issues": [], "confidence": 0}
+    user = (f"QUESTION:\n{question}\n\nPROPOSED ANSWER (do NOT reuse its derivation; solve it yourself, "
+            f"then compare):\n{answer}")
+    try:
+        raw = complete_text(
+            provider, [{"role": "user", "content": user}], system=_INDEPENDENT_VERIFY_SYSTEM,
+            max_tokens=int(os.getenv("AGENTIC_VERIFY_MAX_TOKENS", "1200")), temperature=0.0)
+    except Exception:                       # noqa: BLE001 - independence is best-effort, never fatal
+        return {"agrees": None, "independent_answer": "", "issues": [], "confidence": 0}
+    v = parse_json_object(raw)
+    raw_agrees = v.get("agrees", None)
+    if raw_agrees is True or (isinstance(raw_agrees, str) and raw_agrees.strip().lower() == "true"):
+        agrees: Optional[bool] = True
+    elif raw_agrees is False or (isinstance(raw_agrees, str) and raw_agrees.strip().lower() == "false"):
+        agrees = False
+    else:
+        agrees = None
+    issues = v.get("issues") or []
+    if not isinstance(issues, list):
+        issues = [str(issues)]
+    try:
+        conf = max(0, min(100, int(v.get("confidence", 0))))
+    except (TypeError, ValueError):
+        conf = 0
+    return {"agrees": agrees, "independent_answer": str(v.get("independent_answer", ""))[:2000],
+            "issues": [str(x) for x in issues][:6], "confidence": conf}
+
+
+def is_truly_verified(dependent_passed: bool, independent: Optional[Dict[str, Any]] = None) -> bool:
+    """SELF-CONSISTENT != VERIFIED. An answer is 'verified' ONLY when the dependent check passes AND an
+    INDEPENDENT check AGREES. A dependent pass with no independent confirmation (agrees None) or a
+    refutation (agrees False) is NOT verified — show the answer with honest confidence instead. With the
+    independent layer disabled, fall back to the legacy dependent-only result."""
+    if not dependent_passed:
+        return False
+    if not independent_verify_enabled():
+        return True
+    return bool(independent and independent.get("agrees") is True)
 
 
 # Placeholder used when the verifier returns nothing usable — NOT actionable guidance.
