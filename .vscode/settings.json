@@ -8,7 +8,18 @@
   "python.analysis.typeCheckingMode": "basic",
   "files.exclude": {
     "**/__pycache__": true,
-    "**/*.pyc": true
+    "**/*.pyc": true,
+    ".venv": true,
+    ".pytest_cache": true,
+    ".ruff_cache": true,
+    ".mypy_cache": true,
+    ".deepeval": true,
+    ".deepeval_telemetry.txt": true,
+    ".deepeval-cache.json": true,
+    "**/*.egg-info": true,
+    "**/*.db-wal": true,
+    "**/*.db-shm": true,
+    "**/*.db-journal": true
   },
   "files.watcherExclude": {
     "**/.venv/**": true,
