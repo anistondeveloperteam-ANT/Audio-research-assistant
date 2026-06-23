@@ -503,7 +503,7 @@ to this guide's stages:
 
 <div align="center">
 <sub>Kept in sync with the code. Companion docs: <a href="HOW_IT_WORKS.md">HOW_IT_WORKS</a> ·
-<a href="ARCHITECTURE.md">ARCHITECTURE</a> · <a href="PIPELINE.md">PIPELINE</a> (reference) ·
+<a href="ARCHITECTURE.md">ARCHITECTURE</a> · <a href="TECH_STACK.md">TECH_STACK</a> ·
 <a href="../README.md">README</a>.</sub>
 <br><sub>Python · FastAPI · Oracle 23ai · Docker · CUDA — self-hosted, no telemetry. MIT License.</sub>
 </div>

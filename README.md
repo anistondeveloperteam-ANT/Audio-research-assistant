@@ -283,7 +283,7 @@ flowchart TD
 | **`backend/maintenance/`** | One‑shot factory reset (wipe all local data) | `factory_reset.py` |
 | **`tests/`** | 826 offline tests — Docker / LLM / network mocked | `test_*.py` |
 
-> 🧭 Deeper dives: **[docs/PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md)** (the complete diagram-first pipeline guide, PDF-ready) · **[docs/DEEP_DIVE.md](docs/DEEP_DIVE.md)** (one‑page system deep dive — diagrams · tools · measured accuracy/latency) · [docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md) · [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PIPELINE.md](docs/PIPELINE.md) · [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md).
+> 🧭 Deeper dives ([full docs index](docs/README.md)): **[docs/PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md)** (the complete diagram-first pipeline guide, PDF-ready) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (architecture + code map) · [docs/TECH_STACK.md](docs/TECH_STACK.md) (technology) · [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) + [docs/MEASUREMENT.md](docs/MEASUREMENT.md) (measured accuracy/latency) · [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md).
 
 ---
 
