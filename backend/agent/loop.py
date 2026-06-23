@@ -131,6 +131,17 @@ def test_validation_enabled() -> bool:
     return os.getenv("AGENT_TEST_VALIDATION", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
+def test_critic_enabled() -> bool:
+    """Live read (AGENT_TEST_CRITIC, default on): before any generated test is allowed to judge a
+    candidate, a SEPARATE TEST-CRITIC role audits the suite and REWRITES every invalid test (guessed
+    value / hardcoded tolerance / exact-match on a non-unique quantity / wrong operational definition /
+    requirement-not-implied-by-task / wrong entity) into a check of the TRUE requirement, keeping valid
+    tests verbatim. Complements the execution-based quarantine (which only DROPS oracle-failing tests):
+    the critic repairs the gap a drop leaves and catches invalid checks an oracle itself shares. Off ->
+    only the inline execution quarantine runs."""
+    return os.getenv("AGENT_TEST_CRITIC", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
 def nonunique_validation_enabled() -> bool:
     """Live read (AGENT_NONUNIQUE_VALIDATION, default on): extend test-validation to catch tests that
     assert EXACT equality on a NON-UNIQUE quantity — one defined only up to scaling / sign / ordering /
@@ -140,6 +151,22 @@ def nonunique_validation_enabled() -> bool:
     valid representation fails exactly those tests while still satisfying every property check, so they
     are quarantined. Needs the reference oracle + test-validation; fail-open."""
     return os.getenv("AGENT_NONUNIQUE_VALIDATION", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def root_cause_enabled() -> bool:
+    """Live read (AGENT_ROOT_CAUSE_DIAGNOSIS, default on): before each rewrite, DIAGNOSE why a check
+    failed — map the SYMPTOM (a drifting invariant, a wrong sign, a blow-up) to the likely MECHANISM
+    and code location — and feed that targeted diagnosis to the next attempt, instead of mutating the
+    code blindly. Off falls back to the raw PASS/FAIL + traceback feedback only."""
+    return os.getenv("AGENT_ROOT_CAUSE_DIAGNOSIS", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def result_memory_enabled() -> bool:
+    """Live read (AGENT_RESULT_MEMORY, default on): record every code-agent run's outcome to the
+    SQLite store (for the developer failure-pattern report) and, on a new task, SEED the first attempt
+    with a near-identical VERIFIED prior solution. Reuse never bypasses a gate; only verified runs are
+    reused; the agent never edits its own source. Off disables both recording and reuse."""
+    return os.getenv("AGENT_RESULT_MEMORY", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
 @dataclass
@@ -332,9 +359,13 @@ _GEN_SYSTEM = (
     "You MAY use well-known third-party libraries when they are the right tool (e.g. numpy, "
     "scipy, pandas); the sandbox installs the packages you import, so import what you need. "
     "Write complete, self-contained, MODULAR code: small named functions for the core logic, "
-    "each with a clear signature. A separate harness imports and exercises your functions against "
-    "unit tests, so do NOT add a __main__ block, prints, or your own test runner — just define the "
-    "functions. "
+    "each with a clear signature. A separate harness IMPORTS your functions and exercises them with "
+    "unit tests, so do NOT put bare top-level prints or a test runner at module scope (they would run "
+    "on import). WHEN THE TASK ASKS TO COMPUTE AND PRINT / REPORT / SHOW RESULTS, your file must ALSO "
+    "be a RUNNABLE PROGRAM: add an `if __name__ == \"__main__\":` block that CALLS your functions on "
+    "the task's inputs and PRINTS every requested value with a clear label — so running the file "
+    "actually produces those outputs, while importing it for the tests does not run that block. "
+    "Defining functions with NO call site is an INCOMPLETE program for an output task. "
     "Write code CORRECT BY DESIGN — right for ANY valid input, not just the value it will be demoed "
     "on. Concretely: (1) make every input assumption EXPLICIT and enforce it — units (e.g. radians "
     "vs degrees before a trig call), valid ranges, types, array shapes, and indexing convention: "
@@ -343,6 +374,34 @@ _GEN_SYSTEM = (
     "and that are valid for it (empty, zero, negative, single element, min/max); (3) use NO magic "
     "constants that only work for the example — derive everything from the inputs. A function that "
     "returns the right number for the demo value but breaks on another valid input is WRONG. "
+    "CONSUME RETURN VALUES BY THEIR TRUE CONTRACT: when you call any function — your own or a "
+    "library's — use what it returns by its ACTUAL structure (type, array shape and axis meaning, "
+    "tuple/dict arity and field order, length, units). NEVER index, slice, unpack, or iterate a "
+    "returned value as if it had a different structure than the function returns — e.g. do not slice "
+    "a fixed-size summary/stats tuple as if it were the full data array, treat a scalar as a "
+    "sequence, read the wrong axis, or unpack the wrong number of values. At every boundary where a "
+    "produced value feeds the next step, make a structural mismatch fail LOUDLY — assert the expected "
+    "type/shape/length/arity (or convert) — instead of silently computing on the wrong data. "
+    "EXPOSE EVERY REPORTED QUANTITY: if the task asks to report an INTERMEDIATE or COMPONENT value "
+    "(an intermediate signal or its envelope, a sub-result, a per-stage metric), the function that "
+    "computes it must RETURN it (or otherwise make it directly available) — do NOT compute a reported "
+    "intermediate inside a function and discard it, leaving only the final result. When you print or "
+    "report a value, take it FROM the real return of the function that produced it; NEVER re-derive a "
+    "substitute, approximate it a second time, or report a different-but-related quantity (e.g. the "
+    "final signal in place of the intermediate envelope) in its place — a fabricated reported value is "
+    "WRONG even when the core computation is right. "
+    "FOLLOW THE REQUEST'S EXPLICIT INSTRUCTIONS LITERALLY — do NOT substitute your own plausible "
+    "choices. (1) PRINT EXACTLY THE NAMED OUTPUTS: compute and print the precise quantities the request "
+    "names, by their stated meaning — if it asks for 'the sum of X' print the sum of X (NOT the peak of "
+    "X, NOT a per-component breakdown); print every named output, the right quantity correctly "
+    "aggregated, and do not silently report a different, related set in their place. (2) USE THE "
+    "SPECIFIED METHOD: if the request names HOW — a method, operation, algorithm, or approach (e.g. "
+    "'apply the filter using convolution', 'integrate with RK4', 'via the FFT') — implement it with "
+    "THAT method; do NOT swap in a different technique because it seems equivalent (a causal/recursive "
+    "filter and a direct convolution differ in phase/delay, so they are NOT interchangeable). (3) "
+    "IMPLEMENT THE REQUEST'S EXACT FORMULA/DEFINITION when it gives one, not a textbook variant. A "
+    "result that reports DIFFERENT quantities or uses a DIFFERENT method than the request specified is "
+    "WRONG even if its own internal logic is self-consistent. "
     "Deliver the COMPLETE task: implement EVERY function and compute EVERY result the request asks "
     "for — never a subset. "
     "At RUNTIME the sandbox has no network, no file access, and no input() — do not use "
@@ -354,14 +413,28 @@ _REQ_SYSTEM = (
     "You are a senior engineer. Restate the user's coding task as a short, concrete checklist of "
     "requirements (3-7 bullets): the function(s) to implement WITH their signatures, the inputs "
     "and outputs, and the key correctness properties to satisfy. List EVERY explicit DELIVERABLE the "
-    "request asks for — each value to print/return, each comparison, each property to verify — so "
-    "nothing requested is dropped. For each deliverable, pin its EXACT DEFINITION: the precise "
+    "request asks for — each value to print/return, each comparison, each property to verify, "
+    "INCLUDING any INTERMEDIATE or COMPONENT quantity it asks to report (an intermediate signal or "
+    "envelope, a sub-result, a per-stage metric) — so nothing requested is dropped. State which "
+    "function must EXPOSE (return) each reported quantity, so an intermediate needed for the report is "
+    "a RETURN, not a value computed then discarded. For each deliverable, pin its EXACT DEFINITION: "
+    "the precise "
     "quantity (e.g. median NOT mean, diameter NOT radius), how it is AGGREGATED (sum / mean / max / "
     "last), the POINT/INDEX it is taken at (e.g. initial = at the start / t=0 / step 0 / index 0; "
     "final = at the end), and the units/convention — so a related-but-different quantity, a wrong "
     "aggregation, or a value at the wrong point is caught as WRONG. Include the INPUT CONTRACT "
     "explicitly — the units, valid ranges, types/shapes, and indexing convention each argument must "
-    "satisfy — so the implementation and the tests can ENFORCE it rather than guess. Use the "
+    "satisfy — so the implementation and the tests can ENFORCE it rather than guess. State each "
+    "function's RETURN CONTRACT just as precisely — the return type, and for an array its shape/"
+    "dimensions and what each axis means, for a tuple/dict its arity and the name and ORDER of every "
+    "field, plus units — so a consumer cannot misread the structure of what it returns. "
+    "If the request SPECIFIES HOW to do something — a NAMED METHOD, operation, algorithm, or approach "
+    "(e.g. 'apply the filter using convolution', 'integrate with RK4', 'compute via the FFT', 'sort "
+    "with mergesort') — list that as a MUST-USE requirement: the solution must use THAT exact method, "
+    "not a different-but-equivalent-looking one (a different technique can give different results — a "
+    "causal/recursive filter vs a direct convolution differ in phase/delay). If the request GIVES a "
+    "formula or DEFINES a term, restate that EXACT formula/definition as the one to implement, not a "
+    "textbook variant. Use the "
     "conversation context if given. Output ONLY the bullet list."
 )
 
@@ -369,7 +442,16 @@ _REFERENCE_SYSTEM = (
     "You write a CLEAR, CORRECT REFERENCE implementation that serves as the trusted ORACLE for "
     "testing: its EXECUTED outputs are the expected values a separate candidate solution is "
     "compared against. Correctness matters far more than speed or elegance — use the simplest "
-    "approach you are SURE is right. Prefer a DIFFERENT, INDEPENDENT method from what an optimized "
+    "approach you are SURE is right. Model the SPECIFIC system the task describes, INCLUDING every term "
+    "or condition that breaks an idealised behaviour (a dissipative / damping term, a driving / forcing "
+    "/ source term, an open boundary, an injection / removal process, an explicit asymmetry, randomness "
+    "/ noise) — do NOT silently 'simplify' to a textbook ideal (an UNDAMPED oscillator for a damped "
+    "one, a CLOSED system for an open one); a reference that drops such a term is WRONG and rejects "
+    "correct code. If the request SPECIFIES the method / operation / algorithm to use (e.g. 'apply the "
+    "filter using convolution', 'integrate with RK4', 'via the FFT'), your reference MUST use THAT "
+    "EXACT method — the spec is authoritative, so the oracle encodes the required approach and a "
+    "candidate that substitutes a different method is caught by the value mismatch. ONLY when the "
+    "request leaves the method OPEN, prefer a DIFFERENT, INDEPENDENT method from what an optimized "
     "candidate would write (e.g. a closed-form formula vs a numerical loop, a brute-force definition "
     "vs an optimized algorithm) so that if the candidate makes a hidden wrong assumption your oracle "
     "does NOT share it and the mismatch is caught instead of agreed on. "
@@ -384,7 +466,10 @@ _DRIVER_SYSTEM = (
     "already-defined functions on representative inputs taken from the task and PRINTS the results "
     "with clear labels (e.g. print('period (s):', period)). Print EVERY value the request asks for — "
     "each requested deliverable on its own line with a clear text label — so every one is visible in "
-    "the output.\n"
+    "the output. Obtain each reported value from the solution's REAL function return that produced it "
+    "(call the function that exposes it); NEVER re-derive, approximate, or substitute a requested "
+    "value — especially an intermediate (an envelope, a sub-result): if it is not available from the "
+    "functions, that is the solution's bug to fix, not something to fabricate here.\n"
     "DO NOT FLOOD STDOUT: never print a whole large array, matrix, tensor, DataFrame, or dataset in "
     "full. For any large or collection value, print only a COMPACT SUMMARY — its shape/length plus a "
     "few elements, or a statistic (min/max/mean) — NEVER thousands of values. Print ONLY the "
@@ -417,6 +502,13 @@ _TESTS_SYSTEM = (
     "(see below), otherwise as a PROPERTY that holds for any correct implementation. NEVER "
     "hand-write a literal expected number/output you imagined; a guessed expected value is the #1 "
     "cause of false failures;\n"
+    "- test for the EXACT quantities the request NAMES (not a related substitute), and if the request "
+    "SPECIFIES a METHOD / operation / approach, derive the expected value USING that method so code "
+    "that used a DIFFERENT technique is caught;\n"
+    "- CONSUME RETURN VALUES BY THEIR TRUE CONTRACT: whatever you read from the solution or from "
+    "`ref.*`, use it by its ACTUAL structure (type, shape, arity, field order) — never slice, unpack, "
+    "or iterate it as a different shape — and assert that structure before comparing values, so your "
+    "check operates on the RIGHT object, not a wrong-shaped stand-in;\n"
     "- each test must `assert` and raise AssertionError on failure.\n"
     "Do NOT define the solution, the reference, or any test runner. Output ONLY the test functions."
 )
@@ -443,8 +535,15 @@ _HIDDEN_SYSTEM = (
     "one input in a DIFFERENT parameter regime than the visible examples — a different size, scale, "
     "range, or unit; and (c) a probe of the INPUT CONTRACT: feed an input a fragile unit/index/type "
     "assumption would get wrong (e.g. an angle where radians-vs-degrees matters, an off-by-one "
-    "index, an int vs float) and assert the correct result. Get every EXPECTED value by COMPUTING "
-    "it (the reference oracle when provided, else a property) — NEVER a guessed literal. Compare "
+    "index, an int vs float) and assert the correct result. Read every value you get from the "
+    "solution or `ref.*` by its TRUE return structure (type/shape/arity/field order), never as a "
+    "different shape, and assert that structure so a return-contract mismatch is caught, not silently "
+    "passed. Get every EXPECTED value by COMPUTING "
+    "it (the reference oracle when provided, else a property) — NEVER a guessed literal. Only assert a "
+    "property the SPECIFIC system genuinely has: do NOT assert an idealised behaviour (conservation, "
+    "monotonicity, periodicity, boundedness, symmetry) that a term in THIS task breaks (a dissipative / "
+    "driving / open / injecting / asymmetric / random term) — check what the task's own rules imply, "
+    "not a template from a similar problem. Compare "
     "with tolerances DERIVED FROM THE PROBLEM (math.isclose / numpy.allclose) — a few STANDARD "
     "ERRORS for a stochastic estimate (atol ~= k * stdev / sqrt(N)), the method's error for an "
     "iterative/numerical result, tight only for an exact closed-form value — never an arbitrary "
@@ -464,11 +563,29 @@ _INVARIANTS_SYSTEM = (
     "candidate. Concretely: an 'initial'/'starting' value is the value at the START (t=0 / step 0 / "
     "index 0), a 'final' value at the END; a count is checked for off-by-one; a labelled quantity "
     "must equal that quantity (not a neighbour). A value that is internally consistent but taken at "
-    "the wrong point or under a different definition than the request stated is WRONG. THEN add "
+    "the wrong point or under a different definition than the request stated is WRONG. Cover any "
+    "INTERMEDIATE or COMPONENT value the request asks to report by reading the REAL intermediate the "
+    "solution EXPOSES (its function's return) and checking THAT against an independent computation — "
+    "never a re-derived or final-stage substitute; an intermediate the solution does not expose is a "
+    "contract gap the check must surface. Also assert "
+    "each output's STRUCTURE — its type, array shape, and tuple/dict arity — operating on the REAL "
+    "returned object (not a re-sliced or re-shaped stand-in); a value of the wrong type or shape, or "
+    "one produced by consuming an upstream function's return with the wrong structure, is WRONG even "
+    "if a number looks plausible. THEN add "
     "general properties: the given input values and the answer they imply, stated units/conventions, "
     "named constraints, and known identities (e.g. a beamformer's distortionless constraint "
     "w^H d ~= 1; Black-Scholes put-call parity C - P ~= S - K*exp(-rT), price >= 0, monotonic in "
-    "volatility). For any result defined only UP TO scaling, sign, ordering, phase, basis, or "
+    "volatility). BEFORE asserting ANY such property, CONFIRM THE SPECIFIC SYSTEM IN THIS TASK ACTUALLY "
+    "HAS IT — derive it from the task's OWN governing rules/spec, not by analogy to a similar-looking "
+    "idealised problem. An idealised property (a CONSERVED / MONOTONIC / PERIODIC / BOUNDED / STATIONARY "
+    "/ SYMMETRIC quantity) holds ONLY when the task's own rules imply it; if THIS task includes a "
+    "mechanism that BREAKS it — a dissipative / damping / friction term, a driving / forcing / source "
+    "term, an open boundary, an injection / removal / birth-death / source-sink process, an explicit "
+    "asymmetry, or randomness / noise — that property does NOT hold here and you MUST NOT assert it (no "
+    "energy conservation for a DAMPED oscillator, no constant total for an OPEN or driven system, no "
+    "monotonicity for a NOISY series, no periodicity for a decaying / chirped signal). For a quantity "
+    "the task makes CHANGE, check the change the task's rule PREDICTS, never constancy. "
+    "For any result defined only UP TO scaling, sign, ordering, phase, basis, or "
     "representation (an eigenvector/singular vector up to sign or scale, cluster labels up to "
     "permutation, a factorization up to ordering, a basis up to rotation, a vector up to "
     "normalization), do NOT assert one specific representation — assert the DEFINING PROPERTIES every "
@@ -476,6 +593,14 @@ _INVARIANTS_SYSTEM = (
     "the same partition up to relabelling; the factors multiply back to the input). "
     "Use RANDOM inputs where a property is general (use random / numpy.random; do NOT "
     "seed — the harness seeds globally), and the request's own values where the spec pins an answer. "
+    "If the request SPECIFIES a METHOD / operation / formula, an output computed a DIFFERENT way is "
+    "WRONG: where you can, compute the expected via the SPECIFIED method and assert the candidate "
+    "matches it. "
+    "ALSO add SANITY checks that catch ASSUMPTION-LEVEL errors a same-assumptions test misses: (i) UNIT "
+    "CONSISTENCY / SCALE — the result's units and scale match the spec (a dropped or wrong conversion "
+    "is a failure); (ii) ORDER OF MAGNITUDE / PLAUSIBILITY — the result sits in a sensible range with "
+    "the correct sign, not off by a large factor; (iii) KNOWN LIMITING CASES — correct behaviour at a "
+    "boundary (zero / empty / extreme) or against a known reference value. "
     "Use tolerances DERIVED FROM THE PROBLEM (a few standard errors for a stochastic quantity, the "
     "method's error for a numerical one, tight only for an exact value — never an arbitrary fixed "
     "threshold a correct result would trip), call the SOLUTION's functions directly, and `assert`. Do "
@@ -484,9 +609,21 @@ _INVARIANTS_SYSTEM = (
 
 _DEFINITION_SYSTEM = (
     "You write DEFINITION-MATCH checks: exactly ONE function test_definition_<name>() PER explicitly "
-    "requested output. Each asserts that the value the solution REPORTS for that output is the EXACT "
-    "thing the user asked for — the right QUANTITY, at the right POINT/TIME, with the right "
-    "AGGREGATION, in the right UNITS/CONVENTION — and not a related-but-different quantity. "
+    "requested output — INCLUDING any INTERMEDIATE or COMPONENT value the request asks to report (an "
+    "intermediate signal or its envelope, a sub-result, a per-stage metric). Each asserts that the "
+    "value the solution REPORTS for that output is the EXACT thing the user asked for — the right "
+    "QUANTITY, at the right POINT/TIME, with the right AGGREGATION, in the right UNITS/CONVENTION — "
+    "and not a related-but-different quantity. For an intermediate value, OBTAIN it from the function "
+    "that must EXPOSE it (its real return) and verify THAT against your independent computation — if "
+    "the solution does not expose the intermediate (its functions return only the final result), the "
+    "check cannot get the real value and MUST fail, so the gap is fixed by exposing it rather than "
+    "papered over with a fabricated stand-in. "
+    "FIRST assert the value's STRUCTURE matches the spec — the correct type (scalar vs array vs tuple "
+    "vs dict), shape/dimensions, tuple/dict arity and field names, and units — reading the ACTUAL "
+    "object the solution returns by its true contract; do NOT slice, unpack, or reshape it into a "
+    "wrong-shaped stand-in before checking, or the check would validate the wrong object. A consumer "
+    "that read some function's return with the wrong shape/type yields a structurally wrong output "
+    "and MUST fail here. "
     "Re-read the REQUEST and derive the expected value INDEPENDENTLY from the user's own wording, "
     "computing it by a DIFFERENT route than the solution uses. Do NOT trust or call any reference "
     "implementation here — a same-model reference can encode the SAME wrong definition, so 'the code "
@@ -495,11 +632,96 @@ _DEFINITION_SYSTEM = (
     "variance for std-dev); a wrong AGGREGATION (sum vs mean vs max vs last); a wrong REFERENCE POINT "
     "(initial vs after-the-first-step, final vs penultimate, inclusive vs exclusive endpoint, "
     "off-by-one count); a wrong UNIT/CONVENTION (degrees vs radians, fraction vs percent, 0- vs "
-    "1-based); and a LABEL that claims one quantity while the logic returns another. For each output, "
+    "1-based); and a LABEL that claims one quantity while the logic returns another. If the request "
+    "SPECIFIES a METHOD / operation / formula for an output, compute the expected value USING that "
+    "specified method/formula — so a candidate that used a DIFFERENT method (which can give a different "
+    "value, e.g. a causal filter vs a convolution) FAILS this check. For each output, "
     "build concrete spec inputs (the request's own values when it gives them), call the SOLUTION's "
     "function(s), compute the spec-correct expected value YOURSELF, and `assert` they match (use "
     "math.isclose / numpy.allclose for floats, == for exact). Do NOT define the solution or a runner. "
     "Output ONLY the Python test functions."
+)
+
+_CRITIC_SYSTEM = (
+    "You are the TEST-CRITIC: a reviewer that audits the GENERATED TESTS/CHECKS for a task BEFORE any "
+    "of them is allowed to judge a candidate solution. You do NOT write solution code and you do NOT "
+    "judge the candidate — you judge and REPAIR the TESTS so an INVALID test can never fail correct "
+    "code. Audit EACH test; a test is INVALID if it would fail a CORRECT solution for any of:\n"
+    "1. GUESSED EXPECTED VALUE — the expected value was imagined, not derived from the spec or by "
+    "executing the independent REFERENCE provided. Replace it with the value computed from the spec or "
+    "the reference (call ref.* at runtime; do not paste a literal you cannot justify).\n"
+    "2. WRONG / HARDCODED TOLERANCE — a fixed constant where the tolerance must come from the MATH: a "
+    "stochastic estimate needs a few standard errors (~ k*stdev/sqrt(N), from the sample size/variance), "
+    "a numerical result needs the method's error. Replace the constant with a tolerance derived from the "
+    "problem.\n"
+    "3. EXACT-MATCH ON A NON-UNIQUE QUANTITY — asserts exact equality on a result defined only up to "
+    "scaling / sign / ordering / phase / basis / representation, or produced by an underdetermined "
+    "procedure. Replace it with the DEFINING PROPERTIES every valid answer must satisfy (e.g. A v = "
+    "lambda v with unit norm; the same partition up to relabelling; the factors multiply back to the "
+    "input).\n"
+    "4. WRONG OPERATIONAL DEFINITION — encodes a naive PROXY for a named property instead of its TRUE "
+    "definition (e.g. 'flat / uniform' as every-element-equals-the-mean rather than no-dominant-"
+    "component; 'sorted' as strictly-monotonic when equal values are allowed). Replace the proxy with "
+    "the property's real definition.\n"
+    "5. REQUIREMENT NOT IMPLIED BY THE TASK — asserts a property/invariant THIS task does not have or "
+    "deliberately BREAKS (a conservation / preservation / monotonicity / periodicity assertion on a "
+    "task whose own rules change that quantity — a dissipative, driving, open, injecting, asymmetric, "
+    "or random term). The property must follow from THIS task's spec and the SPECIFIC system, not a "
+    "generic template. DROP such a check, or replace it with the change the task's rule actually "
+    "predicts.\n"
+    "6. WRONG QUANTITY / ENTITY — tests a different value than the request asked for (a neighbour, a "
+    "component, the wrong point / index / units). Re-target it at the EXACT requested quantity.\n"
+    "HARD RULES: keep every VALID test VERBATIM. Do NOT weaken a valid check to make code pass, and do "
+    "NOT make any check lenient enough to pass a genuinely WRONG result — repairing a test means making "
+    "it test the TRUE requirement, never making it loose. Keep EXACT checks STRICT for genuinely UNIQUE "
+    "quantities. Preserve each test's calling convention and the solution's function names/signatures. "
+    "Output the REPAIRED suite — valid tests unchanged, invalid tests rewritten to the true requirement, "
+    "requirement-not-implied checks omitted — as plain Python test_* functions and NOTHING else. Do NOT "
+    "define the solution or a runner."
+)
+
+_DIAGNOSE_SYSTEM = (
+    "You are the DIAGNOSIS agent — a debugging engineer/scientist doing ROOT-CAUSE analysis on a "
+    "candidate that FAILED one or more checks, in WHATEVER domain the task is (physics, biology, "
+    "chemistry, finance, ecology, signal/audio, ...). You are a SEPARATE role from the generation "
+    "agent: you do NOT write the final code — you DIAGNOSE the MECHANISM and hand the generation agent "
+    "a precise FIX DIRECTIVE to apply. Do NOT propose a random change — reason from the SYMPTOM (which "
+    "check failed, the traceback, the numbers) to the SPECIFIC place in the code that is wrong. The "
+    "mapping is by the SHAPE of the failure and is "
+    "DOMAIN-INDEPENDENT — the same shape points to the same kind of cause whether the quantity is "
+    "energy, total population, total probability, mass, momentum, money, a total count, or signal "
+    "power. Map symptom -> cause:\n"
+    "1. A quantity that SHOULD be CONSERVED or INVARIANT DRIFTS or is not conserved (any conserved / "
+    "bounded quantity the task or its domain implies — energy, total probability, total population, "
+    "mass, momentum, money, a norm, a total count, signal power) AND the task's system GENUINELY "
+    "conserves it — if THIS task includes a term that BREAKS conservation (a dissipative / driving / "
+    "open / injection-removal / asymmetric / random term) the quantity SHOULD change, the drift is "
+    "CORRECT and you must NOT diagnose it (check the change the task's rule predicts instead) -> the "
+    "UPDATE / ITERATION / "
+    "INTEGRATION RULE is the likely cause: a wrong update formula, wrong sign, wrong coefficient, or a "
+    "method that does not preserve the quantity. Name the rule and the fix (use a conservation- or "
+    "structure-preserving update) — NOT a looser tolerance.\n"
+    "2. A result has the WRONG SIGN or WRONG DIRECTION (something that must grow shrinks or vice-versa, "
+    "a quantity that must stay non-negative goes negative, a trend or movement opposite to what the "
+    "inputs dictate) -> a SIGN or term-ORDERING error in the GOVERNING EQUATION / RULE. Point to the "
+    "offending term and correct it.\n"
+    "3. Values BLOW UP or go NaN / inf -> NUMERICAL INSTABILITY (the step or rate is too large for the "
+    "scheme, a missing stability or normalisation factor) or a divide-by-zero. Fix the scheme or step "
+    "size — do NOT just clamp the output.\n"
+    "4. A check passes ONLY because the code FORCES it (renormalising the state every step so an "
+    "invariant is trivially satisfied, clamping the output into range, hardcoding the expected value) "
+    "-> this is MASKING, not solving. Call it out and require the property to EMERGE from a correct "
+    "rule: fix the rule at the SOURCE and REMOVE the forced enforcement. Never accept masking.\n"
+    "5. The WRONG ENTITY / WRONG QUANTITY is reported -> an output-selection bug: fix which value is "
+    "computed or printed.\n"
+    "If a PREVIOUS diagnosis is shown and the same check is STILL failing, that fix did NOT work — "
+    "diagnose a DIFFERENT mechanism this time. Output EXACTLY these three labelled lines, plain text, "
+    "no code:\n"
+    "FAILING CHECK: <name the check that failed; its observed behaviour vs. the expected behaviour>.\n"
+    "MECHANISM: <which failure shape above; the exact code location / rule responsible>.\n"
+    "FIX DIRECTIVE: <one concrete change for the generation agent — a corrected mechanism at its "
+    "source; NEVER a looser tolerance, and NEVER forced renormalisation / clamping / hardcoding (that "
+    "is masking) — the property must EMERGE from the corrected rule>."
 )
 
 # Task-type-specific guidance appended to the test/invariant generation USER prompts (the system
@@ -662,8 +884,12 @@ def _generate_demo_driver(provider, task: str, requirements: str, solution_code:
 _DELIVERABLES_SYSTEM = (
     "You extract the explicit DELIVERABLES of a coding request: the distinct things the finished "
     "program must OUTPUT when it runs — each value to print/return, each comparison, each property "
-    "to report. Output a short PLAIN LIST, one deliverable per line, each a 1-4 word lowercase label "
-    "naming the quantity (e.g. 'period', 'amplitude', 'kinetic energy', 'put-call parity'). No "
+    "to report, INCLUDING any INTERMEDIATE or COMPONENT value it asks for (an intermediate signal or "
+    "envelope, a sub-result, a per-stage metric), not only the final result. Output a short PLAIN "
+    "LIST, one deliverable per line, each a 1-4 word lowercase label "
+    "naming the quantity by its EXACT stated meaning and aggregation (e.g. 'sum of coefficients' — NOT "
+    "'peak'; 'rms of filtered signal' — NOT 'per-component rms'; 'period', 'kinetic energy', 'put-call "
+    "parity'). Capture the precise quantity the request NAMES, not a related-but-different one. No "
     "numbers, no code, no prose, no bullets — only the labels, one per line. If the request asks for "
     "nothing to be output, return an empty response."
 )
@@ -732,30 +958,69 @@ def _apply_output_gates(verdict: Dict[str, Any], *, wants_output: bool, output: 
         verdict["gate_fail"] = "; ".join(reasons)
         verdict["feedback"] = (
             "Your solution passed the tests but FAILED a delivery gate — " + "; ".join(reasons)
-            + ". Make the program actually RUN and PRINT every requested value with a clear label. "
-            "Do NOT dump large arrays/matrices/datasets in full (that buries the answer) — print a "
-            "compact summary for those, and print every requested value in a clear FINAL labelled "
-            "block at the very END so none is lost.")
+            + ". Defining the functions is not enough: add a runnable `if __name__ == \"__main__\":` "
+            "entry point that CALLS your functions on the task's inputs and PRINTS every requested "
+            "value with a clear label, so running the file produces real output. Do NOT dump large "
+            "arrays/matrices/datasets in full (that buries the answer) — print a compact summary for "
+            "those, and print every requested value in a clear FINAL labelled block at the very END.")
     return verdict
 
 
-def _capture_and_check(provider, task: str, requirements: str, code: str,
-                       deliverables: List[str]):
-    """Run the finished solution with a demo driver in the sandbox, capture real stdout, and check
-    which deliverables are missing. Returns (output, missing_deliverables)."""
+def _capture_and_check(code: str, deliverables: List[str]):
+    """Run the finished SOLUTION ITSELF as a script (its `if __name__ == "__main__":` block runs and
+    PRINTS the requested values) and capture its REAL stdout — NOT a separately-generated driver, so a
+    solution that defines functions but never calls/prints them produces empty output and FAILS here.
+    Returns (output, missing_deliverables)."""
     output = ""
     try:
-        driver = _generate_demo_driver(provider, task, requirements, code)
-        if (driver or "").strip():
-            dres = run_python_auto(code + "\n\n# === demo run ===\n" + driver)
-            if dres.ok and (dres.stdout or "").strip():
-                # Head+tail clip: a requested value printed LAST (after a big intermediate dump)
-                # must survive so the completeness gate can see it and the user can read it.
-                output = clip_keep_ends((dres.stdout or "").strip(), DEMO_OUTPUT_CAP)
+        dres = run_python_auto(code)
+        if dres.ok and (dres.stdout or "").strip():
+            # Head+tail clip: a value printed LAST (after a big intermediate dump) must survive so the
+            # completeness gate can see it and the user can read it.
+            output = clip_keep_ends((dres.stdout or "").strip(), DEMO_OUTPUT_CAP)
     except Exception:                                   # noqa: BLE001 - capture failures -> empty output
         output = ""
     missing = _check_completeness(deliverables, output) if deliverables else []
     return output, missing
+
+
+def _latest_revalidated_delivery(attempts: List[Attempt], deliverables: List[str],
+                                 gate_output: bool) -> Optional[Attempt]:
+    """RE-VALIDATE AGAINST THE LATEST ATTEMPT before settling for a STALE 'partial'. The attempt the
+    loop selected (highest-scoring clean one) can be an EARLIER attempt that was demoted for 'missing
+    output', while the MOST RECENT attempt actually prints every deliverable — so the failure was
+    judged against a stale state, not the latest code. Scan attempts MOST-RECENT first for the first
+    LEGITIMATE one that already cleared the visible + held-out gates (so only the delivery/completeness
+    gate could have demoted it); re-run THAT exact code ONCE and re-check the deliverables against
+    FRESH stdout. If it now produces every deliverable, return it with the delivery verdict refreshed
+    to verified. Returns None when nothing should be upgraded — the latest good attempt is already
+    verified, has a GENUINE non-delivery failure (held-out/visible/cheating/off-topic), or its fresh
+    run is still incomplete. Bounded to ONE re-run. Re-validates by RE-RUNNING real code: it can only
+    retire the one gate (delivery) the live code provably no longer fails — it never resurrects a
+    held-out/visible/cheating/off-topic failure (those are hard exclusions)."""
+    if not gate_output:
+        return None
+    for att in reversed(attempts):
+        v = att.verdict
+        if v.get("cheating") or v.get("relevant") is False:
+            continue                       # skip gaming / off-topic; judge the latest LEGITIMATE one
+        if v.get("verified"):
+            return None                    # the latest good attempt is already verified -> nothing stale
+        total, passed = int(v.get("total", 0)), int(v.get("passed", 0))
+        htot, hpass = int(v.get("hidden_total", 0)), int(v.get("hidden_passed", 0))
+        visible_ok = total > 0 and passed >= total
+        heldout_ok = htot == 0 or hpass >= htot
+        if v.get("hidden_fail") or not (visible_ok and heldout_ok):
+            return None                    # a GENUINE non-delivery failure -> the honest partial stands
+        out, missing = _capture_and_check(att.code, deliverables)   # re-run THIS code, FRESH stdout
+        if (out or "").strip() and not missing:
+            nv = dict(v)
+            nv["verified"], nv["done"], nv["demo_output"] = True, True, out
+            nv["gate_fail"] = ""           # the delivery gate the live code provably no longer fails
+            nv["diagnosis"] = ""           # the stale 'missing output' diagnosis no longer applies
+            return Attempt(att.iteration, att.code, att.result, nv)
+        return None                        # latest eligible attempt genuinely incomplete -> partial
+    return None
 
 
 def _generate_tests(provider, task: str, requirements: str, task_type: str = "",
@@ -772,7 +1037,8 @@ def _generate_tests(provider, task: str, requirements: str, task_type: str = "",
 
 def _generate_solution(provider, task: str, requirements: str, tests: str, reference: str,
                        last_code: str, feedback: str, memory_summary: str = "",
-                       temperature: float = 0.2, variant: str = "", frozen: str = "") -> str:
+                       temperature: float = 0.2, variant: str = "", frozen: str = "",
+                       wants_output: bool = False) -> str:
     """(c) Write modular solution code so the provided tests pass. The tests are appended by the
     runner, not by the model. `memory_summary` carries the cross-attempt 'avoid these' notes.
     `frozen` (a _freeze_clause) tells the model to KEEP the already-passing parts unchanged and
@@ -783,7 +1049,7 @@ def _generate_solution(provider, task: str, requirements: str, tests: str, refer
              "\nYour solution MUST define the functions these tests call so they pass. Solve the "
              "GENERAL problem — do NOT hardcode the expected outputs, special-case these specific "
              "inputs, read the tests, or fake the functions; your code is also checked on unseen "
-             f"random inputs. Do NOT include the tests or a runner:\n```python\n{tests}\n```"]
+             f"random inputs. Do NOT include the tests or a test runner:\n```python\n{tests}\n```"]
     if reference:
         parts.append(f"\nREFERENCE implementations (adapt the approach, do NOT copy):\n{reference[:3000]}")
     if last_code:
@@ -794,13 +1060,50 @@ def _generate_solution(provider, task: str, requirements: str, tests: str, refer
     if memory_summary:
         parts.append("\nAVOID repeating these already-failed or REJECTED approaches:\n" + memory_summary)
     if feedback:
-        parts.append("\nThe tests FAILED last time. Read these PASS/FAIL lines and tracebacks and "
-                     f"fix the SPECIFIC failures (do not rewrite from scratch):\n{feedback[:3000]}")
+        parts.append("\nThe tests FAILED last time. If the DIAGNOSIS AGENT's FIX DIRECTIVE is given "
+                     "below, APPLY that mechanism fix at its source (do not merely loosen tolerances or "
+                     "mask the symptom by renormalising/clamping); then address the specific PASS/FAIL "
+                     f"lines and tracebacks (do not rewrite from scratch):\n{feedback[:3000]}")
+    if wants_output:
+        parts.append("\nThis task asks for OUTPUT. Your file MUST be a RUNNABLE PROGRAM: add an "
+                     "`if __name__ == \"__main__\":` block that calls your functions on the task's "
+                     "inputs and PRINTS every requested value with a clear text label (a compact "
+                     "summary — shape/length + a few values — for any large array/matrix/dataset, "
+                     "never a full dump). Defining the functions WITHOUT a call site that prints is "
+                     "INCOMPLETE — the file will be run and its real stdout checked for every value.")
     if variant:
         parts.append("\n" + variant)
-    parts.append("\nWrite the solution code now (functions only).")
+    parts.append("\nWrite the solution code now (define the functions; for an output task also add "
+                 "the runnable `__main__` that prints the results).")
     return _extract_code(_complete(provider, _GEN_SYSTEM, "\n".join(parts), GEN_MAX_TOKENS,
                                    temperature=temperature))
+
+
+def _diagnose_failure(provider, task: str, requirements: str, code: str, symptom: str,
+                      failing: List[str], prev_diagnosis: str = "", repeated: bool = False) -> str:
+    """The DIAGNOSIS agent: a SEPARATE role/prompt from generation. Root-causes the most recent failure
+    by mapping the SYMPTOM (failing checks + traceback) to the likely MECHANISM and code location, and
+    emits a STRUCTURED directive (FAILING CHECK / MECHANISM / FIX DIRECTIVE) that the generation agent
+    then applies — so the next rewrite targets the cause, not a blind mutation. Runs ONCE per failed
+    round (never per candidate), on the same resilient provider, so it adds no unbounded fan-out.
+    Returns '' on any failure (fail-open) — a diagnosis hiccup degrades to the raw traceback feedback
+    rather than breaking the loop. When the same check keeps failing, asks for a DIFFERENT mechanism."""
+    if not root_cause_enabled() or not (code or "").strip() or not (symptom or "").strip():
+        return ""
+    fail_list = ", ".join(failing[:8]) if failing else "(see the traceback)"
+    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\n"
+            f"FAILING CHECK(S): {fail_list}\n\n"
+            f"SYMPTOM (the runner's output / traceback):\n{(symptom or '')[:2000]}\n\n"
+            f"THE CODE THAT FAILED:\n```python\n{(code or '')[:3000]}\n```")
+    if prev_diagnosis:
+        tag = (" The SAME check is STILL failing, so that fix did NOT work — diagnose a DIFFERENT "
+               "mechanism." if repeated else "")
+        user += f"\n\nPREVIOUS DIAGNOSIS (last round):\n{prev_diagnosis[:800]}{tag}"
+    user += "\n\nDiagnose the root cause now."
+    try:
+        return (_complete(provider, _DIAGNOSE_SYSTEM, user, GEN_MAX_TOKENS) or "").strip()[:1200]
+    except Exception:
+        return ""
 
 
 def _generate_hidden_tests(provider, task: str, requirements: str, strict: bool = False,
@@ -844,6 +1147,36 @@ def _generate_definition_checks(provider, task: str, requirements: str, strict: 
         return _extract_code(_complete(provider, _DEFINITION_SYSTEM, user, GEN_MAX_TOKENS))
     except Exception:
         return ""
+
+
+def _critique_tests(provider, task: str, requirements: str, tests: str, oracle: str = "",
+                    kind: str = "tests") -> str:
+    """TEST-CRITIC (a SEPARATE role from generation and diagnosis): audit the generated suite and return
+    a REPAIRED version where every INVALID test — a GUESSED expected value, a HARDCODED tolerance where
+    the math implies one, an EXACT-match on a NON-UNIQUE quantity, a WRONG operational definition, a
+    requirement NOT IMPLIED by the task, or the WRONG quantity — is rewritten to test the TRUE
+    requirement (or dropped, for a requirement the task does not imply), while VALID tests are kept
+    verbatim. ONE bounded LLM call per suite (never per candidate); the repaired suite is still
+    validated against the reference downstream. Fail-OPEN: returns the ORIGINAL suite on any error,
+    empty output, or output defining no test function, so a hiccup degrades to the execution quarantine
+    alone."""
+    if not test_critic_enabled() or not (tests or "").strip():
+        return tests
+    ref = (oracle or "").strip()
+    user = (f"TASK:\n{task}\n\nREQUIREMENTS:\n{requirements}\n\n"
+            "INDEPENDENT REFERENCE implementation of THIS task (use it to DERIVE expected values and to "
+            "sanity-check — a test the correct reference itself fails is invalid by construction):\n"
+            f"{ref[:3000] if ref else '(no reference available — derive expected values from the spec)'}"
+            f"\n\nGENERATED {kind} to audit and REPAIR:\n```python\n{tests}\n```\n\n"
+            "Audit each test against the six invalid-test reasons and output the REPAIRED suite now.")
+    try:
+        repaired = _extract_code(_complete(provider, _CRITIC_SYSTEM, user, GEN_MAX_TOKENS))
+    except Exception:                       # noqa: BLE001 - critic is best-effort; never break the run
+        return tests
+    # Accept only a non-trivial repaired suite that still defines test functions (else fail open).
+    if not (repaired or "").strip() or _count_tests(repaired) == 0:
+        return tests
+    return repaired
 
 
 def _count_tests(tests_code: str) -> int:
@@ -915,6 +1248,15 @@ def _failing_names(stdout: str) -> List[str]:
     return [n for n, ok in _test_results(stdout).items() if not ok]
 
 
+def _genuine_failing(stdout: str, quarantine: set) -> List[str]:
+    """Failing check NAMES with the QUARANTINE removed, so the reported failures AGREE with the
+    quarantine-adjusted pass/total. A check the reference oracle ITSELF fails (quarantined: guessed
+    value, too-tight tolerance, exact-match-on-non-unique, or wrong definition) is INVALID — a candidate
+    'failing' it is not a real failure, so it must never be reported, fed to the diagnosis, or logged as
+    a failure pattern, even though it shows as FAIL in the raw stdout."""
+    return [n for n in _failing_names(stdout) if n not in (quarantine or set())]
+
+
 def _freeze_clause(passing: List[str], regressed: List[str] | None = None) -> str:
     """Refinement instruction that FREEZES verified-correct parts: the next attempt keeps the code
     satisfying the already-passing checks UNCHANGED and revises ONLY what the failing checks need.
@@ -938,14 +1280,16 @@ def _freeze_clause(passing: List[str], regressed: List[str] | None = None) -> st
 
 
 def _invalid_tests(oracle_code: str, tests_code: str, footer: str = _TEST_FOOTER) -> set:
-    """Run the KNOWN-CORRECT reference ORACLE through the generated tests and return the names of the
-    tests it FAILS. A correct reference failing a test means the TEST is wrong — a guessed expected
-    value, a tolerance too tight for the method, or a wrong quantity/definition — so that test must be
-    quarantined, never allowed to fail a candidate. The oracle is BOTH solution and reference here, so
-    any `ref.*`-derived expected trivially agrees; what surfaces is the non-reference tests
-    (properties / definitions / guessed literals / theory checks with a too-tight tolerance) that even
-    correct code cannot satisfy. Fail-OPEN: returns an empty set with no oracle, or when no per-test
-    lines parse (a crash), so a hiccup never silently drops genuine tests."""
+    """THE UNIVERSAL TEST-ADMISSION GATE: run the KNOWN-CORRECT reference ORACLE through the generated
+    tests and return the names of the tests it FAILS. A correct reference failing a test means the TEST
+    is wrong — by CONSTRUCTION and regardless of WHY (a guessed expected value, a tolerance too tight for
+    the method, an exact-match on a non-unique quantity, a wrong definition, a property the task does not
+    imply, a malformed/erroring test, or ANY cause not enumerated here) — so that test is quarantined and
+    never allowed to fail a candidate. This is ONE rule, not a list of recognised defects. The oracle is
+    BOTH solution and reference here, so any `ref.*`-derived expected trivially agrees; what surfaces is
+    the tests (properties / definitions / guessed literals / non-task assertions / too-tight tolerances)
+    that even correct code cannot satisfy. Fail-OPEN: returns an empty set with no oracle, or when no
+    per-test lines parse (a crash), so a hiccup never silently drops genuine tests."""
     if not (oracle_code or "").strip() or not (tests_code or "").strip():
         return set()
     try:
@@ -964,21 +1308,23 @@ def _invalid_tests(oracle_code: str, tests_code: str, footer: str = _TEST_FOOTER
 
 
 def _heldout_quarantine(oracle_code: str, heldout_code: str, seeds: Optional[int] = None) -> set:
-    """Held-out test-validation: the held-out checks the known-correct oracle itself fails — EXCEPT
-    DEFINITION checks. Definition checks are oracle-INDEPENDENT by design (their job is to catch a
-    wrong-definition oracle), so the oracle must never be allowed to quarantine them away; only the
-    hidden/invariant checks (whose expected values DO come from the oracle/properties) are eligible.
-    Validated across the SAME random seeds `_verify_heldout` judges candidates on (UNION): a
-    stochastic check the correct reference fails on ANY of those seeds is flawed, so quarantining it
-    covers every seed — not just the first. Empty unless test-validation is on and both an oracle and
-    held-out code are present."""
+    """THE UNIVERSAL GATE for the held-out suite: a generated check may judge a candidate ONLY IF the
+    known-correct reference itself PASSES it. EVERY held-out check — hidden, invariant, AND definition —
+    that the correct reference FAILS is quarantined, by construction and regardless of WHY (see
+    _invalid_tests): if the correct answer cannot satisfy the test, the TEST is wrong, not the code.
+    (Definition checks still compute their expected value INDEPENDENTLY from the spec — only their
+    ADMISSION is reference-gated; the test-critic remains the complementary semantic layer for the rare
+    case of a reference that shares a wrong definition.) Validated across the SAME random seeds
+    `_verify_heldout` judges candidates on (UNION): a stochastic check the correct reference fails on ANY
+    of those seeds is flawed, so quarantining it covers every seed — not just the first. Empty unless
+    test-validation is on and both an oracle and held-out code are present."""
     if not (test_validation_enabled() and (oracle_code or "").strip() and (heldout_code or "").strip()):
         return set()
     n = max(1, seeds if seeds is not None else verify_seeds())
     invalid: set = set()
     for s in range(n):
         invalid |= _invalid_tests(oracle_code, heldout_code, _seeded_footer(1000 + s))
-    return {x for x in invalid if not x.startswith("test_definition")}
+    return invalid
 
 
 def _nonunique_exact_tests(provider, task: str, requirements: str, task_type: str,
@@ -1169,6 +1515,16 @@ def _score(att: Attempt) -> int:
         return bonus + base
 
 
+def _heldout_frac(att: Attempt) -> float:
+    """Fraction of held-out/invariant checks this attempt passed (0.0 when none ran). Lets selection
+    prefer the attempt that GENERALISES better when the visible-test score ties, so the final verdict
+    reflects the latest, best-generalising attempt rather than a stale earlier one with the same visible
+    score but a worse held-out tally."""
+    v = att.verdict
+    ht = int(v.get("hidden_total", 0))
+    return (int(v.get("hidden_passed", 0)) / ht) if ht > 0 else 0.0
+
+
 def _build_brief(task: str, brief: str, context: str, conversation: str = "") -> str:
     """Tier-1 brief: the user's PROJECT_BRIEF if given, else a goal built from the task,
     plus the prior conversation (so "give me code for this" stays on topic) and any
@@ -1198,7 +1554,8 @@ def _read_directive(path: Optional[str]) -> str:
 # ----------------------------------------------------------------------
 def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = None,
               use_search: bool = True, directive_path: Optional[str] = None,
-              conversation: str = "", on_event: Optional[OnEvent] = None) -> AgentResult:
+              conversation: str = "", on_event: Optional[OnEvent] = None,
+              result_memory: Optional[Any] = None, user_id: str = "local") -> AgentResult:
     emit: OnEvent = on_event or (lambda e: None)
     task = (task or "").strip()
     brief = (brief or "").strip()
@@ -1212,6 +1569,25 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
     budget = int(max_iters) if max_iters is not None else max_attempts()
     budget = max(1, budget)
     stall_cap = stall_limit()
+
+    # RESULT-MEMORY REUSE: seed the first attempt with a near-identical VERIFIED prior solution so the
+    # agent ADAPTS proven code (faster, higher first-attempt success). It is still re-verified through
+    # the FULL gate stack below — reuse never bypasses a gate, and only verified runs are ever reused.
+    seed_code = ""
+    if result_memory is not None and result_memory_enabled():
+        try:
+            prior = result_memory.find_verified_solution(user_id=user_id, task=task)
+        except Exception:
+            prior = None
+        if prior and (prior.get("code") or "").strip():
+            seed_code = prior["code"]
+            try:
+                result_memory.record_agent_run_reuse(int(prior["id"]))
+            except Exception:
+                pass
+            emit({"type": "reuse", "message":
+                  "Adapting a previously verified solution for a near-identical task "
+                  f"({int(prior.get('similarity', 0.0) * 100)}% match) — it will be re-verified."})
 
     # Resilient model chain: the user's selection first (AGENT_MODEL or the chat's OPENAI_MODEL),
     # then configured fallbacks. On a 429/timeout/5xx the provider retries + switches to another
@@ -1297,6 +1673,19 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
         tests = _generate_tests(provider, task, requirements, task_type=task_type,
                                 use_reference=use_reference)
         _sp.set(count=_count_tests(tests))
+
+    # (b.1) TEST-CRITIC: a SEPARATE role audits the generated suite and REWRITES any invalid test into a
+    # check of the TRUE requirement BEFORE it can judge a candidate. Runs ONCE on the visible suite; the
+    # repaired suite is then still validated against the reference below (defence in depth). Fail-open.
+    if test_critic_enabled():
+        emit({"type": "status", "message": "Test-critic auditing the correctness tests…"})
+        _crit = _critique_tests(provider, task, requirements, tests, validation_oracle,
+                                "correctness tests")
+        if _crit != tests:
+            emit({"type": "test_critic", "scope": "visible",
+                  "before": _count_tests(tests), "after": _count_tests(_crit)})
+            tests = _crit
+
     test_n = _count_tests(tests)
     emit({"type": "tests", "iteration": 0, "code": tests, "count": test_n})
 
@@ -1327,7 +1716,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
     attempts: List[Attempt] = []
     best: Optional[Attempt] = None
     best_clean: Optional[Attempt] = None      # best NON-cheating attempt — the only thing we return
-    last_code = ""
+    last_code = seed_code     # seed from a near-identical VERIFIED prior solution (re-verified below)
     feedback = ""
     frozen_clause = ""        # _freeze_clause: keep already-passing parts, fix only the failing ones
     frozen_best: set = set()  # the most checks ever seen green — used to detect a regression
@@ -1336,6 +1725,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
     best_remaining = None     # fewest GENUINE failing checks seen so far (for stall detection)
     stall = 0                 # consecutive rounds with no reduction in remaining failures
     stop_reason = "max_attempts"
+    prev_failing: set = set()    # failing checks from the prior round — to spot a non-moving fix
+    prev_diagnosis = ""          # the prior round's root-cause diagnosis — vary it if it didn't help
     mem = _AttemptMemory()
     hstate: Dict[str, Any] = {"code": None, "strict": False, "quarantine": set(),
                               "nonunique": set()}                                    # lazy held-out
@@ -1364,16 +1755,29 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
                 definitions = _generate_definition_checks(hp, task, requirements, strict=strict,
                                                           task_type=task_type)
             combined = "\n\n".join(p for p in (hidden, invariants, definitions) if (p or "").strip())
-            # Oracle test-validation on the held-out suite: quarantine the hidden/invariant checks
-            # the known-correct reference itself fails (an invalid one must never falsely fail a
-            # correct candidate); definition checks are exempt (oracle-independent by design). Uses
-            # the VALIDATION oracle, so this also covers simulation tasks (no exact-value oracle).
+            # TEST-CRITIC on the held-out suite (incl. DEFINITION checks the execution backstop exempts):
+            # audit + repair each invalid check ONCE before it can judge a candidate. Fail-open.
+            if test_critic_enabled() and (combined or "").strip():
+                _crit = _critique_tests(hp, task, requirements, combined, validation_oracle,
+                                        "held-out hidden / invariant / definition checks")
+                if _crit != combined:
+                    emit({"type": "test_critic", "scope": "heldout",
+                          "before": _count_tests(combined), "after": _count_tests(_crit)})
+                    combined = _crit
+            # Oracle test-validation on the held-out suite: quarantine the hidden/invariant checks the
+            # known-correct reference itself fails — a guessed expected value, a too-tight tolerance, or
+            # a property THIS task does NOT have (an idealised invariant broken by a dissipative /
+            # driving / open / injecting / asymmetric / random term: "requirement-not-implied-by-task").
+            # An invalid check must never falsely fail a correct candidate; definition checks are exempt
+            # (oracle-independent by design). Uses the VALIDATION oracle, so this also covers simulation
+            # tasks (no exact-value oracle) — provided the reference faithfully models the real system.
             quarantine: set = _heldout_quarantine(validation_oracle, combined)
             if quarantine:
                 emit({"type": "test_validation", "scope": "heldout",
                       "quarantined": sorted(quarantine),
-                      "message": (f"Quarantined {len(quarantine)} held-out check(s) the reference "
-                                  "itself fails: " + ", ".join(sorted(quarantine)))})
+                      "message": (f"Quarantined {len(quarantine)} held-out check(s) the reference itself "
+                                  "fails (invalid expected value / a property this task does not have): "
+                                  + ", ".join(sorted(quarantine)))})
             # Carry the non-unique-exact quarantine across a stricter held-out rebuild too.
             hstate["code"], hstate["strict"] = combined, strict
             hstate["quarantine"] = quarantine | hstate.get("nonunique", set())
@@ -1442,7 +1846,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
             temperature = min(0.9, 0.2 + 0.2 * c)   # diversify the best-of-N pool
             code = _generate_solution(gen_provider, task, requirements, tests, reference,
                                       last_code, feedback, mem.summary(),
-                                      temperature=temperature, variant=variant, frozen=frozen_clause)
+                                      temperature=temperature, variant=variant, frozen=frozen_clause,
+                                      wants_output=gate_output)
             if not (code or "").strip():
                 return None
             emit({"type": "code", "iteration": i, "candidate": c + 1, "code": code})
@@ -1469,7 +1874,10 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
             verdict = _verdict_from_tests(passed, total, relevant, result)
             # Per-check pass/fail names so the next attempt can FREEZE what already passes.
             verdict["passing_checks"] = _passing_names(result.stdout or "")
-            verdict["failing_checks"] = _failing_names(result.stdout or "")
+            # failing_checks must AGREE with the quarantine-adjusted passed/total: a test the reference
+            # oracle itself fails is invalid, so a candidate "failing" it is not a real failure — exclude
+            # it so it is never reported, fed to the diagnosis, or logged as a failure pattern.
+            verdict["failing_checks"] = _genuine_failing(result.stdout or "", visible_quarantine)
             cheating = bool(cheat and cheat.flagged)
             verdict["cheating"] = cheating
             verdict["cheat_reasons"] = list(cheat.reasons) if cheat else []
@@ -1478,9 +1886,11 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
             if cheating:
                 verdict["done"] = False
                 verdict["feedback"] = (
-                    "Your solution was REJECTED for possible test gaming: " + "; ".join(cheat.reasons)
-                    + ". Do NOT hardcode outputs, special-case the example inputs, read the tests, "
-                    "or fake the functions — solve the GENERAL task.")
+                    "Your solution was REJECTED as reward-hacking: " + "; ".join(cheat.reasons)
+                    + ". Do NOT hardcode outputs, special-case the example inputs, read the tests, or "
+                    "fake the functions; and do NOT force a conserved quantity to pass by renormalising "
+                    "the state every step or clamping the output — fix the SCHEME so the quantity "
+                    "EMERGES from correct dynamics. Solve the GENERAL task.")
             elif verdict.get("done"):
                 # (1/3/4) Passed visible + relevant + clean -> held-out hidden + invariants on
                 # multiple random seeds. Verified only if EVERY layer passes. The held-out layer is
@@ -1559,7 +1969,12 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
         if best is None or _score(round_best) > _score(best):
             best = round_best
         if not round_best.verdict.get("cheating"):
-            if best_clean is None or _score(round_best) > _score(best_clean):
+            # Strictly higher score wins; on a TIE prefer the attempt that passes MORE held-out checks
+            # (generalises better) so the reported verdict reflects the latest/best attempt, not a stale
+            # earlier one with the same visible score but a worse held-out tally.
+            if (best_clean is None or _score(round_best) > _score(best_clean)
+                    or (_score(round_best) == _score(best_clean)
+                        and _heldout_frac(round_best) > _heldout_frac(best_clean))):
                 best_clean = round_best
 
         # (1/4) DELIVERY gates: a candidate that passed the visible + held-out gates, on a task that
@@ -1568,7 +1983,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
         # (execution gate) or dropped a requested output (completeness gate).
         if gate_output and round_best.verdict.get("verified"):
             emit({"type": "status", "message": "Running the solution to check its real output…"})
-            out, missing = _capture_and_check(provider, task, requirements, round_best.code, deliverables)
+            out, missing = _capture_and_check(round_best.code, deliverables)
             round_best.verdict["demo_output"] = out
             _apply_output_gates(round_best.verdict, wants_output=True, output=out, missing=missing)
             if round_best.verdict.get("gate_fail"):
@@ -1604,6 +2019,23 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
         feedback = v.get("feedback", "")
         rounds_failed += 1
 
+        # ROOT-CAUSE DIAGNOSIS: before the next rewrite, map the symptom (the failing checks + the
+        # traceback) to the likely MECHANISM and code location, so the next attempt targets the cause
+        # instead of mutating blindly. If the same checks keep failing, the diagnosis is told to pick
+        # a DIFFERENT mechanism. Prepended to `feedback`; fail-open (a hiccup keeps the raw feedback).
+        cur_failing = set(v.get("failing_checks") or [])
+        diagnosis = _diagnose_failure(
+            gen_provider, task, requirements, round_best.code, feedback, sorted(cur_failing),
+            prev_diagnosis, repeated=bool(prev_failing and (cur_failing & prev_failing)))
+        if diagnosis:
+            round_best.verdict["diagnosis"] = diagnosis
+            emit({"type": "diagnosis", "iteration": i, "message": diagnosis[:400]})
+            feedback = ("DIAGNOSIS AGENT — root-cause analysis + FIX DIRECTIVE. APPLY this mechanism "
+                        "fix at its source (do NOT mask or merely loosen tolerances); the gates, not "
+                        "you, decide when it is done:\n" + diagnosis + "\n\n" + feedback)
+            prev_diagnosis = diagnosis
+        prev_failing = cur_failing
+
         # FREEZE for the NEXT attempt: keep the code that satisfies the already-passing checks and
         # revise only the failing ones. Flag any check that was green before but this round re-broke
         # (a regression) so the next attempt restores it instead of trading one pass for another.
@@ -1637,6 +2069,20 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
         topic = task
 
     final = best_clean if best_clean is not None else best
+
+    # RE-VALIDATE AGAINST THE LATEST ATTEMPT (staleness fix): don't settle for a STALE 'partial'. The
+    # chosen best_clean can be an EARLIER attempt demoted for 'missing output', while the MOST RECENT
+    # attempt actually prints every requested value. Re-run the latest delivery-eligible attempt ONCE
+    # on fresh stdout; if it is now complete, present IT as verified (the earlier failure was judged
+    # against a stale state). Re-validates by RE-RUNNING real code — never resurrects a held-out /
+    # visible / cheating / off-topic failure (those are excluded from the upgrade).
+    if best_clean is not None and not final.verdict.get("verified"):
+        fresh = _latest_revalidated_delivery(attempts, deliverables, gate_output)
+        if fresh is not None:
+            emit({"type": "status", "message": "Re-validated the latest attempt — it produces every "
+                  "requested output; clearing the stale 'missing output' and marking it verified."})
+            best_clean = final = fresh
+
     # Optional peer review (relevance double-check) on the chosen clean attempt.
     if best_clean is not None:
         try:
@@ -1683,7 +2129,8 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
         # Honest partial: never a fake "verified". Say how many GENUINE checks pass, why the rest
         # remain, how many attempts ran, and whether we stopped early (stall) or hit the cap.
         verification = "partial"
-        why = (final.verdict.get("gate_fail") or (final.verdict.get("feedback") or "").split("\n")[0])
+        why = (final.verdict.get("diagnosis") or final.verdict.get("gate_fail")
+               or (final.verdict.get("feedback") or "").split("\n")[0])
         why = (" — " + why.strip()[:160]) if (why or "").strip() else ""
         stop = (" — stopped early, no further progress" if stop_reason == "stall"
                 else f" — reached the {budget}-attempt limit" if stop_reason == "max_attempts" else "")
@@ -1734,6 +2181,22 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
           "hidden_passed": hpassed, "hidden_total": htotal})
     agent_trace.set(success=res.success, iterations=len(attempts), verification=verification,
                     tests_passed=bpassed, tests_total=btotal).end()
+
+    # RESULT MEMORY: record this run's outcome (verified / partial / failed) for the failure-pattern
+    # report and for verified-only reuse. Best-effort — a store hiccup never breaks the run.
+    if result_memory is not None and result_memory_enabled():
+        fv = final.verdict if final is not None else {}
+        try:
+            result_memory.record_agent_run(
+                user_id=user_id, task=task, code=res.best_code, output=res.best_output,
+                verification=verification, requirements=requirements, task_type=task_type,
+                tests_passed=bpassed, tests_total=btotal, hidden_passed=hpassed, hidden_total=htotal,
+                attempts_taken=attempts_taken, stop_reason=res.stop_reason,
+                cheat_reasons=list(fv.get("cheat_reasons") or []),
+                diagnosis=fv.get("diagnosis") or "", gate_fail=fv.get("gate_fail") or "",
+                failing_checks=list(fv.get("failing_checks") or []))
+        except Exception:
+            pass
     return res
 
 

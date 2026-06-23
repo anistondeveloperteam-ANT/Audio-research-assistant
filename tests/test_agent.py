@@ -288,21 +288,21 @@ def test_agent_stops_clean_when_docker_missing(monkeypatch):
 
 
 def test_print_request_returns_real_captured_stdout(monkeypatch):
-    """A 'print/show the result' request must surface the REAL stdout from RUNNING the solution
-    (the actual values via a demo driver), not test-runner noise or a 'when executed' claim."""
+    """A 'print/show the result' request must surface the REAL stdout from RUNNING the SOLUTION
+    ITSELF (its __main__ prints the values), not test-runner noise or a 'when executed' claim."""
     provider = _FakeProvider(
         requirements="- implement bubble_sort(a)", tests=_fence(_TESTS_SRC),
-        first=[_fence("def bubble_sort(a):\n    return sorted(a)")],
+        first=[_fence("def bubble_sort(a):\n    return sorted(a)\n"
+                      "if __name__ == '__main__':\n    print('sorted:', bubble_sort([3, 1, 2]))")],
         hidden=_HIDDEN_SRC, invariants=_INV_SRC,
-        driver=_fence("print('sorted:', bubble_sort([3, 1, 2]))"),
     )
     monkeypatch.setattr(loop, "get_provider", lambda *a, **k: provider)
     monkeypatch.setattr(loop, "docker_available", lambda: True)
 
     def fake_run(code, **k):
-        if "=== demo run ===" in code:                    # the demo driver execution
-            return RunResult(True, 0, "sorted: [1, 2, 3]\n", "", 0.1)
-        return _ok(2, 2)                                   # tests (visible + held-out)
+        if "ModuleType('_sol')" in code or "TESTS_PASSED" in code:   # a test-harness run
+            return _ok(2, 2)
+        return RunResult(True, 0, "sorted: [1, 2, 3]\n", "", 0.1)     # the SOLUTION's own __main__
 
     monkeypatch.setattr(loop, "run_python_auto", fake_run)
 

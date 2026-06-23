@@ -100,11 +100,10 @@ _HUGE = "[" + ", ".join(str(i % 10) for i in range(20_000)) + "]\n"   # >40k cha
 def test_capture_and_check_surfaces_requested_value_after_large_dump(
         monkeypatch, domain, deliverable, final_line, value):
     simulated = _HUGE + "=== RESULTS ===\n" + final_line + "\n"        # dump first, answer last
-    monkeypatch.setattr(loop, "_generate_demo_driver", lambda *a, **k: "print('demo')")
     monkeypatch.setattr(loop, "run_python_auto",
                         lambda code, **k: RunResult(True, 0, simulated, "", 0.1))
 
-    output, missing = _capture_and_check(None, domain, "requirements", "code", [deliverable])
+    output, missing = _capture_and_check("code", [deliverable])
 
     assert value in output and final_line in output          # requested value survived the clip
     assert missing == []                                     # completeness passes — value visible
@@ -116,11 +115,10 @@ def test_capture_and_check_flags_value_flooded_out_of_both_ends(monkeypatch):
     # not in captured stdout -> completeness FAILS (a buried print is treated as missing).
     big = "9, " * 6_000
     simulated = big + "\nsecret metric: 7.0\n" + big
-    monkeypatch.setattr(loop, "_generate_demo_driver", lambda *a, **k: "print('demo')")
     monkeypatch.setattr(loop, "run_python_auto",
                         lambda code, **k: RunResult(True, 0, simulated, "", 0.1))
 
-    output, missing = _capture_and_check(None, "task", "requirements", "code", ["secret metric"])
+    output, missing = _capture_and_check("code", ["secret metric"])
 
     assert "secret metric" not in output
     assert missing == ["secret metric"]

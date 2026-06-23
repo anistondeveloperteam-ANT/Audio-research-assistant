@@ -162,23 +162,23 @@ def test_verify_heldout_still_rejects_failure_on_a_valid_check(monkeypatch):
 # Definition checks are oracle-INDEPENDENT: the held-out quarantine must NEVER drop a
 # test_definition_* (its job is to catch a wrong-definition oracle), even if the oracle fails it.
 # ----------------------------------------------------------------------
-def test_held_out_quarantine_exempts_definition_checks(monkeypatch):
+def test_held_out_quarantine_covers_every_check_type(monkeypatch):
     monkeypatch.setenv("AGENT_TEST_VALIDATION", "true")
     monkeypatch.setenv("AGENT_VERIFY_SEEDS", "1")
     heldout = ("def test_hidden_a():\n    pass\n"
                "def test_invariant_b():\n    pass\n"
                "def test_definition_value():\n    pass\n"
                "def test_hidden_ok():\n    pass\n")
-    # The oracle fails the definition check (a wrong-definition oracle would) AND two others, but
-    # passes test_hidden_ok — so it is NOT the all-fail (fail-open) case. The definition check must
-    # still be EXEMPT from quarantine so it can gate the candidate.
+    # The reference fails three checks (incl. a DEFINITION check) and passes test_hidden_ok — so it is
+    # NOT the all-fail (fail-open) case. The UNIVERSAL gate quarantines EVERY check the correct reference
+    # fails, definition checks included: any check the correct answer cannot satisfy is wrong, not code.
     monkeypatch.setattr(loop, "run_python_auto",
                         lambda code, **k: _res("TEST test_hidden_a FAIL\nTEST test_invariant_b FAIL\n"
                                                "TEST test_definition_value FAIL\nTEST test_hidden_ok "
                                                "PASS\nTESTS_PASSED 1/4\n"))
     q = loop._heldout_quarantine("ORACLE", heldout)
-    assert q == {"test_hidden_a", "test_invariant_b"}     # hidden/invariant quarantined...
-    assert "test_definition_value" not in q              # ...but the definition check is EXEMPT
+    assert q == {"test_hidden_a", "test_invariant_b", "test_definition_value"}   # definition no longer exempt
+    assert "test_hidden_ok" not in q                     # a reference-passing check stays admitted
 
 
 def test_invalid_tests_fails_open_when_oracle_fails_entire_suite(monkeypatch):
