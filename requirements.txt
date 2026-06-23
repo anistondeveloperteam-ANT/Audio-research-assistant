@@ -6,9 +6,9 @@
 # Install:   pip install -r requirements.txt
 #
 # NOTE on torch: the project's .venv used a CUDA build (torch 2.7.1+cu126).
-# The pins below install the CPU build. For GPU, install torch/torchaudio
-# from the CUDA index first, e.g.:
-#   pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu126
+# The pin below installs the CPU build. For GPU, install torch from the CUDA
+# index first, e.g.:
+#   pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu126
 # ======================================================================
 
 # --- Web UI (FastAPI front end: python run.py) ---
@@ -27,7 +27,6 @@ pandas==3.0.3
 sentence-transformers==5.5.0
 transformers==4.57.6
 torch==2.7.1
-torchaudio==2.7.1
 
 # --- Oracle vector database ---
 oracledb==4.0.0
@@ -77,7 +76,6 @@ protobuf==5.29.5
 # ----------------------------------------------------------------------
 pytest==9.0.3
 pyflakes==3.4.0
-autoflake==2.3.3
 vulture==2.16
 # LLM-quality gates (tests/test_llm_quality.py). Opt-in: skips unless DEEPEVAL_ENABLED=true
 # and a judge-model key is set, so the normal offline suite is unaffected.

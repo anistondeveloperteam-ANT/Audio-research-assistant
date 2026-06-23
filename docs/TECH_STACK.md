@@ -70,7 +70,6 @@ with progress, light/dark theme.
 | Tool | Version | What it is | Role here |
 |---|---|---|---|
 | 🟢 **PyTorch** | 2.7.1 (+cu126 for GPU) | Deep‑learning tensor framework | Runs the reranker (and the local embedder, if enabled) — **on the GPU in fp16** |
-| 🟢 **torchaudio** | 2.7.1 | Torch audio companion | Pulled with torch; available to the stack |
 | 🟢 **sentence‑transformers** | 5.5.0 | High‑level wrapper for embedding + cross‑encoder models | Loads & runs the **cross‑encoder reranker** (and the optional local embedder) |
 | 🟢 **transformers** | 4.57.6 | Hugging Face model backbone | The model architecture under sentence‑transformers |
 | 🟢 **BAAI/bge‑reranker‑v2‑m3** | model | A **cross‑encoder reranker** | Re‑orders search hits by true query↔document relevance — the key accuracy step. Runs on GPU **fp16** (`RERANKER_FP16=true`), pre‑warmed at startup |
@@ -213,7 +212,6 @@ Runs are **saved to the chat** so the code + output reload after reopen.
 |---|---|---|
 | 🟢 **pytest** | 9.0.3 | The test runner — **176 tests**, all offline/mocked |
 | 🟢 **pyflakes** | 3.4.0 | Lint: unused imports / undefined names |
-| 🟢 **autoflake** | 2.3.3 | Removes unused imports/vars |
 | 🟢 **vulture** | 2.16 | Finds dead code |
 | 🟢 **tqdm** | 4.67.3 | Progress bars (ingestion, batch jobs) |
 | 🟢 **Node.js** (`node --check`) | optional | Quick JS syntax check for `app.js` |
@@ -248,7 +246,7 @@ conflict‑free, production dependency tree. If you see them referenced in old n
 **Sandbox:** Docker
 **Front end:** HTML/CSS/JS (no build) · marked.js · highlight.js · KaTeX
 **Observability/eval (optional):** Langfuse · DeepEval · custom evals
-**Dev:** pytest · pyflakes · autoflake · vulture · tqdm
+**Dev:** pytest · pyflakes · vulture · tqdm
 
 ---
 
