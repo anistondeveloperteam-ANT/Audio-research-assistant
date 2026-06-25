@@ -29,8 +29,12 @@ _RELEVANCE_SYSTEM = (
     "DIRECTLY helps answer THIS specific question — not merely sources on the same broad topic. "
     "A source that is about the general subject but does NOT address what the question actually "
     "asks is NOT relevant. Be strict: if a source would not let you support, ground, or improve "
-    "the answer to this exact question, EXCLUDE it. Judge each source only on whether it addresses "
-    "the question, never on how many you keep.\n"
+    "the answer to this exact question, EXCLUDE it.\n"
+    "Honour the question's SCOPE and RECENCY: if the question names a time frame, version, place, "
+    "entity, or other constraint, EXCLUDE sources that fall outside it (e.g. a different year/era, an "
+    "older version, a different entity) even when they are on-topic — out-of-scope material must not be "
+    "presented as if it answers the question. Judge each source only on whether it addresses the "
+    "question within its scope, never on how many you keep.\n"
     "Reply with ONLY one line of strict JSON, no prose:\n"
     '{"relevant": [the source numbers that genuinely address the question]}\n'
     'If NONE genuinely address the question, reply {"relevant": []}.'

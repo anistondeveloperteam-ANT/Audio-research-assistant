@@ -125,8 +125,12 @@ def _run(monkeypatch, tmp_path, draft, *, verdict='{"ok": true, "score": 95}', q
     return [e for e in events if e["type"] == "done"][0]
 
 
-_GOOD_CALC = ("Parameters: 44.1 kHz, 16-bit, stereo, 180 s. Formula: rate x depth x channels x seconds / 8. "
-              "= 44100 x 16 x 2 x 180 / 8 = 254016000 bytes = about 242 MB. Final answer: about 242 MB.")
+# A genuinely CORRECT, self-consistent calculation: 44100 x 16 x 2 x 180 = 254016000 bits, / 8 =
+# 31752000 bytes ≈ 30 MB. (Every shown equality is literally true, so the deterministic arithmetic
+# source-of-truth leaves it byte-for-byte unchanged.)
+_GOOD_CALC = ("Parameters: 44.1 kHz, 16-bit, stereo, 180 s. Bits = rate x depth x channels x seconds "
+              "= 44100 x 16 x 2 x 180 = 254016000 bits. Bytes = 254016000 / 8 = 31752000 bytes "
+              "= about 30 MB. Final answer: about 30 MB.")
 
 
 def test_a_states_the_arithmetic_result_with_no_self_override(monkeypatch, tmp_path):
@@ -169,7 +173,7 @@ def test_calc_question_routes_to_reasoning_without_retrieval(monkeypatch, tmp_pa
     for k, v in {"ENABLE_ANSWER_CACHE": "false", "ENABLE_LOCAL_RAG": "true", "ENABLE_WEB_SEARCH": "true",
                  "CODE_INTENT_SEMANTIC": "false"}.items():
         monkeypatch.setenv(k, v)
-    draft = "Storage = 44100 x 16 x 2 x 180 / 8 = 254016000 bytes = about 242 MB."
+    draft = "Storage = 44100 x 16 x 2 x 180 / 8 = 31752000 bytes = about 30 MB."
     monkeypatch.setattr(cl, "get_provider", lambda *a, **k: _P(draft))
     fail = lambda *a, **k: (_ for _ in ()).throw(AssertionError("retrieval ran for a reasoning question"))
     monkeypatch.setattr(cl, "_gather_local_items", fail)
@@ -182,4 +186,4 @@ def test_calc_question_routes_to_reasoning_without_retrieval(monkeypatch, tmp_pa
             done = ev
             break
     assert done and done["type"] == "done"
-    assert "242 MB" in done["answer"] and done.get("cached") is not True   # answered by reasoning, no search
+    assert "30 MB" in done["answer"] and done.get("cached") is not True   # answered by reasoning, no search

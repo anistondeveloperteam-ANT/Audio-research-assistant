@@ -44,3 +44,8 @@ os.environ["AGENTIC_CONSISTENCY_CHECK"] = "false"
 # non-freshness questions. Disable it suite-wide so chat tests keep the deterministic retrieve-first
 # (fail-open 'corpus') behaviour; test_source_router opts back in and mocks/forces the verdict.
 os.environ["SOURCE_ROUTER"] = "false"
+
+# Effort scaling makes a SIMPLE question skip angle-planning and run a single verify pass (scaling work
+# to complexity). Disable it suite-wide so existing chat/loop tests keep the legacy full-budget
+# behaviour (every question planned + the full loop cap); test_effort_scaling opts back in.
+os.environ["EFFORT_SCALING"] = "false"

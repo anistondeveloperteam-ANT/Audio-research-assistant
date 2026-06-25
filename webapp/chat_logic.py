@@ -61,8 +61,9 @@ from backend.answering.agentic_answer import (  # noqa: E402
 from backend.llm.streaming_provider import get_provider  # noqa: E402
 from backend.external_search import gather_external_evidence, is_web_search_enabled  # noqa: E402
 from backend.observability import tracing  # noqa: E402  (no-op unless LANGFUSE_ENABLED=true)
-from backend.answering.arithmetic_check import fix_false_equalities  # noqa: E402
+from backend.answering.arithmetic_check import verify_calculation  # noqa: E402
 from backend.answering.code_intent import is_self_contained_calculation  # noqa: E402
+from backend.answering.effort import assess_effort, effort_scaling_enabled, is_complex  # noqa: E402
 from backend.answering.source_router import (  # noqa: E402
     REASONING as SR_REASONING,
     WEB as SR_WEB,
@@ -147,16 +148,19 @@ SYSTEM_PROMPT = (
     "- RELEVANCE: use ONLY sources that directly address THIS question. A citation must directly\n"
     "  support the specific claim it is attached to — if a numbered source does not support a claim,\n"
     "  do NOT cite it and do NOT bend the answer to fit it. If NONE of the sources address the\n"
-    "  question, ignore them and answer from your own reasoning, noting the sources weren't relevant.\n"
+    "  question, answer DIRECTLY from your own knowledge AS IF NO SOURCES WERE PROVIDED: add NO\n"
+    "  citations, do NOT mention the sources or their relevance, and do NOT add a 'limitations of the\n"
+    "  evidence' / 'according to the provided sources' note. Just give the clean, correct answer.\n"
     "- SELF-CONTAINED questions (a calculation, unit conversion, derivation, definition, or standard\n"
     "  textbook / general-knowledge reasoning question whose answer does NOT depend on these specific\n"
     "  sources): ANSWER DIRECTLY and CORRECTLY from your own knowledge and reasoning, showing the\n"
-    "  working — do NOT reply that the sources don't cover it. A correct reasoned answer is exactly\n"
-    "  what's wanted; you do not need a source to do arithmetic or apply standard knowledge.\n"
-    "- If the sources don't cover part of the question, answer THAT part from your own reasoning when\n"
-    "  it is self-contained or standard, and say the evidence is insufficient ONLY for an EXTERNAL or\n"
-    "  empirical fact you genuinely cannot reason out (a specific dataset value, a paper's result, a\n"
-    "  current event) — never refuse a whole question the answer to which you can simply reason out.\n"
+    "  working — do NOT reply that the sources don't cover it, and do NOT add citations or a sources /\n"
+    "  evidence-limitations section. A correct reasoned answer is exactly what's wanted; you do not\n"
+    "  need a source to do arithmetic or apply standard knowledge.\n"
+    "- If the sources don't cover part of the question, answer THAT part from your own knowledge when\n"
+    "  it is self-contained or standard (with no citation for it), and say the evidence is insufficient\n"
+    "  ONLY for an EXTERNAL or empirical fact you genuinely cannot reason out (a specific dataset value,\n"
+    "  a paper's result, a current event) — never refuse a whole question you can simply reason out.\n"
     "- For code / implementation / simulation requests: you MAY use your OWN expert knowledge\n"
     "  of the algorithm to write COMPLETE, RUNNABLE, ORIGINAL code (imports + a small runnable\n"
     "  example). Do NOT refuse because the sources lack code. Cite sources for the surrounding\n"
@@ -378,10 +382,11 @@ _FRESHNESS_RE = re.compile(
 
 
 def _freshness_sensitive(question: str) -> bool:
-    """Time-sensitive questions bypass the cache so they always re-search.
-    Errs toward bypassing (a missed cache is cheaper than a stale 'latest' answer)."""
-    if _env_flag("ANSWER_CACHE_ALLOW_FRESHNESS_QUERIES", False):
-        return False
+    """True for a time-sensitive question (an explicit recency cue: latest / current / newest / now /
+    this year / a recent date / state-of-the-art now / ...). These ALWAYS bypass the cache and re-answer
+    fresh — a stale 'latest/current' answer is worse than a slightly slower one. There is NO opt-out: a
+    recency question must never be served from a stored entry. (Semantic recency with no keyword is
+    additionally caught by the source router's 'web' route, which also runs before the cache.)"""
     return bool(_FRESHNESS_RE.search((question or "").lower()))
 
 
@@ -918,9 +923,15 @@ def _legacy_sweep(queries: List[str], *, local_on: bool, mode: str, trace,
 
 
 def _deep_queries(question: str) -> List[str]:
-    """The main question plus a few auto-planned sub-questions ('angles'), so every
-    search is a mini deep-research sweep. Falls back to just the question."""
-    if _deep_subqueries() <= 0:
+    """The main question plus a few auto-planned sub-questions ('angles'), so a genuinely complex
+    question becomes a mini deep-research sweep. Effort scales to the question: when effort scaling is
+    on, a SIMPLE single-intent question is NOT decomposed at all (no planner LLM call, no per-angle
+    searches) — only a genuinely complex/multi-part question is planned, up to the DEEP_SEARCH_SUBQUERIES
+    cap. Falls back to just the question on any error / when planning is disabled."""
+    cap = _deep_subqueries()
+    if cap <= 0:
+        return [question]
+    if effort_scaling_enabled() and not is_complex(question):   # simple -> answer the literal query alone
         return [question]
     try:
         from backend.agent.research_agent import _plan
@@ -932,7 +943,7 @@ def _deep_queries(question: str) -> List[str]:
         return [question]
     ql = question.strip().lower()
     extras = [s for s in subs if s.strip() and s.strip().lower() != ql]
-    return [question] + extras[:_deep_subqueries()]
+    return [question] + extras[:cap]
 
 
 # ----------------------------------------------------------------------
@@ -1397,6 +1408,18 @@ def _reasoning_fallback(q: str, mem, session_id: str, q_version_id, node_id, use
         logger.info("reasoning fallback draft failed: %s", exc)
     answer = "".join(parts).strip()
     if not answer:
+        # Some models stream the whole answer on the REASONING channel and nothing on the content
+        # channel, leaving `parts` empty. Retry ONCE as a plain completion (no reasoning split) before
+        # giving up — a question the model can answer must NOT be refused over a streaming quirk.
+        try:
+            answer = complete_text(
+                provider, _ctx["history"] + [{"role": "user", "content": q}],
+                system=sys_prompt, max_tokens=_answer_max_tokens(), temperature=0.3).strip()
+            if answer:
+                yield {"type": "token", "text": answer}
+        except Exception:                                      # noqa: BLE001 - degrade, don't crash
+            answer = ""
+    if not answer:
         msg = "I couldn't produce a confident answer for this."
         yield {"type": "token", "text": msg}
         _av = mem.add_answer_version(q_version_id, msg, sources=[])
@@ -1406,17 +1429,23 @@ def _reasoning_fallback(q: str, mem, session_id: str, q_version_id, node_id, use
 
     # SIMPLE, CORRECT, DIRECT: the answer is computed ONCE by the draft. Do NOT run an LLM 're-derivation'
     # or 'reconcile' pass here — those can hallucinate a different value and OVERRIDE correct work (the
-    # "computes 1.44, then declares 14.4" bug). The only post-processing is a DETERMINISTIC arithmetic
-    # check that silently corrects any stated 'A op B = C' whose result is literally wrong (it recomputes,
-    # so it can never introduce a wrong value). A light quality check then decides only whether to cache.
-    answer = fix_false_equalities(answer)
+    # "computes 1.44, then declares 14.4" bug). The only post-processing is the DETERMINISTIC arithmetic
+    # SOURCE-OF-TRUTH: compute the answer's own shown work in code and override any stated number that
+    # differs from the computed value (it recomputes, so it can never introduce a wrong value), then
+    # propagate that one result to its restatements. A light quality check decides only whether to cache.
+    _calc = verify_calculation(answer)
+    answer = _calc.fixed_text
 
     yield {"type": "status", "message": "Checking the answer's quality..."}
     try:
         verdict = verify_answer(provider, question=q, evidence="", answer=answer, basis="reasoning")
     except Exception:                                          # noqa: BLE001 - never drop a real answer
         verdict = {"ok": True, "score": 100}
-    good = verification_passed(verdict)
+    # NOT VERIFIED IF MISMATCH: an answer whose stated result couldn't be reconciled to the computed
+    # value (or that mixes unit conventions) is not cached as verified, even if the LLM judge liked it.
+    good = verification_passed(verdict) and _calc.verified
+    if not _calc.verified and _calc.notes:
+        logger.info("arithmetic check withheld 'verified': %s", "; ".join(_calc.notes))
     if not good and verdict.get("needs_more_search"):
         note = "\n\n_Note: parts of this may need up-to-date or external information I don't have"
         if no_sources_enabled:
@@ -1608,9 +1637,37 @@ def stream_chat_events(
                 yield from _answer_from_conversation(q, mem, session_id, q_version_id, node_id)
                 return
 
-    # Embed the question ONCE (if semantic reuse is on); reused for lookup AND save.
+    # --- SOURCE ROUTER (runs BEFORE the cache, on purpose): decide WHICH source the question NEEDS. A
+    #     TIME-SENSITIVE question (route 'web' — an explicit recency cue OR the LLM judging it needs
+    #     current info) must NEVER be served from a stored answer (stale by definition), so the router
+    #     runs AHEAD of the cache lookup and a 'web' route bypasses the cache entirely. Deterministic
+    #     fast-paths (calculation -> reasoning, recency -> web) settle the obvious cases with no LLM
+    #     call; the LLM router decides the rest and FAILS OPEN to 'corpus'. The verdict is LRU-cached,
+    #     so a repeat question pays only an in-memory lookup. ---
+    is_fresh = _freshness_sensitive(q)
+    calc = is_self_contained_calculation(q)
+    route_provider = get_provider() if (source_router_enabled() and not is_fresh and not calc) else None
+    source = decide_source(route_provider, q, freshness=is_fresh, calc=calc)
+    force_web = (source == SR_WEB)
+
+    # --- EFFORT GAUGE (deterministic, no LLM): scale the research budget to what the question NEEDS.
+    #     A simple, single-intent question gets 0 planned angles (see _deep_queries) and a single verify
+    #     pass (no rewrite re-search); only a genuinely complex/multi-part question gets the full
+    #     angle/loop budget. The fast/deep knobs stay the ceiling — the gauge only decides 0-vs-cap, so
+    #     heavy work is the exception, not the default. effort.max_loops caps the agentic loop below. ---
+    effort = assess_effort(
+        q,
+        angle_cap=_deep_subqueries(),
+        loop_cap=min(max_verify_rounds(), max_deep_loops()),
+    )
+    logger.info("effort: %s (angles<=%d, loops<=%d, scaling=%s) for %r",
+                effort.label, effort.angles, effort.max_loops, effort_scaling_enabled(), q[:80])
+
+    # Embed the question ONCE (if semantic reuse is on); reused for lookup AND save. A time-sensitive
+    # ('web') question is NEVER cached or served from cache — stale by definition; only stable
+    # reasoning/corpus answers reuse.
     query_emb, query_meta = (None, None)
-    cache_on = answer_cache_enabled() and not _freshness_sensitive(q)
+    cache_on = answer_cache_enabled() and not force_web
     reuse_on = cache_on and regen_qversion_id is None      # regenerate re-answers fresh; never replays
     cached = None
     if cache_on:
@@ -1664,16 +1721,9 @@ def stream_chat_events(
             return
         # else: fall through to the full fresh pipeline (retrieval / reasoning + verification).
 
-    # --- SOURCE ROUTER: decide WHICH source the question NEEDS before answering, so the indexed corpus
-    #     is never the default for everything. 'reasoning' -> answer directly from the model's own
-    #     knowledge (no retrieval, no corpus citations, no "the sources" framing); 'web' -> a current
-    #     web search anchored to today (never the stale corpus); 'corpus' -> the existing CRAG
-    #     retrieve-grade-cite path. Deterministic fast-paths (calculation -> reasoning, recency -> web)
-    #     settle the obvious cases; the LLM router decides the rest and FAILS OPEN to 'corpus'. ---
-    is_fresh = _freshness_sensitive(q)
-    calc = is_self_contained_calculation(q)
-    route_provider = get_provider() if (source_router_enabled() and not is_fresh and not calc) else None
-    source = decide_source(route_provider, q, freshness=is_fresh, calc=calc)
+    # The source route was decided BEFORE the cache (above). 'reasoning' -> answer directly from the
+    # model's own knowledge (no retrieval, no corpus citations, no "the sources" framing). A stable
+    # reasoning answer was already served from cache above if one existed; otherwise produce it fresh.
     if source == SR_REASONING:
         no_src = not local_rag_enabled() and not is_web_search_enabled()
         yield {"type": "status", "message": "Answering directly from reasoning..."}
@@ -1687,12 +1737,12 @@ def stream_chat_events(
 
     # --- WEB route (a recency cue, or the router judged the question needs current info): go WEB-ONLY,
     #     anchored to the present, so 'latest/current/this-year' is answered from fresh web sources and
-    #     the static corpus / stale training content is never presented as current. ---
-    force_web = (source == SR_WEB)
-    if (force_web or is_fresh) and local_on and is_web_search_enabled():
+    #     the static corpus / stale training content is never presented as current. (force_web already
+    #     subsumes the recency cue, since a fresh question routes to 'web'.) ---
+    if force_web and local_on and is_web_search_enabled():
         local_on = False
-        logger.info("source=%s -> web-only (skipping the static local library)", source)
-    if force_web or is_fresh:
+        logger.info("source=web -> web-only (skipping the static local library)")
+    if force_web:
         _yr = str(datetime.now().year)
         if _yr not in search_q:
             search_q = f"{search_q} {_yr}"
@@ -1701,7 +1751,7 @@ def stream_chat_events(
     #     question AND every angle across all sources, merging the evidence so the
     #     answer is built from everything found (local papers + web + papers +
     #     patents + GitHub). ---
-    queries = _deep_queries(search_q)   # search_q == q unless a follow-up resolved its references
+    queries = _deep_queries(search_q)   # self-gates: 0 angles for a simple question (effort scaling on)
     if len(queries) > 1:
         yield {"type": "status", "message":
                f"Planning the research — exploring {len(queries)} angles..."}
@@ -1851,7 +1901,13 @@ def stream_chat_events(
             # passes or the verifier names no concrete gap — an empty round can't improve the
             # answer). A query that genuinely needs every round still gets them. DEEP_MAX_LOOPS is
             # only a deliberate, operator-set speed/quality lever when set below max_verify_rounds.
+            # The EFFORT gauge tightens this further (when enabled): a SIMPLE question runs a single
+            # verify pass (effort.max_loops == 1), so it never re-searches — line ~1970 breaks at
+            # round_no >= loop_cap before any follow-up/Self-RAG search. Only a complex question spends
+            # the loop. Disabled (EFFORT_SCALING=off) -> the legacy mode cap applies to every question.
             loop_cap = min(max_verify_rounds(), max_deep_loops())
+            if effort_scaling_enabled():
+                loop_cap = min(loop_cap, effort.max_loops)
             loop_t0 = time.time()
             feedback_rewrites = 0       # guided rewrites done for feedback-only (no-gap) verdicts
             for round_no in range(1, loop_cap + 1):
@@ -1909,6 +1965,17 @@ def stream_chat_events(
                         break
                     _sp.set(model=getattr(provider, "model", None), output_len=len(answer),
                             tokens_out_est=len(answer) // 4)   # ~4 chars/token (no exact usage)
+
+                # GENERAL-KNOWLEDGE HANDOFF: this evidence-path draft cited NO source -> the model
+                # answered from its OWN knowledge; the retrieved corpus wasn't genuinely used. Stop here
+                # (before the evidence verify can fail it for lack of grounding, or rewrite it to force
+                # citations / an evidence-limitations frame) and hand off to the clean reasoning path
+                # post-loop. EXCEPTIONS keep their own machinery: a STRONG corpus match (the corpus is
+                # genuinely relevant -> Self-RAG corroboration below), freshness/web, and code tasks.
+                if (round_no == 1 and answer.strip() and not force_web and crag_grade != STRONG
+                        and not _freshness_sensitive(q) and not task_class.code_task
+                        and not _cited_source_numbers(answer)):
+                    break
 
                 # Runnable-Python check ONLY for code-intent queries. A pure research/reasoning
                 # question (router said NON-code) skips this entirely — every loop — so we never
@@ -2052,11 +2119,21 @@ def stream_chat_events(
             logger.info("agentic answer: %d loop(s) of <=%d in %.1fs", round_no, loop_cap,
                         time.time() - loop_t0)
 
+            # GENERAL-KNOWLEDGE HANDOFF (see the loop break above): an evidence-path answer that cites
+            # NO source was produced from the model's OWN knowledge, not the corpus — route it to the
+            # clean reasoning path below (no citations, no evidence-framing, no irrelevant sources,
+            # origin-independent confidence) instead of auto-reviewing / emitting it as grounded.
+            if ((answer or "").strip() and not force_web and crag_grade != STRONG
+                    and not _freshness_sensitive(q) and not task_class.code_task
+                    and not _cited_source_numbers(answer)):
+                reroute_to_reasoning = True
+
             # Automatic peer review (the "Review" step, run for you): critique the final
             # answer (with topical relevance), improve it once if it's weak. Reviewer jargon
             # (novelty/soundness numbers, recommendation) is never shown to the user.
             review_offtopic = False
-            if auto_review_enabled() and answer and answer.strip() and answer != "(no answer)":
+            if (auto_review_enabled() and not reroute_to_reasoning
+                    and answer and answer.strip() and answer != "(no answer)"):
                 yield {"type": "status", "message": "Reviewing the answer…"}
                 with trace.span("auto_review") as _sp:
                     try:
@@ -2085,10 +2162,12 @@ def stream_chat_events(
                                 pass
 
             clean_body = answer or ""
-            # ROOT FIX: an "evidence doesn't cover this" non-answer on a non-time-sensitive question
-            # means the retrieved sources were IRRELEVANT to a self-contained / reasoning-answerable
-            # question — do NOT ship the refusal. Skip emitting it and re-answer from REASONING below.
-            if (answer or "").strip() and _is_evidence_refusal(answer) and not _freshness_sensitive(q):
+            # ROOT FIX: a self-contained / reasoning-answerable question whose evidence draft either
+            # REFUSES ("the sources don't cover this") or simply CITES NOTHING (handoff flag above) was
+            # not actually grounded in the corpus — do NOT ship it framed as evidence-based. Skip
+            # emitting it and re-answer cleanly from REASONING below (no citations, no evidence-framing).
+            if reroute_to_reasoning or (
+                    (answer or "").strip() and _is_evidence_refusal(answer) and not _freshness_sensitive(q)):
                 reroute_to_reasoning = True
             elif not (answer or "").strip():
                 # Empty draft (e.g. an OpenRouter 402 capped output to ~0 tokens): show a
@@ -2103,13 +2182,25 @@ def stream_chat_events(
                 answer_parts.append(final_answer)
                 yield {"type": "token", "text": final_answer}
             else:
-                # CONCLUSION-MATCHES-WORK: reconcile the stated result to the answer's own derivation
-                # BEFORE emitting, so the displayed + saved answer is internally consistent (the wrong
-                # headline figure is removed, not shipped). Runs ahead of the independent check below.
+                # ARITHMETIC SOURCE OF TRUTH (deterministic, FIRST, no LLM): compute the answer's own
+                # shown work in code and OVERRIDE any 'EXPR = NUM' whose stated number differs from the
+                # code-computed value of its expression. Runs on EVERY answer on this live path, so a
+                # model-asserted equality result the system hasn't verified is never delivered. Safe by
+                # construction (it only turns a shown equality true). A mixed unit convention (1024 vs
+                # 1000) withholds 'verified' below; free-prose conclusions go to the LLM backstop next.
+                _calc = verify_calculation(answer)
+                if _calc.fixed_text != answer:
+                    answer = _calc.fixed_text
+                    clean_body = answer
+                calc_ok = _calc.verified
+                # CONCLUSION-MATCHES-WORK: an LLM backstop for NON-arithmetic conclusions (qualitative
+                # claims the code check can't evaluate). Runs on the already code-corrected text, so it
+                # can't override a number the deterministic check just made authoritative.
                 if consistency_check_enabled():
                     yield {"type": "status", "message": "Checking the conclusion matches the work..."}
                     answer, consistency_ok, _corr, _dv = _enforce_conclusion_matches_work(provider, q, answer)
                     clean_body = answer
+                consistency_ok = consistency_ok and calc_ok       # arithmetic must also be consistent
                 final_answer = answer   # clean body; no internal verifier/review jargon
                 answer_parts.append(final_answer)
                 yield {"type": "token", "text": final_answer}
@@ -2153,7 +2244,10 @@ def stream_chat_events(
     # The evidence draft refused a self-contained question (irrelevant sources) -> answer it from
     # REASONING instead of shipping the refusal. _reasoning_fallback yields its own answer + done.
     if reroute_to_reasoning:
-        yield {"type": "status", "message": "The sources didn't cover this — answering from reasoning instead..."}
+        # The retrieved sources weren't genuinely used -> CLEAR the (irrelevant) source panel emitted
+        # earlier, so the clean reasoning answer carries no spurious citations or sources.
+        yield {"type": "sources", "sources": []}
+        yield {"type": "status", "message": "Answering from general knowledge…"}
         yield from _reasoning_fallback(q, mem, session_id, q_version_id, node_id, user_id,
                                        cache_on, query_emb, query_meta, trace)
         return

@@ -136,10 +136,18 @@ def _public_sources(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # The four reasoning steps
 # ----------------------------------------------------------------------
 _PLAN_SYSTEM = (
-    "You are a research planner. Break the user's question into a few focused, "
-    "non-overlapping sub-questions that together fully cover it (definitions, how it "
-    "works, comparisons, evidence, current state). Reply with ONLY JSON: "
-    '{"subquestions": ["...", "..."]}'
+    "You are a research planner. Decompose the user's question into a few focused, non-overlapping "
+    "sub-questions ONLY when it is genuinely multi-part; otherwise return it unchanged.\n"
+    "FIDELITY IS MANDATORY — every sub-question must stay strictly INSIDE what the user asked:\n"
+    "- Preserve the EXACT scope, time frame, subject, and constraints. If the user named a year, era, "
+    "version, place, person, dataset, or other bound, keep that SAME bound in every sub-question.\n"
+    "- Do NOT broaden, narrow, or shift the question. Do NOT add generic angles the user did not ask "
+    "for (no 'history of', no 'current state', no 'future of', no comparisons, no related topics).\n"
+    "- NEVER change the time frame: a question about a specific or current period must NOT be turned "
+    "into a past range or a different period.\n"
+    "- If the question is already simple and single-intent, return just that one question — do not "
+    "invent sub-questions to manufacture breadth.\n"
+    "Reply with ONLY JSON: {\"subquestions\": [\"...\", \"...\"]}"
 )
 
 _SYNTH_SYSTEM = (
