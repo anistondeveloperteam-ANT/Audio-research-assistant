@@ -737,10 +737,16 @@
   }
 
   // ---------- sessions ----------
-  // Group history by the user's LOCAL calendar day. Backend stores updated_at as UTC
-  // epoch SECONDS (time.time()); we normalize defensively (numeric string / accidental
-  // milliseconds) and derive Today/Yesterday/older from LOCAL midnight via Date objects
-  // (DST-robust — not a fixed 86400s). Mirror of tests/test_date_grouping.js — keep in sync.
+  // Group history by the user's LOCAL calendar day, and show each chat's EXACT date on its row.
+  // Backend stores updated_at as UTC epoch SECONDS (time.time()); we normalize defensively (numeric
+  // string / accidental milliseconds) and derive everything from LOCAL midnight via Date objects
+  // (DST-robust — not a fixed 86400s). Buckets, newest first: Today / Yesterday / Previous 7 days /
+  // Previous 30 days / "Month YYYY" for anything older (so nothing lands in a vague catch-all).
+  // Mirror of tests/test_date_grouping.js — keep in sync.
+  const MONTHS = ["January", "February", "March", "April", "May", "June",
+                  "July", "August", "September", "October", "November", "December"];
+  const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   function toEpochSec(ts) {
     let n = typeof ts === "number" ? ts : parseFloat(ts);
     if (!isFinite(n)) return NaN;
@@ -752,24 +758,41 @@
     const sec = toEpochSec(ts);
     if (!isFinite(sec)) return "Earlier";
     const todayMs = localMidnight(new Date()).getTime();
-    const dayMs = localMidnight(new Date(sec * 1000)).getTime();
+    const d = new Date(sec * 1000);
+    const dayMs = localMidnight(d).getTime();
     const y = localMidnight(new Date(todayMs)); y.setDate(y.getDate() - 1);
     const w = localMidnight(new Date(todayMs)); w.setDate(w.getDate() - 7);
+    const m = localMidnight(new Date(todayMs)); m.setDate(m.getDate() - 30);
     if (dayMs >= todayMs) return "Today";
     if (dayMs >= y.getTime()) return "Yesterday";
     if (dayMs >= w.getTime()) return "Previous 7 days";
-    return "Earlier";
+    if (dayMs >= m.getTime()) return "Previous 30 days";
+    return MONTHS[d.getMonth()] + " " + d.getFullYear();   // e.g. "May 2026"
+  }
+  // Each chat's exact date for its row: today -> the time ("2:14 PM"); any other day -> "Mon D"
+  // ("Jun 23"). The year, when it matters, is carried by the "Month YYYY" section header above it.
+  function rowDate(ts) {
+    const sec = toEpochSec(ts);
+    if (!isFinite(sec)) return "";
+    const d = new Date(sec * 1000);
+    if (localMidnight(d).getTime() >= localMidnight(new Date()).getTime()) {
+      let h = d.getHours(); const mm = String(d.getMinutes()).padStart(2, "0");
+      const ap = h < 12 ? "AM" : "PM"; h = h % 12 || 12;
+      return h + ":" + mm + " " + ap;
+    }
+    return MONTHS_SHORT[d.getMonth()] + " " + d.getDate();
   }
   function renderSessions() {
     const box = $("history"); box.innerHTML = "";
     if (!state.sessions.length) { box.innerHTML = `<div class="history-empty">No conversations yet. Start one with <b>New chat</b>.</div>`; }
     let lastBucket = null;
     state.sessions.forEach((s) => {
-      const b = bucketLabel(s.updated_at || s.created_at);
+      const ts = s.updated_at || s.created_at;
+      const b = bucketLabel(ts);
       if (b !== lastBucket) { lastBucket = b; const lab = document.createElement("div"); lab.className = "grp-label"; lab.textContent = b; box.appendChild(lab); }
       const item = document.createElement("div");
       item.className = "conv" + (s.id === state.currentId ? " active" : "");
-      item.innerHTML = `<span class="conv-dot">${ICON_CHAT}</span><span class="conv-name">${esc(s.title || "Untitled")}</span>
+      item.innerHTML = `<span class="conv-dot">${ICON_CHAT}</span><span class="conv-name">${esc(s.title || "Untitled")}</span><span class="conv-date" title="${esc(b)}">${esc(rowDate(ts))}</span>
         <span class="conv-acts"><button class="mini" data-act="rename" title="Rename">${ICON_PENCIL_MINI}</button><button class="mini danger" data-act="delete" title="Delete">${ICON_TRASH_MINI}</button></span>`;
       item.addEventListener("click", (e) => {
         const act = e.target.closest("[data-act]");
