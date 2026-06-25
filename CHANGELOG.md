@@ -11,6 +11,38 @@ companion to the git history.
 
 ---
 
+## 2026-06-25
+
+### Answer-quality hardening — four pipeline correctness fixes
+- **Time-sensitive questions never serve stale cache.** The source router runs *before* the
+  cache, so a "latest / current / now / this year" question always re-answers fresh (and is
+  never cached); stable questions keep verified-answer reuse. `tests/test_freshness_cache_bypass.py`.
+- **Effort scales to the question.** A deterministic gauge (no LLM) gives a simple, single-intent
+  question 0 planned angles + a single verify pass, while a genuinely complex/multi-part question
+  gets the full budget within the existing fast/deep caps. The planner now preserves the user's
+  exact scope/time-frame instead of broadening it. `EFFORT_SCALING` (default on);
+  `tests/test_effort_scaling.py`.
+- **Calculations are computed in code, not trusted.** A safe deterministic evaluator (tokenizer +
+  shunting-yard, no `eval`, no deps) computes the answer's *own* shown work and overrides any
+  `EXPR = NUM` it proves wrong — making the code value the single source of truth for every
+  calculation answer on both paths. Hardened across five adversarial-review rounds: it only
+  rewrites a number it proved wrong, never prose/operands/another equation, and never fabricates a
+  false equality. `backend/answering/arithmetic_check.py`, `tests/test_arithmetic_source_of_truth.py`.
+- **General-knowledge questions answer directly.** An evidence-path draft that cites *no* source
+  means the model used its own knowledge → it is handed off to the clean reasoning path: no forced
+  citations, no "according to the provided sources" / "limitations of the evidence" framing, no
+  irrelevant sources, origin-independent confidence, and never refused for lack of corpus. Genuine
+  corpus answers (cite ≥1, or a STRONG retrieval grade) are untouched.
+  `tests/test_general_knowledge_direct.py`.
+- Full suite: **863 passing**, `pyflakes` clean.
+
+### Sidebar: each chat shows its exact date + finer history buckets
+- Every conversation row now shows its real date (the time for today, "Mon D" for older days), so
+  a 2-day-old chat is no longer lumped vaguely under "Previous 7 days". Buckets extended to Today /
+  Yesterday / Previous 7 days / Previous 30 days / "Month YYYY" — no single "Earlier" catch-all.
+  Ordering was already correct (`updated_at DESC`); only the labels changed.
+  `tests/test_date_grouping.js`.
+
 ## 2026-06-12
 
 ### Contextual Retrieval (Anthropic-style) in ingestion
