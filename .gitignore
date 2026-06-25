@@ -42,6 +42,9 @@ archive/
 *.zip
 *.bak
 
+# ===== Internal planning artifacts (skill-generated specs/plans — not product docs) =====
+docs/superpowers/
+
 # ===== Editor / OS =====
 .vscode/*
 !.vscode/settings.json
