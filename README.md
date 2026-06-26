@@ -10,7 +10,7 @@ A self‑hosted research companion: a **FastAPI** backend, a **no‑build** HTML
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-897%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-passing-2ea44f)
 ![Corrective RAG](https://img.shields.io/badge/retrieval-Corrective%20RAG-8A2BE2)
 ![Self-improving](https://img.shields.io/badge/agent-self--improving-FF6B6B)
 [![License](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
@@ -318,7 +318,7 @@ flowchart TD
 | **`backend/memory/`** | Conversations, facts, answer cache (SQLite) | `store.py` |
 | **`backend/auth/`** | Accounts, Google OAuth, password‑reset email | `users.py` |
 | **`backend/maintenance/`** | One‑shot factory reset (wipe all local data) | `factory_reset.py` |
-| **`tests/`** | 897 offline tests — Docker / LLM / network mocked | `test_*.py` |
+| **`tests/`** | Offline tests — Docker / LLM / network mocked | `test_*.py` |
 
 > 🧭 Deeper dives ([full docs index](docs/README.md)): **[docs/PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md)** (the complete diagram-first pipeline guide, PDF-ready) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (architecture + code map) · [docs/TECH_STACK.md](docs/TECH_STACK.md) (technology) · [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) + [docs/MEASUREMENT.md](docs/MEASUREMENT.md) (measured accuracy/latency) · [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md).
 
@@ -327,7 +327,7 @@ flowchart TD
 ## 🛠️ Development
 
 ```bash
-.venv\Scripts\python.exe -m pytest -q          # 897 passing (3 skipped), fully offline/mocked
+.venv\Scripts\python.exe -m pytest -q          # full suite, fully offline/mocked
 .venv\Scripts\pyflakes backend webapp           # lint
 python pipeline.py --status                     # what's indexed + device (GPU/CPU)
 python pipeline.py --corpus-report              # coverage + gaps report
