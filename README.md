@@ -10,11 +10,12 @@ A self‑hosted research companion: a **FastAPI** backend, a **no‑build** HTML
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
 ![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-826%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-897%20passing-2ea44f)
 ![Corrective RAG](https://img.shields.io/badge/retrieval-Corrective%20RAG-8A2BE2)
+![Self-improving](https://img.shields.io/badge/agent-self--improving-FF6B6B)
 [![License](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
-**[Quick start](#-quick-start) · [Share with your team](#-share-with-your-team) · [What you can ask](#-what-you-can-ask) · [How it works](#-how-it-works) · [Features](#-features) · [Models](#-models) · [Config](#-configuration) · [Code map](#-code-map) · [Troubleshooting](#-troubleshooting)**
+**[Quick start](#-quick-start) · [Share with your team](#-share-with-your-team) · [What you can ask](#-what-you-can-ask) · [How it works](#-how-it-works) · [Learns over time](#-it-gets-smarter-every-day) · [Features](#-features) · [Models](#-models) · [Config](#-configuration) · [Code map](#-code-map) · [Troubleshooting](#-troubleshooting)**
 
 Open-source under the [MIT License](LICENSE) — use it, fork it, build on it.
 
@@ -23,6 +24,8 @@ Open-source under the [MIT License](LICENSE) — use it, fork it, build on it.
 ---
 
 Most "chat with AI" tools answer from the model's memory and hope it's right. **This one doesn't.** It searches real sources first — the open web, research papers, Wikipedia, patents, GitHub, and any PDFs you add — answers **only** from what it found, **cites every claim**, and checks the draft against that evidence before showing it. When the sources fall short, it says so instead of inventing. And when a question is really a coding task, it writes the program, runs it in a **locked‑down Docker sandbox**, and refines until it works.
+
+And it **[gets better the more you use it](#-it-gets-smarter-every-day)** — learning from its own corrections, the answers you regenerate to, and its own measured quality, all in the background so it never costs you a moment of latency.
 
 > [!NOTE]
 > **Deep dive:** [🧭 The Complete Pipeline Guide](docs/PIPELINE_GUIDE.md) — every stage from question to verified answer, diagram-first (route → retrieve → grade → relevance-gate → verify → independent-check → cite), PDF-ready. See also [📊 How It Works](docs/HOW_IT_WORKS.md) for accuracy/latency numbers.
@@ -155,6 +158,36 @@ The grader scores **83.3%** on a labeled set (`python -m backend.evaluation.meas
 
 ---
 
+## 🧬 It gets smarter every day
+
+Most assistants are frozen at deploy time. This one **learns from its own runs** — three loops that all run **in the background, after your answer is delivered, so they add _zero latency_**:
+
+```mermaid
+flowchart LR
+    A(["✅ Answer shipped<br/>& verified"]) --> P1
+    A --> P2
+    A --> P3
+    subgraph BG["🌙 Background — runs AFTER you already have your answer"]
+      direction TB
+      P1["🧠 <b>Experience memory</b><br/>learns from its mistakes &amp;<br/>the answers you regenerate to"]
+      P2["🌱 <b>Grown corpus</b><br/>ingests the verified findings<br/>it cited, embedded for reuse"]
+      P3["🎛️ <b>Eval-gated self-tuning</b><br/>recalibrates its own thresholds,<br/>only when an eval proves it better"]
+    end
+    P1 -. "recall lessons" .-> N(["🎯 Next question<br/>answered better"])
+    P2 -. "retrieve grown corpus" .-> N
+    P3 -. "tuned knobs" .-> N
+```
+
+| Loop | Learns from | Why it's safe | Flag |
+|---|---|---|---|
+| **🧠 Experience memory** | its own self-corrections (a fixed calculation, a reconciled conclusion) and the answers you **regenerate** to | lessons are *generalisable guidance*, never stored facts; preference lessons are **shape-only** (length/structure, never content); recency-weighted and pruned | `EXPERIENCE_MEMORY` (on) |
+| **🌱 Grown corpus** | the external findings a **verified** answer actually **cited** — embedded in the background, then merged into future retrieval | only verified **and** cited passages; deduped by content hash; bounded + pruned; **skipped for "latest" queries** so it never serves stale data | `CORPUS_GROWTH` (on) |
+| **🎛️ Self-tuning** | its own answer outcomes, scored through the existing **eval harness** | **eval-gated** (adopt only on a proven gain), **bounded**, **reversible** in one call, and **propose-only by default** — never silent | `SELF_TUNING` (opt-in) |
+
+Every loop is **fail-open** — a learning error can never break an answer — and the ideas are ported from the best of the field: [Reflexion](https://arxiv.org/abs/2303.11366) (verbal self-reflection), [Mem0](https://github.com/mem0ai/mem0) (agent memory), and the [Generative Agents](https://arxiv.org/abs/2304.03442) memory stream (recency × relevance), with **no model-weight training and no heavy new dependencies**.
+
+---
+
 ## 🧩 Features
 
 <details>
@@ -264,7 +297,9 @@ flowchart TD
     ANS --> LLM["💬 LLM provider<br/>backend/llm/streaming_provider.py<br/>Gemini · Mistral · OpenAI · Ollama"]
     ING["📥 Ingestion + pipeline.py<br/>backend/ingestion<br/>parse → chunk → embed"] --> DB[("🗄️ Oracle 23ai<br/>vectors + chunks")]
     RET --> DB
-    ORC --> MEM[("💾 backend/memory<br/>SQLite: sessions · facts · answer-cache")]
+    ANS --> LRN["🧬 Self-improving loop<br/>backend/answering: experience · acquired_knowledge · tuning<br/>+ backend/evaluation/self_tuner — learn · grow · self-tune"]
+    LRN --> MEM
+    ORC --> MEM[("💾 backend/memory<br/>SQLite: sessions · facts · answer-cache<br/>+ lessons · learned_sources · tuned_config")]
     SRV --> AUTH["🔐 backend/auth<br/>users · Google OAuth · mailer"]
 ```
 
@@ -273,6 +308,8 @@ flowchart TD
 | **`webapp/`** | FastAPI server, chat orchestration, no‑build UI | `server.py` · `chat_logic.py` |
 | **`webapp/static/`** | Workspace + login UI (HTML/CSS/JS, canvas backgrounds) | `index.html` · `app.js` · `login.html` |
 | **`backend/answering/`** | The decision brain — route, verify, cite, review | `agentic_answer.py` · `code_intent.py` |
+| **`backend/answering/`** *(learning)* | Self-improving loop — experience memory, grown corpus, self-tuning layer | `experience.py` · `acquired_knowledge.py` · `tuning.py` |
+| **`backend/evaluation/`** | Eval harnesses + the eval-gated self-tuner | `self_tuner.py` · `evaluate_*.py` |
 | **`backend/retrieval/`** | Local hybrid RAG (vector + BM25 + RRF + rerank) | `hybrid_retrieve.py` |
 | **`backend/external_search/`** | Web · arXiv · Scholar · Wikipedia · patents · GitHub · PDFs | `orchestrator.py` |
 | **`backend/agent/`** | Autonomous code agent — write → run in Docker → verify | `loop.py` · `code_runner.py` |
@@ -281,7 +318,7 @@ flowchart TD
 | **`backend/memory/`** | Conversations, facts, answer cache (SQLite) | `store.py` |
 | **`backend/auth/`** | Accounts, Google OAuth, password‑reset email | `users.py` |
 | **`backend/maintenance/`** | One‑shot factory reset (wipe all local data) | `factory_reset.py` |
-| **`tests/`** | 826 offline tests — Docker / LLM / network mocked | `test_*.py` |
+| **`tests/`** | 897 offline tests — Docker / LLM / network mocked | `test_*.py` |
 
 > 🧭 Deeper dives ([full docs index](docs/README.md)): **[docs/PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md)** (the complete diagram-first pipeline guide, PDF-ready) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (architecture + code map) · [docs/TECH_STACK.md](docs/TECH_STACK.md) (technology) · [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) + [docs/MEASUREMENT.md](docs/MEASUREMENT.md) (measured accuracy/latency) · [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md).
 
@@ -290,7 +327,7 @@ flowchart TD
 ## 🛠️ Development
 
 ```bash
-.venv\Scripts\python.exe -m pytest -q          # 826 passing (3 skipped), fully offline/mocked
+.venv\Scripts\python.exe -m pytest -q          # 897 passing (3 skipped), fully offline/mocked
 .venv\Scripts\pyflakes backend webapp           # lint
 python pipeline.py --status                     # what's indexed + device (GPU/CPU)
 python pipeline.py --corpus-report              # coverage + gaps report

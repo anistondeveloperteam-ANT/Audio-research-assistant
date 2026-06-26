@@ -45,6 +45,10 @@ archive/
 # ===== Internal planning artifacts (skill-generated specs/plans — not product docs) =====
 docs/superpowers/
 
+# ===== Local-only authoring docs (kept on disk, never published) =====
+# The technology deep-dive is generated for the owner to render to PDF — not a product doc.
+TECHNOLOGY_DEEP_DIVE.md
+
 # ===== Editor / OS =====
 .vscode/*
 !.vscode/settings.json
