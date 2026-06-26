@@ -3,6 +3,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -49,3 +51,28 @@ os.environ["SOURCE_ROUTER"] = "false"
 # to complexity). Disable it suite-wide so existing chat/loop tests keep the legacy full-budget
 # behaviour (every question planned + the full loop cap); test_effort_scaling opts back in.
 os.environ["EFFORT_SCALING"] = "false"
+
+# Experience memory recalls past LESSONS into the draft prompt and captures new ones each answer.
+# Disable it suite-wide so existing chat tests aren't perturbed by an injected lessons block;
+# test_experience_memory opts back in.
+os.environ["EXPERIENCE_MEMORY"] = "false"
+
+# Corpus growth (Phase 2) recalls LEARNED external findings into retrieval and captures cited verified
+# findings into a grown corpus. Disable it suite-wide so existing retrieval/answer tests aren't
+# perturbed by injected learned passages; test_acquired_knowledge opts back in (and forces synchronous
+# background capture so it stays deterministic).
+os.environ["CORPUS_GROWTH"] = "false"
+
+# Self-tuning (Phase 3) is OPT-IN: never apply tuned config in the suite. The tuning OVERRIDE layer is
+# always present but a no-op with no overrides set; test_self_tuning opts in and manages its own cache.
+os.environ["SELF_TUNING"] = "false"
+
+
+@pytest.fixture(autouse=True)
+def _reset_tuning_cache():
+    """Phase 3 tuning overrides live in a process-global cache. Clear it around every test so a test that
+    sets an override can never leak a changed threshold into another test."""
+    from backend.answering import tuning as _tuning
+    _tuning.clear_cache()
+    yield
+    _tuning.clear_cache()

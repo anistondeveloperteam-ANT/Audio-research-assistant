@@ -166,6 +166,97 @@ CREATE INDEX IF NOT EXISTS idx_agent_runs_user_verified
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_created
     ON agent_runs(created_at DESC);
+
+-- Experience / lessons memory: the agent LEARNS from its own runs. Each row is a distilled lesson —
+-- a Reflexion-style "what went wrong -> the fix" (kind='mistake'), or a user-PREFERRED exemplar from a
+-- regeneration (kind='preference') — recalled on SIMILAR future questions and scored
+-- relevance x recency x confidence. Reinforced when it helps produce a verified answer; pruned when
+-- stale + low-confidence. One row per (user, normalized question, kind); a fresh capture upgrades the
+-- prior. No model training — pure recall-before-answer, gated by EXPERIENCE_MEMORY.
+CREATE TABLE IF NOT EXISTS lessons (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id               TEXT NOT NULL DEFAULT 'local',
+    kind                  TEXT NOT NULL,
+    question              TEXT NOT NULL,
+    normalized_question   TEXT NOT NULL,
+    question_tokens_json  TEXT NOT NULL DEFAULT '[]',
+    content               TEXT NOT NULL,
+    source                TEXT,
+    created_at            REAL NOT NULL,
+    updated_at            REAL NOT NULL,
+    last_used_at          REAL,
+    hit_count             INTEGER NOT NULL DEFAULT 0,
+    confidence            REAL NOT NULL DEFAULT 1.0,
+    question_embedding    TEXT,
+    embedding_meta        TEXT,
+    logic_version         INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (user_id, normalized_question, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lessons_user_created
+    ON lessons(user_id, created_at DESC);
+
+-- Acquired-knowledge / GROWN CORPUS (Phase 2): the agent UPDATES its own RAG from VERIFIED runs. Each
+-- row is one external finding (web / paper / patent / repo / online-pdf passage) that was CITED in a
+-- verified answer, embedded so it is retrievable on FUTURE questions WITHOUT re-fetching — the corpus
+-- grows day by day from the agent's own verified research. Recalled by relevance x recency x confidence;
+-- re-capturing the SAME finding (cited again in a later verified answer) UPSERTs and STRENGTHENS it
+-- (confidence up, embedding kept). One row per (user, content_hash); pruned when stale + weak. Gated by
+-- CORPUS_GROWTH. Captured in the BACKGROUND so it adds zero latency to the answer.
+CREATE TABLE IF NOT EXISTS learned_sources (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id             TEXT NOT NULL DEFAULT 'local',
+    content_hash        TEXT NOT NULL,
+    source_type         TEXT NOT NULL DEFAULT 'web',
+    title               TEXT NOT NULL DEFAULT '',
+    url                 TEXT NOT NULL DEFAULT '',
+    snippet             TEXT NOT NULL DEFAULT '',
+    text                TEXT NOT NULL,
+    provider            TEXT,
+    published           TEXT,
+    question            TEXT,
+    created_at          REAL NOT NULL,
+    updated_at          REAL NOT NULL,
+    last_used_at        REAL,
+    hit_count           INTEGER NOT NULL DEFAULT 0,
+    confidence          REAL NOT NULL DEFAULT 1.0,
+    embedding           TEXT,
+    embedding_meta      TEXT,
+    logic_version       INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (user_id, content_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_learned_sources_user_created
+    ON learned_sources(user_id, created_at DESC);
+
+-- Self-tuning config (Phase 3): live, PERSISTED overrides for the pipeline's numeric thresholds, set
+-- ONLY by the eval-gated tuner when a candidate value PROVABLY improves an offline metric. One row per
+-- tunable name; absence = use the env/default (so an empty table = stock behaviour). Fully reversible
+-- (delete a row to revert). Read through a zero-latency in-process cache, never per-request from disk.
+CREATE TABLE IF NOT EXISTS tuned_config (
+    name        TEXT PRIMARY KEY,
+    value       REAL NOT NULL,
+    source      TEXT,
+    updated_at  REAL NOT NULL
+);
+
+-- Every tuning TRIAL (proposed or applied) for auditability: what was tried, the metric before/after,
+-- and whether it was accepted. A complete, reversible record of how the config drifted over time.
+CREATE TABLE IF NOT EXISTS tuning_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    old_value     REAL,
+    new_value     REAL,
+    metric_before REAL,
+    metric_after  REAL,
+    accepted      INTEGER NOT NULL DEFAULT 0,
+    applied       INTEGER NOT NULL DEFAULT 0,
+    note          TEXT,
+    created_at    REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tuning_events_created
+    ON tuning_events(created_at DESC);
 """
 
 
@@ -1190,6 +1281,380 @@ class MemoryStore:
             cur = conn.execute(
                 "UPDATE answer_cache SET verified = 0 WHERE id = ?", (int(cache_id),))
             return cur.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # EXPERIENCE / LESSONS memory (the "learns day by day" layer). A lesson distilled from a run is
+    # recalled on SIMILAR future questions (scored relevance x recency x confidence), injected into the
+    # draft, reinforced when it yields a verified answer, and pruned when stale + weak. No model
+    # training — pure recall-before-answer. Gated by EXPERIENCE_MEMORY at the caller.
+    # ------------------------------------------------------------------
+    def record_lesson(
+        self,
+        *,
+        user_id: str,
+        kind: str,
+        question: str,
+        content: str,
+        source: Optional[str] = None,
+        embedding: Optional[List[float]] = None,
+        embedding_meta: Optional[str] = None,
+        confidence: float = 1.0,
+        logic_version: int = 0,
+    ) -> Optional[int]:
+        """Store (or upgrade) one lesson. ONE row per (user, normalized question, kind): a fresh
+        capture replaces the prior so the same question never accumulates duplicates. Returns the row
+        id, or None when the question / content / kind is empty."""
+        norm = normalize_question(question)
+        text = (content or "").strip()
+        if not norm or not text or not (kind or "").strip():
+            return None
+        now = time.time()
+        user = user_id or "local"
+        emb = json.dumps(embedding) if (embedding and embedding_meta) else None
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM lessons WHERE user_id = ? AND normalized_question = ? AND kind = ?",
+                (user, norm, kind),
+            )
+            conn.execute(
+                "INSERT INTO lessons (user_id, kind, question, normalized_question, "
+                "question_tokens_json, content, source, created_at, updated_at, last_used_at, "
+                "hit_count, confidence, question_embedding, embedding_meta, logic_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?)",
+                (user, kind, question, norm, json.dumps(question_tokens(question)), text, source,
+                 now, now, max(0.0, float(confidence)), emb, embedding_meta if emb else None,
+                 int(logic_version)),
+            )
+            row = conn.execute(
+                "SELECT id FROM lessons WHERE user_id = ? AND normalized_question = ? AND kind = ?",
+                (user, norm, kind),
+            ).fetchone()
+        self.prune_lessons(user_id=user)                 # keep the table bounded (separate connection)
+        return int(row["id"]) if row else None
+
+    def recall_lessons(
+        self,
+        *,
+        user_id: str,
+        question: str,
+        query_embedding: Optional[List[float]] = None,
+        query_meta: Optional[str] = None,
+        min_relevance: float = 0.62,
+        top_k: int = 3,
+        half_life_days: float = 30.0,
+        scan_limit: int = 400,
+    ) -> List[Dict[str, Any]]:
+        """The most useful lessons for THIS question, most-useful first. Each candidate is scored
+        relevance x recency x confidence: relevance = max(lexical, semantic-when-a-comparable-embedding-
+        exists); recency is a half-life decay on age; confidence rises with reinforcement.
+
+        Unlike the answer cache, recall does NOT apply unsafe_to_reuse: a lesson is GENERALISABLE
+        guidance, not a stored answer, so it SHOULD carry across similar questions even when numbers /
+        identifiers differ (a "compute it in code" lesson applies to 3-min and 5-min audio alike). The
+        relevance floor is set ABOVE the word-overlap/different-intent band (~0.6) so a lesson can't be
+        pulled into an unrelated-intent question that merely shares words — while a same-question/
+        different-number paraphrase (~0.85+) still generalises. That floor, plus the fact that lessons
+        are process/style guidance that can never inject a wrong fact (preference lessons are shape-only),
+        is what keeps recall safe."""
+        user = user_id or "local"
+        now = time.time()
+        hl = max(1.0, float(half_life_days))
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, kind, question, content, source, created_at, last_used_at, hit_count, "
+                "confidence, question_embedding, embedding_meta FROM lessons "
+                "WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user, max(1, int(scan_limit))),
+            ).fetchall()
+        scored: List[Dict[str, Any]] = []
+        for row in rows:
+            lex = question_similarity(question, row["question"])
+            sem = None
+            if (query_embedding and row["question_embedding"]
+                    and query_meta is not None and row["embedding_meta"] == query_meta):
+                try:
+                    sem = cosine_similarity(query_embedding, json.loads(row["question_embedding"]))
+                except Exception:
+                    sem = None
+            rel = max(lex, sem or 0.0)
+            if rel < min_relevance:
+                continue
+            created = row["created_at"]
+            age_days = max(0.0, (now - float(created if created is not None else now)) / 86400.0)
+            recency = 0.5 ** (age_days / hl)
+            # `or 1.0` would resurrect a decayed-to-0.0 lesson at full strength (0.0 is falsy); guard None only.
+            conf_raw = row["confidence"]
+            conf = max(0.0, float(conf_raw if conf_raw is not None else 1.0))
+            d = {k: row[k] for k in ("id", "kind", "question", "content", "source",
+                                     "created_at", "hit_count", "confidence")}
+            d["relevance"] = float(rel)
+            d["score"] = float(rel * recency * conf)
+            scored.append(d)
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[: max(0, int(top_k))]
+
+    def reinforce_lessons(self, lesson_ids: List[int], *, delta: float = 0.5, cap: float = 5.0) -> None:
+        """A lesson that helped produce a VERIFIED answer gets stronger (confidence += delta, capped)
+        and its use recorded — so proven lessons rise while unused ones fade via recency + prune."""
+        ids = [int(i) for i in (lesson_ids or []) if i is not None]
+        if not ids:
+            return
+        now = time.time()
+        with self._conn() as conn:
+            for lid in ids:
+                conn.execute(
+                    "UPDATE lessons SET confidence = MIN(?, confidence + ?), hit_count = hit_count + 1, "
+                    "last_used_at = ?, updated_at = ? WHERE id = ?",
+                    (float(cap), float(delta), now, now, lid),
+                )
+
+    def prune_lessons(self, *, user_id: str, max_per_user: int = 500) -> int:
+        """Keep the table bounded: drop this user's lessons beyond `max_per_user`, evicting the WEAKEST
+        first (lowest confidence, then oldest). Returns the count deleted."""
+        user = user_id or "local"
+        with self._conn() as conn:
+            n = conn.execute("SELECT COUNT(*) AS c FROM lessons WHERE user_id = ?",
+                             (user,)).fetchone()["c"]
+            if n <= max_per_user:
+                return 0
+            conn.execute(
+                "DELETE FROM lessons WHERE id IN ("
+                "SELECT id FROM lessons WHERE user_id = ? ORDER BY confidence ASC, created_at ASC "
+                "LIMIT ?)",
+                (user, int(n - max_per_user)),
+            )
+            return int(n - max_per_user)
+
+    # ------------------------------------------------------------------
+    # Acquired-knowledge / GROWN CORPUS (Phase 2): store + recall external findings that a VERIFIED
+    # answer CITED, so future questions retrieve them locally without re-fetching. Same embedding
+    # pattern as lessons/answer_cache (caller passes the vector + provider/model meta tag).
+    # ------------------------------------------------------------------
+    def record_learned_source(
+        self,
+        *,
+        user_id: str,
+        content_hash: str,
+        text: str,
+        source_type: str = "web",
+        title: str = "",
+        url: str = "",
+        snippet: str = "",
+        provider: Optional[str] = None,
+        published: Optional[str] = None,
+        question: Optional[str] = None,
+        embedding: Optional[List[float]] = None,
+        embedding_meta: Optional[str] = None,
+        confidence: float = 1.0,
+        logic_version: int = 0,
+    ) -> Optional[int]:
+        """Store (or STRENGTHEN) one acquired finding. ONE row per (user, content_hash): re-capturing the
+        same finding (cited again in a later verified answer) UPSERTs — confidence rises, hit_count++,
+        text/snippet refresh, and the existing embedding is KEPT when none is supplied (so we never
+        re-embed needlessly). Returns the row id, or None when content_hash / text is empty."""
+        ch = (content_hash or "").strip()
+        body = (text or "").strip()
+        if not ch or not body:
+            return None
+        now = time.time()
+        user = user_id or "local"
+        emb = json.dumps(embedding) if (embedding and embedding_meta) else None
+        meta = embedding_meta if emb else None
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO learned_sources (user_id, content_hash, source_type, title, url, snippet, "
+                "text, provider, published, question, created_at, updated_at, last_used_at, hit_count, "
+                "confidence, embedding, embedding_meta, logic_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id, content_hash) DO UPDATE SET "
+                "  hit_count = hit_count + 1, "
+                "  confidence = MIN(5.0, confidence + 0.5), "
+                "  text = excluded.text, snippet = excluded.snippet, title = excluded.title, "
+                "  url = excluded.url, source_type = excluded.source_type, "
+                "  provider = COALESCE(excluded.provider, provider), "
+                "  published = COALESCE(excluded.published, published), "
+                "  question = COALESCE(excluded.question, question), "
+                "  embedding = COALESCE(excluded.embedding, embedding), "
+                "  embedding_meta = COALESCE(excluded.embedding_meta, embedding_meta), "
+                "  logic_version = excluded.logic_version, "
+                "  updated_at = excluded.updated_at, last_used_at = excluded.updated_at",
+                (user, ch, (source_type or "web"), (title or ""), (url or ""), (snippet or "")[:600],
+                 body, provider, published, question, now, now, max(0.0, float(confidence)), emb, meta,
+                 int(logic_version)),
+            )
+            row = conn.execute(
+                "SELECT id FROM learned_sources WHERE user_id = ? AND content_hash = ?",
+                (user, ch),
+            ).fetchone()
+        return int(row["id"]) if row else None
+
+    def existing_source_hashes(self, *, user_id: str, hashes: List[str]) -> set:
+        """The subset of `hashes` already stored for this user — so capture skips re-embedding findings
+        it has seen before (the embedding call is the only expensive step)."""
+        hs = [h for h in (hashes or []) if h]
+        if not hs:
+            return set()
+        user = user_id or "local"
+        placeholders = ",".join("?" for _ in hs)
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT content_hash FROM learned_sources WHERE user_id = ? AND content_hash IN ({placeholders})",
+                (user, *hs),
+            ).fetchall()
+        return {r["content_hash"] for r in rows}
+
+    def recall_learned_sources(
+        self,
+        *,
+        user_id: str,
+        question: str,
+        query_embedding: Optional[List[float]] = None,
+        query_meta: Optional[str] = None,
+        min_relevance: float = 0.5,
+        top_k: int = 3,
+        half_life_days: float = 120.0,
+        scan_limit: int = 600,
+    ) -> List[Dict[str, Any]]:
+        """The acquired passages most relevant to THIS question, most-useful first. Each is scored
+        relevance x recency x confidence: relevance = max(lexical(question, title+snippet), semantic
+        (query vs the passage's document embedding, when a comparable embedding exists)); recency is a
+        half-life decay on how recently we learned/used it; confidence rises each time the passage proves
+        useful. Semantic matching only fires when query_meta == the stored embedding_meta (same embedding
+        source), exactly like the answer cache — otherwise it falls back to lexical."""
+        user = user_id or "local"
+        now = time.time()
+        hl = max(1.0, float(half_life_days))
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, content_hash, source_type, title, url, snippet, text, provider, published, "
+                "question, created_at, hit_count, confidence, embedding, embedding_meta "
+                "FROM learned_sources WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user, max(1, int(scan_limit))),
+            ).fetchall()
+        scored: List[Dict[str, Any]] = []
+        for row in rows:
+            # Score against the BODY we actually inject (snippet is a body excerpt), NOT the title — a
+            # title that matches the question while the body is off-topic must NOT pull the passage in.
+            # (Semantic already uses the body's own embedding.)
+            lex_target = ((row["snippet"] or row["text"] or "")[:400]).strip()
+            lex = question_similarity(question, lex_target)
+            sem = None
+            if (query_embedding and row["embedding"]
+                    and query_meta is not None and row["embedding_meta"] == query_meta):
+                try:
+                    sem = cosine_similarity(query_embedding, json.loads(row["embedding"]))
+                except Exception:
+                    sem = None
+            rel = max(lex, sem or 0.0)
+            if rel < min_relevance:
+                continue
+            created = row["created_at"]
+            age_days = max(0.0, (now - float(created if created is not None else now)) / 86400.0)
+            recency = 0.5 ** (age_days / hl)
+            conf_raw = row["confidence"]
+            conf = max(0.0, float(conf_raw if conf_raw is not None else 1.0))
+            d = {k: row[k] for k in ("id", "content_hash", "source_type", "title", "url", "snippet",
+                                     "text", "provider", "published", "question", "created_at",
+                                     "hit_count", "confidence")}
+            d["relevance"] = float(rel)
+            d["score"] = float(rel * recency * conf)
+            scored.append(d)
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[: max(0, int(top_k))]
+
+    def reinforce_learned_sources(self, source_ids: List[int], *, delta: float = 0.5,
+                                  cap: float = 5.0) -> None:
+        """Strengthen acquired passages that helped produce a verified answer (confidence += delta,
+        capped; hit_count++). Re-capture also strengthens via UPSERT; this is the direct path."""
+        ids = [int(i) for i in (source_ids or []) if i is not None]
+        if not ids:
+            return
+        now = time.time()
+        with self._conn() as conn:
+            for sid in ids:
+                conn.execute(
+                    "UPDATE learned_sources SET confidence = MIN(?, confidence + ?), "
+                    "hit_count = hit_count + 1, last_used_at = ?, updated_at = ? WHERE id = ?",
+                    (float(cap), float(delta), now, now, sid),
+                )
+
+    def prune_learned_sources(self, *, user_id: str, max_per_user: int = 1000) -> int:
+        """Keep the grown corpus bounded: drop this user's acquired passages beyond `max_per_user`,
+        evicting the WEAKEST first (lowest confidence, then oldest). Returns the count deleted."""
+        user = user_id or "local"
+        with self._conn() as conn:
+            n = conn.execute("SELECT COUNT(*) AS c FROM learned_sources WHERE user_id = ?",
+                             (user,)).fetchone()["c"]
+            if n <= max_per_user:
+                return 0
+            conn.execute(
+                "DELETE FROM learned_sources WHERE id IN ("
+                "SELECT id FROM learned_sources WHERE user_id = ? ORDER BY confidence ASC, created_at ASC "
+                "LIMIT ?)",
+                (user, int(n - max_per_user)),
+            )
+            return int(n - max_per_user)
+
+    # ------------------------------------------------------------------
+    # Self-tuning config (Phase 3): persisted numeric-threshold overrides + an audit trail of every
+    # tuning trial. Only the eval-gated tuner writes these; an empty table means stock behaviour.
+    # ------------------------------------------------------------------
+    def get_tuned_config(self) -> Dict[str, float]:
+        """All active threshold overrides as {name: value}. Empty dict = no overrides (stock defaults).
+        Read by the tuning cache, not per-request."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT name, value FROM tuned_config").fetchall()
+        return {r["name"]: float(r["value"]) for r in rows}
+
+    def set_tuned_config(self, name: str, value: float, *, source: str = "self_tuner") -> None:
+        """Persist (or update) one override. The caller (the tuner) is responsible for clamping to the
+        tunable's bounds and for only doing this on an eval-proven improvement."""
+        nm = (name or "").strip()
+        if not nm:
+            return
+        now = time.time()
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO tuned_config (name, value, source, updated_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET value = excluded.value, source = excluded.source, "
+                "updated_at = excluded.updated_at",
+                (nm, float(value), source, now),
+            )
+
+    def clear_tuned_config(self, name: Optional[str] = None) -> int:
+        """Revert one override (by name) or ALL of them (name=None) back to env/default. Returns the
+        number of overrides removed. This is the one-call rollback for self-tuning."""
+        with self._conn() as conn:
+            if name is None:
+                cur = conn.execute("DELETE FROM tuned_config")
+            else:
+                cur = conn.execute("DELETE FROM tuned_config WHERE name = ?", ((name or "").strip(),))
+            return int(cur.rowcount if cur.rowcount is not None else 0)
+
+    def record_tuning_event(self, *, name: str, old_value: Optional[float], new_value: Optional[float],
+                            metric_before: Optional[float], metric_after: Optional[float],
+                            accepted: bool, applied: bool = False, note: Optional[str] = None) -> None:
+        """Audit one tuning trial (proposed or applied). Never raises on a None numeric."""
+        def _f(x):
+            return None if x is None else float(x)
+        now = time.time()
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO tuning_events (name, old_value, new_value, metric_before, metric_after, "
+                "accepted, applied, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (name, _f(old_value), _f(new_value), _f(metric_before), _f(metric_after),
+                 1 if accepted else 0, 1 if applied else 0, note, now),
+            )
+
+    def get_tuning_history(self, *, limit: int = 50) -> List[Dict[str, Any]]:
+        """The most recent tuning trials, newest first — for the audit/UI."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT name, old_value, new_value, metric_before, metric_after, accepted, applied, "
+                "note, created_at FROM tuning_events ORDER BY created_at DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Code-agent result memory (learning layer). Every run is recorded for the developer

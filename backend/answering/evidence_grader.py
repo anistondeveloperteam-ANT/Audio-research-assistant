@@ -18,6 +18,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+from backend.answering import tuning as _tuning
+
 STRONG = "STRONG"
 PARTIAL = "PARTIAL"
 NONE = "NONE"
@@ -45,18 +47,19 @@ def _int_env(name: str, default: int, lo: int = 1) -> int:
 
 
 def crag_strong_min() -> float:
-    """A chunk this relevant (reranker score) is strong evidence."""
-    return _float_env("CRAG_STRONG_MIN", 0.55)
+    """A chunk this relevant (reranker score) is strong evidence. Env default; the eval-gated tuner may
+    override it (bounded)."""
+    return _tuning.tuned("CRAG_STRONG_MIN", _float_env("CRAG_STRONG_MIN", 0.55))
 
 
 def crag_partial_min() -> float:
     """Below this, a chunk is not relevant enough to count (matches SOURCE_MIN_SCORE)."""
-    return _float_env("CRAG_PARTIAL_MIN", 0.30)
+    return _tuning.tuned("CRAG_PARTIAL_MIN", _float_env("CRAG_PARTIAL_MIN", 0.30))
 
 
 def crag_strong_count() -> int:
     """How many high-relevance chunks make the grade STRONG."""
-    return _int_env("CRAG_STRONG_COUNT", 2)
+    return int(_tuning.tuned("CRAG_STRONG_COUNT", _int_env("CRAG_STRONG_COUNT", 2)))
 
 
 def crag_paper_min_chunks() -> int:

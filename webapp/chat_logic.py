@@ -64,6 +64,9 @@ from backend.observability import tracing  # noqa: E402  (no-op unless LANGFUSE_
 from backend.answering.arithmetic_check import verify_calculation  # noqa: E402
 from backend.answering.code_intent import is_self_contained_calculation  # noqa: E402
 from backend.answering.effort import assess_effort, effort_scaling_enabled, is_complex  # noqa: E402
+from backend.answering import experience as _experience  # noqa: E402
+from backend.answering import acquired_knowledge as _acquired  # noqa: E402
+from backend.answering import tuning as _tuning  # noqa: E402
 from backend.answering.source_router import (  # noqa: E402
     REASONING as SR_REASONING,
     WEB as SR_WEB,
@@ -322,11 +325,12 @@ def answer_cache_enabled() -> bool:
 def answer_cache_min_similarity() -> float:
     # High floor: lexical similarity alone is unreliable (a swap like "A vs B" can
     # score 0.95), so we require near-exact lexical OR a semantic match + the
-    # unsafe_to_reuse guard in the store.
+    # unsafe_to_reuse guard in the store. Env default; the eval-gated tuner may override it (bounded).
     try:
-        return max(0.92, min(1.0, float(os.getenv("ANSWER_CACHE_MIN_SIMILARITY", "0.97"))))
+        base = max(0.92, min(1.0, float(os.getenv("ANSWER_CACHE_MIN_SIMILARITY", "0.97"))))
     except ValueError:
-        return 0.97
+        base = 0.97
+    return _tuning.tuned("ANSWER_CACHE_MIN_SIMILARITY", base)
 
 
 def answer_cache_semantic_enabled() -> bool:
@@ -335,9 +339,10 @@ def answer_cache_semantic_enabled() -> bool:
 
 def answer_cache_min_semantic() -> float:
     try:
-        return max(0.80, min(1.0, float(os.getenv("ANSWER_CACHE_MIN_SEMANTIC", "0.88"))))
+        base = max(0.80, min(1.0, float(os.getenv("ANSWER_CACHE_MIN_SEMANTIC", "0.88"))))
     except ValueError:
-        return 0.88
+        base = 0.88
+    return _tuning.tuned("ANSWER_CACHE_MIN_SEMANTIC", base)
 
 
 def _query_embedding(question: str):
@@ -1071,10 +1076,13 @@ def _format_memory_block(facts: List[Dict[str, Any]], summary: str) -> str:
     return "\n\n[Conversation memory]\n" + "\n\n".join(parts)
 
 
-def _build_compact_context(mem, session_id: str, question: str) -> Dict[str, Any]:
+def _build_compact_context(mem, session_id: str, question: str, *, user_id: Optional[str] = None,
+                           query_embedding: Optional[List[float]] = None,
+                           query_meta: Optional[str] = None) -> Dict[str, Any]:
     """Assemble compact LLM context: recent N turns verbatim + a rolling summary of older turns
-    (refreshed only when stale) + relevant facts, capped at MEMORY_MAX_TOKENS. Returns
-    {system_extra, history, tokens, summary}. Shapes ONLY the LLM context; never raises."""
+    (refreshed only when stale) + relevant facts + LEARNED LESSONS, capped at MEMORY_MAX_TOKENS.
+    Returns {system_extra, history, tokens, summary, lesson_ids}. Shapes ONLY the LLM context; never
+    raises. Pass user_id (+ the query embedding) to recall experience lessons for THIS question."""
     recent_n = memory_recent_turns()
     try:
         all_turns = mem.get_turns(session_id)
@@ -1091,8 +1099,19 @@ def _build_compact_context(mem, session_id: str, question: str) -> Dict[str, Any
     older = trimmed[: len(trimmed) - len(recent)]
     history = [{"role": t["role"], "content": t["content"]} for t in recent]
 
+    # LEARNED LESSONS (experience memory): recall the most useful past lessons for THIS question and
+    # inject them into the draft prompt. Fail-open, and kept OUTSIDE the token-budget squeeze below
+    # (lessons are short + high-value). lesson_ids let the caller reinforce the ones that produce a
+    # verified answer. No-op (no user_id) on the code-agent / non-answering call sites.
+    lessons_block, lesson_ids = (
+        _experience.recall(mem, user_id=user_id, question=question,
+                           query_embedding=query_embedding, query_meta=query_meta)
+        if user_id else ("", []))
+
     if not compact_memory_enabled():
-        return {"system_extra": "", "history": history, "tokens": _hist_tokens(history), "summary": ""}
+        return {"system_extra": lessons_block, "history": history,
+                "tokens": _hist_tokens(history) + estimate_tokens(lessons_block),
+                "summary": "", "lesson_ids": lesson_ids}
 
     # SUMMARY — refresh only when enough new OLDER turns have accumulated (else reuse the cache).
     summ = mem.get_session_summary(session_id)
@@ -1144,7 +1163,9 @@ def _build_compact_context(mem, session_id: str, question: str) -> Dict[str, Any
     logger.info("compact memory: recent=%d turn(s), older=%d, summary=%d tok, facts=%d, "
                 "assembled=%d tok (budget=%d)", len(history), len(older),
                 estimate_tokens(summary), len(facts_rel), total, budget)
-    return {"system_extra": system_extra, "history": history, "tokens": total, "summary": summary}
+    return {"system_extra": system_extra + lessons_block, "history": history,
+            "tokens": total + estimate_tokens(lessons_block), "summary": summary,
+            "lesson_ids": lesson_ids}
 
 
 # ----------------------------------------------------------------------
@@ -1375,7 +1396,8 @@ def _enforce_conclusion_matches_work(provider, question: str, answer: str):
 
 def _reasoning_fallback(q: str, mem, session_id: str, q_version_id, node_id, user_id: str,
                         cache_on: bool, query_emb, query_meta, trace,
-                        *, no_sources_enabled: bool = False) -> Iterator[Dict[str, Any]]:
+                        *, no_sources_enabled: bool = False,
+                        regenerated: bool = False) -> Iterator[Dict[str, Any]]:
     """No usable retrieved evidence — answer a SOLVABLE question from the model's own reasoning instead
     of refusing. Judge the answer's quality ORIGIN-INDEPENDENTLY (basis='reasoning'); return it when it
     is good, append an honest note when it genuinely needs external facts, and cache it WITH its quality
@@ -1392,7 +1414,8 @@ def _reasoning_fallback(q: str, mem, session_id: str, q_version_id, node_id, use
         return
 
     yield {"type": "status", "message": "Reasoning it out..."}
-    _ctx = _build_compact_context(mem, session_id, q)
+    _ctx = _build_compact_context(mem, session_id, q, user_id=user_id,
+                                  query_embedding=query_emb, query_meta=query_meta)
     sys_prompt = _today_note() + REASONING_ANSWER_SYSTEM + _ctx["system_extra"]
     parts: List[str] = []
     try:
@@ -1463,6 +1486,18 @@ def _reasoning_fallback(q: str, mem, session_id: str, q_version_id, node_id, use
                              logic_version=answer_logic_version())
         except Exception:                                      # noqa: BLE001 - caching is best-effort
             pass
+    # LEARN from this run: a MISTAKE lesson if the arithmetic source-of-truth corrected the answer, a
+    # PREFERENCE lesson if this was a regeneration the user kept; reinforce the recalled lessons that
+    # helped. Fail-open — learning never breaks the turn.
+    try:
+        _experience.capture_outcome(
+            mem, user_id=user_id, question=q, answer=answer, corrections=_calc.corrections,
+            regenerated=regenerated, verified=good, query_embedding=query_emb,
+            query_meta=query_meta, logic_version=answer_logic_version())
+        if good:
+            mem.reinforce_lessons(_ctx.get("lesson_ids") or [])
+    except Exception:                                          # noqa: BLE001 - learning never breaks a turn
+        pass
     trace.set(n_sources=0).end()
     yield {"type": "done", "answer": answer, **_ans_meta(_av)}
 
@@ -1549,6 +1584,11 @@ def stream_chat_events(
     # coarse settings — never the question text.
     trace = tracing.start_trace("chat_request", mode=mode, top_k=top_k,
                                 web_search=bool(web_search))
+
+    # Phase 3 — load any eval-PROVEN threshold overrides into the zero-latency cache (TTL-gated, so this
+    # is a DB read at most once a minute, never per threshold). With no overrides set this is a no-op and
+    # every getter returns its stock env/default. Fail-open.
+    _tuning.refresh(mem)
 
     # Code-intent queries go straight to the autonomous code agent — never the prose/citation
     # pipeline (which would wrongly refuse for "sources lack code" and ship a toy demo). The agent
@@ -1670,8 +1710,10 @@ def stream_chat_events(
     cache_on = answer_cache_enabled() and not force_web
     reuse_on = cache_on and regen_qversion_id is None      # regenerate re-answers fresh; never replays
     cached = None
-    if cache_on:
-        query_emb, query_meta = _query_embedding(q)        # used for the reuse lookup AND for saving
+    # Embed when the cache OR the grown corpus (Phase 2) needs it — otherwise learned-passage recall
+    # would silently degrade to lexical-only whenever the answer cache happens to be off.
+    if cache_on or _acquired.acquired_enabled():
+        query_emb, query_meta = _query_embedding(q)        # reuse lookup AND saving AND learned recall
     with trace.span("cache_check", enabled=reuse_on) as _sp:
         if reuse_on:
             cached = mem.find_cached_answer(
@@ -1728,7 +1770,8 @@ def stream_chat_events(
         no_src = not local_rag_enabled() and not is_web_search_enabled()
         yield {"type": "status", "message": "Answering directly from reasoning..."}
         yield from _reasoning_fallback(q, mem, session_id, q_version_id, node_id, user_id, cache_on,
-                                       query_emb, query_meta, trace, no_sources_enabled=no_src)
+                                       query_emb, query_meta, trace, no_sources_enabled=no_src,
+                                       regenerated=regen_qversion_id is not None)
         return
 
     items: List[Dict[str, Any]] = []
@@ -1835,6 +1878,20 @@ def stream_chat_events(
         yield from _legacy_sweep(queries, local_on=local_on, mode=mode, trace=trace,
                                  items=items, seen_warnings=seen_warnings)
 
+    # --- GROWN CORPUS (Phase 2): merge passages we LEARNED from earlier VERIFIED answers and that are
+    #     relevant to THIS question — so we answer from a corpus that grew out of our own verified
+    #     research, even when local RAG is off (no Oracle needed). Reuses the query embedding already
+    #     computed (no extra call). SKIPPED for freshness-sensitive questions so a 'latest/current'
+    #     query never gets served possibly-stale learned passages — those go live. Fail-open. ---
+    if _acquired.acquired_enabled() and not _freshness_sensitive(q) and not force_web:
+        acq_items = _acquired.recall_items(mem, user_id=user_id, question=q,
+                                           query_embedding=query_emb, query_meta=query_meta)
+        if acq_items:
+            added = _extend_unique(items, acq_items)
+            if added:
+                yield {"type": "status",
+                       "message": f"Recalled {added} learned source(s) from earlier verified answers."}
+
     # --- RELEVANCE GATE: keep only the retrieved sources that genuinely address the question.
     #     Topically-similar-but-irrelevant hits (which reranker scores can't catch) must never
     #     ground or be cited; if the gate empties `items`, the no-items branch below answers from
@@ -1857,7 +1914,8 @@ def stream_chat_events(
             return
         # Self-contained / reasoning-answerable: answer from reasoning, judge it, return or refine.
         yield from _reasoning_fallback(q, mem, session_id, q_version_id, node_id, user_id, cache_on,
-                                       query_emb, query_meta, trace, no_sources_enabled=no_src)
+                                       query_emb, query_meta, trace, no_sources_enabled=no_src,
+                                       regenerated=regen_qversion_id is not None)
         return
 
     with trace.span("source_selection") as _sp:
@@ -1868,7 +1926,8 @@ def stream_chat_events(
     # Compact memory: recent turns verbatim + a rolling summary of older turns + relevant facts,
     # capped at a token budget (Mem0-style). This is the ONLY conversation context sent to the LLM;
     # the full raw history stays saved for display + versioning. sys_prompt carries facts+summary.
-    _ctx = _build_compact_context(mem, session_id, q)
+    _ctx = _build_compact_context(mem, session_id, q, user_id=user_id,
+                                  query_embedding=query_emb, query_meta=query_meta)
     history = _ctx["history"]
     sys_prompt = _today_note() + SYSTEM_PROMPT + _freshness_note(q) + _ctx["system_extra"]
 
@@ -1882,6 +1941,8 @@ def stream_chat_events(
     reroute_to_reasoning = False  # evidence draft refused a self-contained Q -> answer from reasoning
     consistency_ok = True       # stated result matched the answer's own derivation (or was reconciled)
     clean_body = ""             # the answer body to cache (no review/verify footers)
+    learn_corrections = ()      # arithmetic overrides applied -> a mistake-lesson
+    learn_reconciled = False    # conclusion-matches-work reconciled the answer -> a mistake-lesson
     try:
         provider = get_provider()
         if not provider.is_available:
@@ -2193,6 +2254,7 @@ def stream_chat_events(
                     answer = _calc.fixed_text
                     clean_body = answer
                 calc_ok = _calc.verified
+                learn_corrections = _calc.corrections             # -> mistake-lesson if it overrode a value
                 # CONCLUSION-MATCHES-WORK: an LLM backstop for NON-arithmetic conclusions (qualitative
                 # claims the code check can't evaluate). Runs on the already code-corrected text, so it
                 # can't override a number the deterministic check just made authoritative.
@@ -2200,6 +2262,7 @@ def stream_chat_events(
                     yield {"type": "status", "message": "Checking the conclusion matches the work..."}
                     answer, consistency_ok, _corr, _dv = _enforce_conclusion_matches_work(provider, q, answer)
                     clean_body = answer
+                    learn_reconciled = bool(_corr)                # -> mistake-lesson if it reconciled
                 consistency_ok = consistency_ok and calc_ok       # arithmetic must also be consistent
                 final_answer = answer   # clean body; no internal verifier/review jargon
                 answer_parts.append(final_answer)
@@ -2249,7 +2312,8 @@ def stream_chat_events(
         yield {"type": "sources", "sources": []}
         yield {"type": "status", "message": "Answering from general knowledge…"}
         yield from _reasoning_fallback(q, mem, session_id, q_version_id, node_id, user_id,
-                                       cache_on, query_emb, query_meta, trace)
+                                       cache_on, query_emb, query_meta, trace,
+                                       regenerated=regen_qversion_id is not None)
         return
 
     answer = "".join(answer_parts).strip() or "(no answer)"
@@ -2316,4 +2380,23 @@ def stream_chat_events(
         logger.info("citation guard: removed out-of-range %s (only %d sources)",
                     removed_citations, full_n)
         yield {"type": "citation_warning", "removed": removed_citations, "n_sources": full_n}
+    # LEARN from this run (fail-open): a mistake-lesson when the pipeline CORRECTED itself (arithmetic
+    # override / conclusion-matches-work reconcile / auto-review rewrite), a preference-lesson on a
+    # verified regeneration; reinforce the recalled lessons that helped produce a verified answer.
+    try:
+        _experience.capture_outcome(
+            mem, user_id=user_id, question=q, answer=answer, corrections=learn_corrections,
+            reconciled=learn_reconciled, rewritten=answer_rewritten,
+            regenerated=regen_qversion_id is not None, verified=quality_ok,
+            query_embedding=query_emb, query_meta=query_meta, logic_version=answer_logic_version())
+        if quality_ok:
+            mem.reinforce_lessons(_ctx.get("lesson_ids") or [])
+    except Exception:                                          # noqa: BLE001 - learning never breaks a turn
+        pass
+    # GROW THE RAG (Phase 2, fail-open): ingest the external findings this VERIFIED answer actually CITED
+    # into the grown corpus, embedded for future recall. Scheduled in the BACKGROUND (the embedding call
+    # is the one slow step) so it adds ZERO latency to this answer.
+    _acquired.capture_findings(
+        mem, user_id=user_id, question=q, items=items, cited_sources=display_sources,
+        verified=quality_ok, logic_version=answer_logic_version())
     yield {"type": "done", "answer": answer, **_ans_meta(_av)}
