@@ -8,9 +8,6 @@ A self‑hosted research companion: a **FastAPI** backend, a **no‑build** HTML
 
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
-![Frontend](https://img.shields.io/badge/frontend-no%20build%20step-1E6FD9)
-![GPU](https://img.shields.io/badge/GPU-CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-passing-2ea44f)
 ![Corrective RAG](https://img.shields.io/badge/retrieval-Corrective%20RAG-8A2BE2)
 ![Self-improving](https://img.shields.io/badge/agent-self--improving-FF6B6B)
 [![License](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
@@ -351,5 +348,5 @@ Every change should run cleanly through `pytest` + `pyflakes` before it's done. 
 
 <div align="center">
 <sub>Python · FastAPI · vanilla JS · Docker · SQLite · CUDA — self‑hosted, no telemetry.</sub>
-<br><sub>Released under the <a href="LICENSE">MIT License</a>. Contributions welcome.</sub>
+<br><sub>Released under the <a href="LICENSE">MIT License</a>.</sub>
 </div>
