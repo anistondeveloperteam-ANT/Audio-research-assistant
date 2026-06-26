@@ -236,8 +236,8 @@ def _llm_classify(query: str) -> Optional[TaskClass]:
                 break
         return "".join(parts)
 
-    import concurrent.futures as cf
-    with cf.ThreadPoolExecutor(max_workers=1) as ex:
+    from backend.common.request_context import ContextThreadPoolExecutor
+    with ContextThreadPoolExecutor(max_workers=1) as ex:   # worker inherits the request's model
         fut = ex.submit(_run)
         try:
             raw = fut.result(timeout=_timeout())

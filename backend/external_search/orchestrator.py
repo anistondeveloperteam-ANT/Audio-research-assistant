@@ -27,17 +27,21 @@ from backend.external_search.web_search import fetch_page_text, get_web_provider
 
 MAX_PDFS = int(os.getenv("EXTERNAL_MAX_PDFS", "3"))           # online PDFs from web results
 
-# Read live (per request) so the run mode (fast/deep) controls web/arXiv depth + the timeout.
+# Read per request from the request context so the run mode (fast/deep) controls web/arXiv depth + the
+# timeout WITHOUT process-global env mutation; falls back to env/default off-request.
+from backend.common import request_context as _rc
+
+
 def _web_max() -> int:
-    return int(os.getenv("WEB_MAX_RESULTS", "8"))             # web pages per query
+    return _rc.request_int("WEB_MAX_RESULTS", 8)             # web pages per query
 
 
 def _arxiv_read_count() -> int:
-    return int(os.getenv("ARXIV_READ_PDF_COUNT", "3"))       # read this many papers in full (0 = none)
+    return _rc.request_int("ARXIV_READ_PDF_COUNT", 3)       # read this many papers in full (0 = none)
 
 
 def _gather_timeout() -> float:
-    return float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30"))  # shared cap across channels
+    return _rc.request_float("EXTERNAL_GATHER_TIMEOUT", 30.0)  # shared cap across channels
 
 
 def is_web_search_enabled() -> bool:
@@ -161,7 +165,7 @@ def gather_external_evidence(query: str, max_results: int = 20) -> Tuple[List[Ex
 
     t0 = _time.time()
     done = 0
-    ex = concurrent.futures.ThreadPoolExecutor(max_workers=max(2, len(channels)))
+    ex = _rc.ContextThreadPoolExecutor(max_workers=max(2, len(channels)))   # workers inherit request settings
     try:
         futures = [ex.submit(_timed, label, fn) for label, fn in channels]
         try:

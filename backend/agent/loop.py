@@ -34,6 +34,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from backend.agent.anticheat import anticheat_enabled, scan_for_cheating
 from backend.agent.code_runner import RunResult, clip_keep_ends, docker_available, run_python_auto
+from backend.common import request_context as _rc
 
 # Demo stdout kept for the completeness gate + the user-facing Output block. Head+tail (not
 # head-only) so a requested value printed AFTER a large intermediate dump still survives.
@@ -224,7 +225,7 @@ def _user_selected_model() -> bool:
     provider on escalation. Set AGENT_MODEL, or a chat model different from the built-in default."""
     if (os.getenv("AGENT_MODEL") or "").strip():
         return True
-    return (os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL) or "").strip() != DEFAULT_OPENAI_MODEL
+    return (_rc.request_str("OPENAI_MODEL", DEFAULT_OPENAI_MODEL) or "").strip() != DEFAULT_OPENAI_MODEL
 
 
 def _model_available(model: str) -> bool:
@@ -239,7 +240,7 @@ def _agent_model_chain() -> List[str]:
     (AGENT_MODEL or the chat's OPENAI_MODEL), then the configured stronger model, then any other
     configured catalog model — a resilient fallback chain so a 429/timeout on one model switches to
     another instead of failing the request."""
-    primary = (os.getenv("AGENT_MODEL") or os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL).strip()
+    primary = (os.getenv("AGENT_MODEL") or _rc.request_str("OPENAI_MODEL", "") or DEFAULT_OPENAI_MODEL).strip()
     chain: List[str] = [primary] if primary else []      # the user's choice ALWAYS comes first
     strong = (os.getenv("AGENT_MODEL_STRONG") or "").strip()
     for m in ([strong] if strong else []) + [mid for mid, *_ in CATALOG]:
@@ -1944,7 +1945,7 @@ def run_agent(task: str = "", *, brief: str = "", max_iters: Optional[int] = Non
                 candidates.append(one)
         else:
             import concurrent.futures as _cf
-            with _cf.ThreadPoolExecutor(max_workers=n_cand) as _ex:
+            with _rc.ContextThreadPoolExecutor(max_workers=n_cand) as _ex:   # workers inherit request settings
                 futs = [_ex.submit(_attempt_candidate, c) for c in range(n_cand)]
                 for fut in _cf.as_completed(futs):
                     try:

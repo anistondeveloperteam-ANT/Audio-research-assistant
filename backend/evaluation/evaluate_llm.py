@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 import time
@@ -50,8 +49,9 @@ from webapp.chat_logic import (  # noqa: E402
     SYSTEM_PROMPT, format_evidence, build_user_message, public_source,
 )
 from backend.retrieval.hybrid_retrieve import hybrid_retrieve  # noqa: E402
-from backend.answering.research_modes import apply_research_mode  # noqa: E402
+from backend.answering.research_modes import resolve_research_mode  # noqa: E402
 from backend.llm.streaming_provider import get_provider  # noqa: E402
+from backend.common import request_context as _rc  # noqa: E402
 
 QUESTIONS_PATH = ROOT / "data" / "llm_eval_questions.json"
 
@@ -92,7 +92,7 @@ def build_provider(spec: Optional[str]):
     _, _, tail = spec.partition(":")
     model = (tail or spec).strip()
     if model:
-        os.environ["OPENAI_MODEL"] = model
+        return get_provider(model)          # explicit per-call model override, no global env mutation
     return get_provider()
 
 
@@ -101,7 +101,7 @@ def generate(provider, question: str, mode: str, top_k: int,
     sources: List[Dict[str, Any]] = []
     if use_retrieval:
         try:
-            apply_research_mode(mode)
+            _rc.set_request_settings(resolve_research_mode(mode))   # bind the run profile to this call
         except Exception:
             pass
         results = hybrid_retrieve(question, top_k=top_k) or []

@@ -902,7 +902,7 @@
     };
 
     const controller = new AbortController(); state.abort = controller;
-    const reqBody = { session_id: state.currentId, question: text, mode: state.mode, top_k: state.topk };
+    const reqBody = { session_id: state.currentId, question: text, mode: state.mode, top_k: state.topk, model: currentModelName() };
     if (editNodeId) reqBody.edit_node_id = editNodeId;
     if (isRegen) reqBody.regen_qversion_id = regenQversionId;
     try {
@@ -969,7 +969,7 @@
     const handle = makeAgentUI(h.md);
     const controller = new AbortController(); state.abort = controller;
     try {
-      const reqBody = { question: text, session_id: state.currentId };
+      const reqBody = { question: text, session_id: state.currentId, model: currentModelName() };
       if (isRegen) reqBody.regen_qversion_id = regenQid;
       const resp = await fetch("/api/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(reqBody), signal: controller.signal });
       const reader = resp.body.getReader(); const decoder = new TextDecoder(); let buf = "";

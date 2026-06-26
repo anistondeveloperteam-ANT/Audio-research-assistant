@@ -94,17 +94,19 @@ def _persist_env(updates: Dict[str, str]) -> None:
 
 
 def set_model(provider: str, model: str) -> Dict[str, str]:
-    """Switch the active model AND its endpoint/key (inferred from the model name),
-    persisting to .env so the choice survives a restart."""
+    """Switch the DEFAULT model + its endpoint/key (inferred from the model name), persisting to .env so
+    the choice survives a restart.
+
+    Concurrency: this does NOT write os.environ. The live model is carried PER REQUEST (the client sends
+    it in each /api/chat·/api/agent body and the server binds it to that request's context), so one
+    user's switch can never clobber another concurrent request mid-flight. `.env` is only the startup
+    default (loaded once at boot)."""
     model = (model or "").strip()
     if not model:
         raise ValueError("Model is required")
     base, key = _route(model)
-    os.environ["OPENAI_MODEL"] = model
-    os.environ["OPENAI_BASE_URL"] = base
     updates: Dict[str, str] = {"OPENAI_MODEL": model, "OPENAI_BASE_URL": base}
     if key:
-        os.environ["OPENAI_API_KEY"] = key
         updates["OPENAI_API_KEY"] = key
     _persist_env(updates)
     return {"provider": "openai", "model": model, "label": _label(model)}

@@ -238,11 +238,31 @@ def get_provider(model: Optional[str] = None) -> LLMProvider:
         base, key = route_model(model)
         return OpenAIProvider(model=model, api_key=key, base_url=base or None)
 
+    # Per-request model/endpoint/key from the request context (set at request entry from the user's
+    # selection), so concurrent requests on different models stay isolated; env is the off-request
+    # default (CLI / tests / a fresh process).
+    from backend.common import request_context as _rc
     return OpenAIProvider(
-        model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
-        api_key=os.getenv("OPENAI_API_KEY", ""),
-        base_url=os.getenv("OPENAI_BASE_URL") or None,
+        model=_rc.request_str("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+        api_key=_rc.request_str("OPENAI_API_KEY", "") or "",
+        base_url=_rc.request_str("OPENAI_BASE_URL", None) or None,
     )
+
+
+def resolve_model_settings(model: Optional[str]) -> Dict[str, str]:
+    """The request-context settings for a chosen chat model: its name + (for a catalog model) the
+    endpoint/key inferred from the name. Empty when no model is given (the env default then applies).
+    Bound to the per-request context at request entry — never written to os.environ."""
+    m = (model or "").strip()
+    if not m:
+        return {}
+    base, key = route_model(m)
+    out: Dict[str, str] = {"OPENAI_MODEL": m}
+    if base:
+        out["OPENAI_BASE_URL"] = base
+    if key:
+        out["OPENAI_API_KEY"] = key
+    return out
 
 
 if __name__ == "__main__":

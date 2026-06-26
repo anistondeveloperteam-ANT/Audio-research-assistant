@@ -70,10 +70,15 @@ def import_retriever():
 
 
 def try_import_mode_binding():
-    """Optional. Used only with --compare-modes or --mode flags."""
+    """Optional. Used only with --compare-modes or --mode flags. Returns a callable `bind(mode)` that
+    binds the run profile to THIS process's request context (no process-global env mutation)."""
     try:
-        from backend.answering.research_modes import apply_research_mode
-        return apply_research_mode
+        from backend.answering.research_modes import resolve_research_mode
+        from backend.common import request_context as _rc
+
+        def _bind(mode=None):
+            _rc.set_request_settings(resolve_research_mode(mode))
+        return _bind
     except Exception:
         return None
 

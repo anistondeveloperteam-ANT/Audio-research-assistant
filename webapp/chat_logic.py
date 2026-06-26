@@ -67,6 +67,8 @@ from backend.answering.effort import assess_effort, effort_scaling_enabled, is_c
 from backend.answering import experience as _experience  # noqa: E402
 from backend.answering import acquired_knowledge as _acquired  # noqa: E402
 from backend.answering import tuning as _tuning  # noqa: E402
+from backend.answering import citation_verifier as _citeverify  # noqa: E402
+from backend.common import request_context as _rc  # noqa: E402
 from backend.answering.source_router import (  # noqa: E402
     REASONING as SR_REASONING,
     WEB as SR_WEB,
@@ -232,8 +234,8 @@ EVIDENCE_MAX_ITEMS = int(os.getenv("EVIDENCE_MAX_ITEMS", "16"))
 
 
 def _evidence_budget() -> int:
-    """Total evidence chars allowed in the prompt — read live so the run mode applies."""
-    return int(os.getenv("EVIDENCE_BUDGET_CHARS", "28000"))
+    """Total evidence chars allowed in the prompt — per-request (run mode) via the request context."""
+    return _rc.request_int("EVIDENCE_BUDGET_CHARS", 28000)
 
 _PROMPT_LIMIT_RE = re.compile(r"[Pp]rompt tokens limit exceeded:\s*(\d+)\s*>\s*(\d+)")
 
@@ -294,16 +296,16 @@ AGENTIC_EXTRA_SEARCH_K = int(os.getenv("AGENTIC_EXTRA_SEARCH_K", "8"))
 # How many external sources to keep, answer token budget, and deep-search planning.
 # Read LIVE (not baked) so the run mode (fast/deep) applies per request.
 def _external_top_k() -> int:
-    return int(os.getenv("EXTERNAL_TOP_K", "20"))
+    return _rc.request_int("EXTERNAL_TOP_K", 20)
 
 
 def _answer_max_tokens() -> int:
-    return int(os.getenv("ANSWER_MAX_TOKENS", "8000"))
+    return _rc.request_int("ANSWER_MAX_TOKENS", 8000)
 
 
 def _deep_subqueries() -> int:
     """Number of extra "angle" sub-queries (0 in fast mode = just the literal query)."""
-    return int(os.getenv("DEEP_SEARCH_SUBQUERIES", "3"))
+    return _rc.request_int("DEEP_SEARCH_SUBQUERIES", 3)
 
 
 def _deep_subquery_top_k() -> int:
@@ -510,14 +512,10 @@ def _local_evidence_item(r: Dict[str, Any]) -> Dict[str, Any]:
 def _gather_local_items(query: str, mode: str) -> tuple[List[Dict[str, Any]], List[str]]:
     """Search the optional local PDF RAG and return full-text evidence items."""
     try:
-        # Imported lazily so a web-only deploy needs no Oracle / heavy ML deps.
-        from backend.answering.research_modes import apply_research_mode
+        # Imported lazily so a web-only deploy needs no Oracle / heavy ML deps. The run profile is read
+        # from the request context (bound at entry); this may run in a retrieval worker thread, which
+        # inherits that context via ContextThreadPoolExecutor — no process-global env needed.
         from backend.retrieval.hybrid_retrieve import hybrid_retrieve
-
-        try:
-            apply_research_mode(mode)
-        except Exception:
-            pass
         local = select_sources(hybrid_retrieve(query, top_k=SOURCE_MAX + 6) or [])
         return [_local_evidence_item(r) for r in local], []
     except Exception as exc:
@@ -703,10 +701,10 @@ def _ext_arg_for(i: int, query: str) -> int:
 
 def _start_speculative_external(queries: List[str], trace):
     """Kick off the external gather in the background; returns a (executor, future) handle."""
-    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    ex = _rc.ContextThreadPoolExecutor(max_workers=1)   # worker inherits this request's settings
     fut = ex.submit(_gather_pass, queries, _gather_external_items, _ext_arg_for,
                     trace=trace, span_name="external_search",
-                    timeout=float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0)
+                    timeout=_rc.request_float("EXTERNAL_GATHER_TIMEOUT", 30.0) + 8.0)
     return (ex, fut)
 
 
@@ -855,7 +853,7 @@ def _gather_pass(queries: List[str], gather_fn, arg_for, *, trace, span_name: st
     # CONCURRENTLY in the pool (bounded by AGENT_PARALLELISM); collecting in submission order
     # only fixes the merge order, not execution — wall-time is the slowest query, not the sum.
     workers = max(1, min(_agent_parallelism(), len(queries)))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+    with _rc.ContextThreadPoolExecutor(max_workers=workers) as ex:   # workers inherit request settings
         ordered = [ex.submit(_traced_span, trace, span_name, gather_fn, q, arg_for(i, q))
                    for i, q in enumerate(queries)]
         for fut in ordered:                     # iterate in submission order -> stable merge
@@ -884,7 +882,7 @@ def _legacy_sweep(queries: List[str], *, local_on: bool, mode: str, trace,
         tag = "your question" if idx == 0 else f"angle {idx}: {query[:64]}"
         t_stage = time.time()
         futures: Dict[str, concurrent.futures.Future] = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        with _rc.ContextThreadPoolExecutor(max_workers=2) as ex:   # workers inherit request settings
             if local_on:
                 yield {"type": "status", "message": f"Searching your papers — {tag}..."}
                 futures["local"] = ex.submit(_traced_span, trace, "local_rag",
@@ -903,7 +901,7 @@ def _legacy_sweep(queries: List[str], *, local_on: bool, mode: str, trace,
                     # no timeout: it must finish for there to be a local answer.
                     timeout = None
                     if name == "external":
-                        timeout = float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0
+                        timeout = _rc.request_float("EXTERNAL_GATHER_TIMEOUT", 30.0) + 8.0
                     results[name] = fut.result(timeout=timeout)
                 except concurrent.futures.TimeoutError:
                     logger.info("external search exceeded its timeout; partial local answer")
@@ -1035,9 +1033,8 @@ def _summarize_older(prev_summary: str, turns: List[Dict[str, str]]):
                     break
             return "".join(parts)
 
-        import concurrent.futures as cf
         timeout = float(os.getenv("MEMORY_SUMMARY_TIMEOUT", "8") or 8)
-        with cf.ThreadPoolExecutor(max_workers=1) as ex:
+        with _rc.ContextThreadPoolExecutor(max_workers=1) as ex:   # worker inherits request settings
             raw = ex.submit(_run).result(timeout=timeout)
     except Exception:                               # noqa: BLE001 - never break chat on summarize
         return None, []
@@ -1216,7 +1213,7 @@ def _run_code_agent(question: str, session_id: str, mem,
         finally:
             ev.put(DONE)
 
-    threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=_rc.run_in_current_context(worker), daemon=True).start()
     while True:
         e = ev.get()
         if e is DONE:
@@ -1543,15 +1540,20 @@ def stream_chat_events(
         yield {"type": "sanity", "message": sanity.user_message or "Please rephrase your question."}
         return
 
-    # Apply the run profile (fast/deep) to the process env BEFORE planning/retrieval, so
-    # the live knobs (sub-queries, external top-k, verify rounds, auto-review, budgets) take
-    # effect for this request. Fast (default) is local-first + quick; deep does the full sweep.
-    from backend.answering.research_modes import apply_research_mode, normalize_mode
-    profile = apply_research_mode(mode)
+    # Bind the run profile (fast/deep) to THIS request's context BEFORE planning/retrieval, so the live
+    # knobs (sub-queries, external top-k, verify rounds, auto-review, budgets) take effect for this
+    # request ONLY — never via process-global env, so concurrent Fast/Deep requests can't clobber each
+    # other. The server endpoint may have already bound a fuller context (incl. the selected model); if
+    # so we don't overwrite it. A direct caller (tests / eval) binds here and the set persists across the
+    # generator's yields in its own thread.
+    from backend.answering.research_modes import resolve_research_mode, normalize_mode
+    profile = resolve_research_mode(mode)
+    if not _rc.has_request_settings():
+        _rc.set_request_settings(profile)
     mode = normalize_mode(mode)
-    logger.info("chat mode=%s (subqueries=%d, ext_top_k=%d, verify_rounds=%d, auto_review=%s)",
-                profile["mode"], profile["deep_search_subqueries"], profile["external_top_k"],
-                profile["agentic_max_verify_rounds"], profile["auto_review"])
+    logger.info("chat mode=%s (subqueries=%s, ext_top_k=%s, verify_rounds=%s, auto_review=%s)",
+                profile["RESEARCH_MODE"], profile["DEEP_SEARCH_SUBQUERIES"], profile["EXTERNAL_TOP_K"],
+                profile["AGENTIC_MAX_VERIFY_ROUNDS"], profile["AUTO_REVIEW"])
 
     # Resolve the question version this answer belongs to (ChatGPT-style versioning). The stored
     # question keeps the user's EXACT text; only the search query below is refined.
@@ -1861,7 +1863,7 @@ def stream_chat_events(
                 ext_items, ext_warnings, timed_out = _gather_pass(
                     queries, _gather_external_items, _ext_arg_for,
                     trace=trace, span_name="external_search",
-                    timeout=float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0)
+                    timeout=_rc.request_float("EXTERNAL_GATHER_TIMEOUT", 30.0) + 8.0)
             if timed_out:
                 yield {"type": "warning",
                        "message": "External search timed out — answering from available sources."}
@@ -2104,7 +2106,7 @@ def stream_chat_events(
                         queries, _gather_external_items,
                         lambda i, qq: (_external_top_k() if i == 0 else _deep_subquery_top_k()),
                         trace=trace, span_name="external_search",
-                        timeout=float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0)
+                        timeout=_rc.request_float("EXTERNAL_GATHER_TIMEOUT", 30.0) + 8.0)
                     for w in esc_warnings:
                         if w not in seen_warnings:
                             seen_warnings.add(w)
@@ -2144,7 +2146,7 @@ def stream_chat_events(
                     # same query was already searched earlier in the request.
                     fu_t0 = time.time()
                     fu_futs: Dict[str, concurrent.futures.Future] = {}
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(2, _agent_parallelism()))) as fx:
+                    with _rc.ContextThreadPoolExecutor(max_workers=max(1, min(2, _agent_parallelism()))) as fx:
                         if local_on:
                             fu_futs["local"] = fx.submit(_gather_local_items, search_q, mode)
                         if is_web_search_enabled():
@@ -2152,7 +2154,7 @@ def stream_chat_events(
                         fu_res: Dict[str, Any] = {}
                         for _name, _fut in fu_futs.items():
                             try:
-                                _to = None if _name == "local" else float(os.getenv("EXTERNAL_GATHER_TIMEOUT", "30")) + 8.0
+                                _to = None if _name == "local" else _rc.request_float("EXTERNAL_GATHER_TIMEOUT", 30.0) + 8.0
                                 fu_res[_name] = _fut.result(timeout=_to)
                             except Exception as _exc:
                                 logger.info("follow-up %s search failed: %s", _name, type(_exc).__name__)
@@ -2325,6 +2327,17 @@ def stream_chat_events(
         # strips out-of-range [n] from the live display too.) Done against full_n BEFORE the
         # relevance filter, since cited numbers index the full list.
         answer, removed_citations = repair_citations(answer, full_n)
+        # CITATION-VERIFICATION GATE: before any citation reaches the user, drop FABRICATED citations (a
+        # provably-bogus DOI/arXiv-id that an exact index lookup definitively fails) and MISATTRIBUTED
+        # ones (the cited source — external OR corpus — does not actually support the claim). Existence is
+        # deterministic + cached; support is a bounded LLM judge; fail-open. The cleaned answer then
+        # drives the source panel AND what is saved + cached below, so a wrong citation never reaches the
+        # user even on a cache replay.
+        answer, _cv_removed = _citeverify.verify_citations(provider, answer=answer, sources=sources)
+        if _cv_removed:
+            logger.info("citation gate dropped %d citation(s): %s", len(_cv_removed), _cv_removed)
+            yield {"type": "citation_warning", "removed": sorted({n for n, _ in _cv_removed}),
+                   "n_sources": full_n}
         # Show only the sources that JUSTIFY the answer (the ones it cited): a maths question no
         # longer lists biology hits the search happened to return. Kept sources keep their original
         # number so [n] still resolves; falls back to all when nothing was cited.
@@ -2355,7 +2368,9 @@ def stream_chat_events(
                 + (f" ({issues})" if issues else "")
                 + " — it couldn't be independently confirmed, so treat the key claims with caution.")}
         quality_ok = bool(verified and not answer_rewritten)   # reusable only when independently verified
-        body = (clean_body or "").strip() or _strip_answer_footers(answer)
+        # Cache the clean body from the GATED answer (footers stripped), so a cached replay inherits the
+        # citation gate. On the caching path the generation succeeded, so this equals the clean stream.
+        body = _strip_answer_footers(answer) or (clean_body or "").strip()
         body, _ = repair_citations(body, full_n)
         did_cache = False
         if (cache_on and provider_ok and not gen_failed

@@ -547,6 +547,7 @@ def chat(request: Request, body: dict = Body(...)):
     session_id = body.get("session_id")
     question = body.get("question", "")
     mode = body.get("mode", "Default")
+    model = body.get("model")                         # per-request model selection (isolated per request)
     top_k = body.get("top_k", 8)
     web_search = bool(body.get("web_search", True))   # web search is the default source
     if not session_id:
@@ -558,6 +559,15 @@ def chat(request: Request, body: dict = Body(...)):
     edit_node_id = body.get("edit_node_id") or None
     regen_qversion_id = body.get("regen_qversion_id")
 
+    # THIS request's settings (run profile + selected model) — bound to a FRESH context the streamed
+    # answer reads, never process-global env, so concurrent requests with different modes/models stay
+    # isolated. bound_stream keeps them alive across every streamed yield without touching the endpoint
+    # thread's own context.
+    from backend.answering.research_modes import resolve_research_mode
+    from backend.llm.streaming_provider import resolve_model_settings
+    from backend.common import request_context as _rc
+    _settings = {**resolve_research_mode(mode), **resolve_model_settings(model)}
+
     def gen():
         try:
             for event in chat_logic.stream_chat_events(
@@ -568,8 +578,7 @@ def chat(request: Request, body: dict = Body(...)):
         except Exception as exc:  # last-resort guard so the stream always closes cleanly
             yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
 
-    # Sync generator -> Starlette iterates it in a threadpool (safe for blocking calls).
-    return StreamingResponse(gen(), media_type="application/x-ndjson")
+    return StreamingResponse(_rc.bound_stream(_settings, gen()), media_type="application/x-ndjson")
 
 
 # ----------------------------------------------------------------------
@@ -630,6 +639,7 @@ def _persist_agent_run(mem, session_id: str, task: str, res, regen_qversion_id=N
 def agent(request: Request, body: dict = Body(...)):
     task = (body.get("question") or body.get("task") or "").strip()
     use_search = bool(body.get("use_search", False))   # off by default = faster
+    model = body.get("model")                          # per-request model selection (isolated per request)
     if not task:
         return JSONResponse({"error": "task is required"}, status_code=400)
     session_id = (body.get("session_id") or "").strip()
@@ -639,6 +649,13 @@ def agent(request: Request, body: dict = Body(...)):
     conversation = _recent_conversation(request, session_id)
     mem = chat_logic.memory()
     user_id = webauth.current_user(request)
+
+    # The selected model for THIS request: the worker thread runs inside a FRESH context with it bound,
+    # so the agent reads the right per-request model — isolated from other concurrent runs (no global
+    # env, and the endpoint thread is never polluted).
+    from backend.llm.streaming_provider import resolve_model_settings
+    from backend.common import request_context as _rc
+    _agent_settings = resolve_model_settings(model)
 
     import queue
     import threading
@@ -663,7 +680,7 @@ def agent(request: Request, body: dict = Body(...)):
         finally:
             q.put(DONE)
 
-    threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=_rc.run_with_settings(_agent_settings, worker), daemon=True).start()
 
     def gen():
         while True:
@@ -699,6 +716,12 @@ def research(body: dict = Body(...)):
     if not question:
         return JSONResponse({"error": "question is required"}, status_code=400)
 
+    # The selected model for THIS request; the worker runs in a fresh context with it bound — isolated
+    # per request, endpoint thread untouched.
+    from backend.llm.streaming_provider import resolve_model_settings
+    from backend.common import request_context as _rc
+    _research_settings = resolve_model_settings(body.get("model"))
+
     import queue
     import threading
     from backend.agent.research_agent import research as run_research
@@ -717,7 +740,7 @@ def research(body: dict = Body(...)):
         finally:
             q.put(DONE)
 
-    threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=_rc.run_with_settings(_research_settings, worker), daemon=True).start()
 
     def gen():
         while True:

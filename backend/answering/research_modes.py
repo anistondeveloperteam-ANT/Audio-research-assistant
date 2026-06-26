@@ -5,14 +5,14 @@ FAST is local-first and quick — no multi-query planning, light external search
 verification round, no auto-review. DEEP does the full sweep — sub-queries, broader web/arXiv
 reading, multiple verification rounds, and auto-review — for expensive research questions.
 
-`apply_research_mode(mode)` writes the profile to the process environment (NOT the .env file).
-The retrieval pipeline (hybrid_retrieve.py) and the chat pipeline (chat_logic.py / orchestrator.py
-/ agentic_answer.py) read those vars LIVE, so a mode applies per request. Note: env is process-
-global, so concurrent requests with different modes can interleave — fine for local single-user use.
+`resolve_research_mode(mode)` returns the profile as an ENV-KEYED settings map (e.g. VECTOR_TOP_K,
+EXTERNAL_TOP_K, AGENTIC_MAX_VERIFY_ROUNDS). The caller binds it to the per-request context
+(`backend.common.request_context`); the retrieval + chat pipelines read those knobs via the context's
+typed getters, so each concurrent request reads ONLY its own profile. Nothing is written to os.environ,
+so two simultaneous requests with different modes can never clobber each other.
 """
 from __future__ import annotations
 
-import os
 from typing import Any, Dict
 
 # Retrieval knobs are shared across modes (the retrieval engine is already tuned).
@@ -80,37 +80,43 @@ def get_mode_settings(mode: str | None = None) -> Dict[str, Any]:
     return dict(MODE_SETTINGS[normalize_mode(mode)])
 
 
-def apply_research_mode(mode: str | None = None) -> Dict[str, Any]:
-    """Write the chosen profile to the process environment so retrieval + chat read it live."""
+# Settings key -> the ENV-style name the pipeline's request-context getters read.
+_ENV_KEYS: Dict[str, str] = {
+    "RESEARCH_MODE": "mode",
+    "MAX_QUERY_ROUTES": "max_query_routes",
+    "TOTAL_SOURCE_LIMIT": "total_source_limit",
+    "PER_TOPIC_SOURCE_LIMIT": "per_topic_source_limit",
+    "MAX_SOURCES_PER_PAPER": "max_sources_per_paper",
+    "VECTOR_TOP_K": "vector_top_k",
+    "BM25_TOP_K": "bm25_top_k",
+    "RERANK_TOP_N": "rerank_top_n",
+    "SOURCE_CONTEXT_BUDGET_CHARS": "context_budget_chars",
+    "QUESTION_MEMORY_THRESHOLD": "question_memory_threshold",
+    "USE_QUESTION_MEMORY": "use_question_memory",
+    "DEEP_SEARCH_SUBQUERIES": "deep_search_subqueries",
+    "EXTERNAL_TOP_K": "external_top_k",
+    "WEB_MAX_RESULTS": "web_max_results",
+    "ARXIV_READ_PDF_COUNT": "arxiv_read_pdf_count",
+    "AGENTIC_MAX_VERIFY_ROUNDS": "agentic_max_verify_rounds",
+    "DEEP_MAX_LOOPS": "deep_max_loops",
+    "AGENTIC_MIN_VERIFY_SCORE": "agentic_min_verify_score",
+    "AUTO_REVIEW": "auto_review",
+    "EVIDENCE_BUDGET_CHARS": "evidence_budget_chars",
+    "ANSWER_MAX_TOKENS": "answer_max_tokens",
+    "EXTERNAL_GATHER_TIMEOUT": "external_gather_timeout",
+}
+
+
+def resolve_research_mode(mode: str | None = None) -> Dict[str, Any]:
+    """The Fast/Deep run profile as an ENV-KEYED settings map (typed values) to BIND to the per-request
+    context — never written to os.environ, so concurrent Fast/Deep requests can't clobber one another.
+    During a request the bound profile is the authority for these knobs (matching the prior behaviour
+    where the mode was applied per request); OFF-request, the getters fall back to env then default."""
     s = get_mode_settings(mode)
-    os.environ["RESEARCH_MODE"] = s["mode"]
-    # Retrieval engine knobs (read by hybrid_retrieve via _mode_int).
-    os.environ["MAX_QUERY_ROUTES"] = str(s["max_query_routes"])
-    os.environ["TOTAL_SOURCE_LIMIT"] = str(s["total_source_limit"])
-    os.environ["PER_TOPIC_SOURCE_LIMIT"] = str(s["per_topic_source_limit"])
-    os.environ["MAX_SOURCES_PER_PAPER"] = str(s["max_sources_per_paper"])
-    os.environ["VECTOR_TOP_K"] = str(s["vector_top_k"])
-    os.environ["BM25_TOP_K"] = str(s["bm25_top_k"])
-    os.environ["RERANK_TOP_N"] = str(s["rerank_top_n"])
-    os.environ["SOURCE_CONTEXT_BUDGET_CHARS"] = str(s["context_budget_chars"])
-    os.environ["QUESTION_MEMORY_THRESHOLD"] = str(s["question_memory_threshold"])
-    os.environ["USE_QUESTION_MEMORY"] = "true" if s["use_question_memory"] else "false"
-    # Chat-pipeline cost knobs (read live by chat_logic / orchestrator / agentic_answer).
-    os.environ["DEEP_SEARCH_SUBQUERIES"] = str(s["deep_search_subqueries"])
-    os.environ["EXTERNAL_TOP_K"] = str(s["external_top_k"])
-    os.environ["WEB_MAX_RESULTS"] = str(s["web_max_results"])
-    os.environ["ARXIV_READ_PDF_COUNT"] = str(s["arxiv_read_pdf_count"])
-    os.environ["AGENTIC_MAX_VERIFY_ROUNDS"] = str(s["agentic_max_verify_rounds"])
-    os.environ["DEEP_MAX_LOOPS"] = str(s["deep_max_loops"])
-    os.environ["AGENTIC_MIN_VERIFY_SCORE"] = str(s["agentic_min_verify_score"])
-    os.environ["AUTO_REVIEW"] = "true" if s["auto_review"] else "false"
-    os.environ["EVIDENCE_BUDGET_CHARS"] = str(s["evidence_budget_chars"])
-    os.environ["ANSWER_MAX_TOKENS"] = str(s["answer_max_tokens"])
-    os.environ["EXTERNAL_GATHER_TIMEOUT"] = str(s["external_gather_timeout"])
-    return s
+    return {env: s[key] for env, key in _ENV_KEYS.items()}
 
 
 if __name__ == "__main__":
     import sys
-    for k, v in apply_research_mode(sys.argv[1] if len(sys.argv) > 1 else None).items():
+    for k, v in resolve_research_mode(sys.argv[1] if len(sys.argv) > 1 else None).items():
         print(f"{k}: {v}")

@@ -67,12 +67,21 @@ os.environ["CORPUS_GROWTH"] = "false"
 # always present but a no-op with no overrides set; test_self_tuning opts in and manages its own cache.
 os.environ["SELF_TUNING"] = "false"
 
+# The citation-verification gate makes deterministic index lookups (network) + a bounded LLM support
+# judge before citations are shown. Disable it suite-wide so chat tests stay offline/deterministic and
+# aren't perturbed by citation removals; test_citation_verification opts back in and mocks the lookups +
+# the provider.
+os.environ["CITATION_VERIFICATION"] = "false"
+
 
 @pytest.fixture(autouse=True)
-def _reset_tuning_cache():
-    """Phase 3 tuning overrides live in a process-global cache. Clear it around every test so a test that
-    sets an override can never leak a changed threshold into another test."""
+def _reset_process_context():
+    """Reset the two process-global-ish caches around every test: the Phase 3 tuning override cache and
+    the per-request settings contextvar — so a test that binds either can never leak into another."""
     from backend.answering import tuning as _tuning
+    from backend.common import request_context as _rc
     _tuning.clear_cache()
+    _rc.clear_request_settings()
     yield
     _tuning.clear_cache()
+    _rc.clear_request_settings()

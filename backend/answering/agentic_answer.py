@@ -14,6 +14,8 @@ import re
 from collections.abc import Iterable
 from typing import Any, Dict, List, Optional
 
+from backend.common import request_context as _rc
+
 
 def env_flag(name: str, default: bool = False) -> bool:
     raw = os.getenv(name, "true" if default else "false")
@@ -25,27 +27,19 @@ def agentic_loop_enabled() -> bool:
 
 
 def max_verify_rounds() -> int:
-    try:
-        return max(1, min(5, int(os.getenv("AGENTIC_MAX_VERIFY_ROUNDS", "3"))))
-    except ValueError:
-        return 3
+    # Per-request (Fast/Deep) via the request context; falls back to env/default off-request.
+    return max(1, min(5, _rc.request_int("AGENTIC_MAX_VERIFY_ROUNDS", 3)))
 
 
 def max_deep_loops() -> int:
     """Hard cap on the agentic verify->rewrite loop (it also early-stops on a passing verdict
     or one with no concrete gap). Distinct from max_verify_rounds() so DEEP mode can run fewer
     loops without changing the mode's verify-round semantics. Default 2."""
-    try:
-        return max(1, min(5, int(os.getenv("DEEP_MAX_LOOPS", "2"))))
-    except ValueError:
-        return 2
+    return max(1, min(5, _rc.request_int("DEEP_MAX_LOOPS", 2)))
 
 
 def min_verify_score() -> int:
-    try:
-        return max(0, min(100, int(os.getenv("AGENTIC_MIN_VERIFY_SCORE", "80"))))
-    except ValueError:
-        return 80
+    return max(0, min(100, _rc.request_int("AGENTIC_MIN_VERIFY_SCORE", 80)))
 
 
 def simulate_code_enabled() -> bool:
@@ -53,8 +47,9 @@ def simulate_code_enabled() -> bool:
 
 
 def auto_review_enabled() -> bool:
-    """Automatically peer-review the final answer/code (the 'Review' step, run for you)."""
-    return env_flag("AUTO_REVIEW", default=True)
+    """Automatically peer-review the final answer/code (the 'Review' step, run for you). Per-request
+    (Fast/Deep) via the request context; env/default off-request."""
+    return _rc.request_bool("AUTO_REVIEW", True)
 
 
 def independent_verify_enabled() -> bool:
@@ -487,7 +482,7 @@ def reconcile_answer(provider: Any, *, question: str, answer: str,
     try:
         fixed = complete_text(
             provider, [{"role": "user", "content": user}], system=_CONSISTENCY_FIX_SYSTEM,
-            max_tokens=int(os.getenv("ANSWER_MAX_TOKENS", "2000")), temperature=0.0)
+            max_tokens=_rc.request_int("ANSWER_MAX_TOKENS", 2000), temperature=0.0)
     except Exception:                       # noqa: BLE001 - reconciliation is best-effort, never fatal
         return ""
     return fixed.strip()

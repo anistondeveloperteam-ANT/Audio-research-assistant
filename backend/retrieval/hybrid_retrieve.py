@@ -31,7 +31,6 @@ import re
 import time
 import warnings
 import logging
-import concurrent.futures
 from collections import defaultdict
 
 from dotenv import load_dotenv
@@ -407,10 +406,10 @@ def diversify_results(results, top_k=10, max_per_paper=3):
 
 
 def _mode_int(env_name: str, default: int) -> int:
-    try:
-        return int(os.getenv(env_name, str(default)))
-    except Exception:
-        return default
+    # Per-request (Fast/Deep) knob via the request context; env/default off-request. Concurrency-safe:
+    # a request reads only its own bound value, never a sibling request's.
+    from backend.common import request_context as _rc
+    return _rc.request_int(env_name, default)
 
 
 def _hybrid_retrieve_core(query: str, top_k: int = 10):
@@ -463,7 +462,8 @@ def _hybrid_retrieve_core(query: str, top_k: int = 10):
         return out
 
     t_par = time.time()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+    from backend.common.request_context import ContextThreadPoolExecutor
+    with ContextThreadPoolExecutor(max_workers=3) as ex:   # workers inherit this request's settings
         f_orig = ex.submit(_stage_vector_orig)
         f_hyde = ex.submit(_stage_vector_hyde)
         f_bm25 = ex.submit(_stage_bm25)
