@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script>try { if (localStorage.getItem("ara-theme") === "light") document.documentElement.classList.add("light"); } catch (e) {}</script>
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260627" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.3-4.3'/%3E%3C/svg%3E" />
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css" />
@@ -116,6 +116,7 @@
           <div class="m-title">Add papers</div>
           <div class="m-sub">PDFs are read, chunked, and embedded into your library.</div>
         </div>
+        <button class="m-min" id="uploadMin" title="Minimize — keep indexing in the background" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
         <button class="m-close" id="uploadClose" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
       </div>
 
@@ -152,6 +153,13 @@
   <div class="cite-pop" id="citePop"></div>
   <div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16v-4M12 8h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z"/></svg><span class="ttext"></span></div>
 
-  <script defer src="/static/app.js?v=20260620"></script>
+  <!-- Minimized indexing indicator: shows live stage while you keep chatting; becomes a 5s "done" popup -->
+  <button class="ingest-pill" id="ingestPill" type="button" hidden>
+    <span class="spin" id="ingestSpin"></span>
+    <svg class="ip-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+    <span class="ip-text"><span class="ip-title" id="ingestPillTitle">Indexing…</span><span class="ip-stage" id="ingestPillStage"></span></span>
+  </button>
+
+  <script defer src="/static/app.js?v=20260627"></script>
 </body>
 </html>

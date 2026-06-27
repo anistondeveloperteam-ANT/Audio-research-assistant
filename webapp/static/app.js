@@ -33,6 +33,7 @@
     papers: () => fetch("/api/papers").then((r) => r.json()),
     deletePaper: (id) => fetch(`/api/papers/${id}`, { method: "DELETE" }).then((r) => r.json()),
     removeIncomplete: () => fetch("/api/papers/remove-incomplete", { method: "POST" }).then((r) => r.json()),
+    embedPending: () => fetch("/api/papers/embed-pending", { method: "POST" }),   // streaming NDJSON
     models: () => fetch("/api/models").then((r) => r.json()),
     setModel: (provider, model) =>
       fetch("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, model }) }).then((r) => r.json()),
@@ -50,6 +51,8 @@
     currentId: null,
     streaming: false,
     ingesting: false,
+    ingestMinimized: false,
+    ingestStage: "",
     currentSources: [],
     srcSets: [],
     srcIndex: 0,
@@ -103,6 +106,7 @@
 
   // ---------- toast ----------
   let _toastT = null;
+  let _pillT = null;
   function toast(msg, kind) {
     const t = $("toast"); if (!t) return;
     t.querySelector(".ttext").textContent = msg;
@@ -1184,14 +1188,19 @@
     if (nIncomplete) {
       const banner = document.createElement("div"); banner.className = "lib-banner";
       banner.innerHTML = `<span>⚠ ${nIncomplete} paper${nIncomplete === 1 ? "" : "s"} half-done (parsed, not embedded).</span>`;
+      const acts = document.createElement("div"); acts.className = "lib-banner-acts";
+      // Primary action: finish embedding the half-done papers (no re-upload, no re-parse).
+      const fin = document.createElement("button"); fin.className = "go"; fin.textContent = "Finish embedding";
+      fin.addEventListener("click", () => runEmbedPending(fin, rm));
       const rm = document.createElement("button"); rm.textContent = "Remove half-done";
       rm.addEventListener("click", async () => {
         if (!confirm(`Remove ${nIncomplete} half-done paper${nIncomplete === 1 ? "" : "s"}? Their PDFs are deleted so you can re-upload.`)) return;
-        rm.disabled = true; rm.textContent = "Removing…";
+        rm.disabled = true; fin.disabled = true; rm.textContent = "Removing…";
         try { const res = await api.removeIncomplete(); if (res.error) { toast(res.error, "error"); return; } toast(`Removed ${res.count} half-done paper${res.count === 1 ? "" : "s"}.`); loadLibrary(); const [it, st] = await Promise.all([api.papers().catch(() => []), api.library().catch(() => ({}))]); renderLibrary(it, st); }
         catch { toast("Remove failed.", "error"); }
       });
-      banner.appendChild(rm); list.appendChild(banner);
+      acts.appendChild(fin); acts.appendChild(rm);
+      banner.appendChild(acts); list.appendChild(banner);
     }
     items.forEach((p) => {
       const row = document.createElement("div"); row.className = "lib-row" + (p.incomplete ? " incomplete" : "");
@@ -1209,11 +1218,41 @@
     });
   }
 
+  // Finish embedding half-done papers (parsed but not embedded) without re-uploading. Streams the
+  // same NDJSON progress as /api/ingest; updates the button label per stage, then refreshes the list.
+  async function runEmbedPending(btn, otherBtn) {
+    if (state.ingesting) { toast("An indexing run is already in progress.", "error"); return; }
+    state.ingesting = true;
+    btn.disabled = true; if (otherBtn) otherBtn.disabled = true;
+    const orig = btn.textContent; btn.textContent = "Embedding…";
+    let ok = true, msg = "";
+    try {
+      const resp = await api.embedPending();
+      const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "";
+      while (true) {
+        const { done, value } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true }); let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1); if (!line) continue;
+          let ev; try { ev = JSON.parse(line); } catch { continue; }
+          if (ev.type === "stage") { btn.textContent = ev.label + "…"; }
+          else if (ev.type === "error") { ok = false; msg = ev.message; }
+          else if (ev.type === "cancelled") { ok = false; msg = ev.message; }
+          else if (ev.type === "done") { msg = ev.message; }
+        }
+      }
+    } catch { ok = false; msg = "Embedding failed."; }
+    finally { state.ingesting = false; }
+    if (ok) toast(msg || "Embedding complete."); else toast(msg || "Embedding failed.", "error");
+    const [it, st] = await Promise.all([api.papers().catch(() => []), api.library().catch(() => ({}))]);
+    renderLibrary(it, st);
+  }
+
   // ---------- upload + ingest ----------
   const isPdf = (f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
   const fmtSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
   function openUpload() {
-    if (state.ingesting) { $("uploadOverlay").classList.add("open"); return; }
+    if (state.ingesting) { restoreUpload(); return; }   // already indexing -> reopen, clear the pill
     $("upList").innerHTML = ""; $("upLog").classList.remove("show"); $("upLog").textContent = "";
     $("upSummary").textContent = "Drop or browse to add PDFs.";
     $("upDone").disabled = false;
@@ -1261,6 +1300,7 @@
 
   async function runIngest(saved, rows) {
     state.ingesting = true; $("addPapersBtn").classList.add("busy");
+    state.ingestMinimized = false; state.ingestStage = ""; $("uploadMin").hidden = false;  // allow minimize
     const ac = new AbortController(); state.ingestAbort = ac;
     $("upSummary").textContent = `Indexing ${saved.length} paper${saved.length > 1 ? "s" : ""}…`;
     $("upDone").disabled = true;
@@ -1275,7 +1315,7 @@
         while ((nl = buf.indexOf("\n")) >= 0) {
           const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1); if (!line) continue;
           let ev; try { ev = JSON.parse(line); } catch { continue; }
-          if (ev.type === "stage") { $("upSummary").textContent = ev.label; upLog("◆ " + ev.label, "stage"); }
+          if (ev.type === "stage") { $("upSummary").textContent = ev.label; upLog("◆ " + ev.label, "stage"); setIngestStage(ev.label); }
           else if (ev.type === "log") { upLog(ev.line, /WARNING|NOT indexed/i.test(ev.line) ? "warn" : null); }
           else if (ev.type === "error") { ok = false; upLog("✗ " + ev.message, "warn"); }
           else if (ev.type === "cancelled") { upLog("✕ " + ev.message, "warn"); finishIngest(false, rows, true); return; }
@@ -1290,19 +1330,61 @@
   }
   function finishIngest(ok, rows, cancelled) {
     state.ingesting = false; state.ingestAbort = null; $("addPapersBtn").classList.remove("busy");
+    $("uploadMin").hidden = true;
     if (rows) rows.forEach((row) => { if (!row.classList.contains("err") && !row.classList.contains("done")) { row.classList.add(ok && !cancelled ? "done" : "err"); row.querySelector(".up-status").textContent = cancelled ? "Cancelled" : (ok ? "Indexed ✓" : "Not indexed"); } });
     $("upSummary").textContent = cancelled ? "Cancelled — partial data removed." : (ok ? "Done — added to your library." : "Indexing finished with warnings (see log).");
     $("upDone").disabled = false;
     loadLibrary();
+    // If it finished while minimized, the side pill becomes the brief result popup (disappears in 5s).
+    if (state.ingestMinimized) { state.ingestMinimized = false; showPillResult(ok, cancelled); }
   }
   async function cancelIngest() {
     if (!state.ingesting) return;
     upLog("✕ Cancelling — removing this upload…", "warn");
     if (state.ingestAbort) { try { state.ingestAbort.abort(); } catch {} }
     try { await api.cancelIngest(); } catch {}
-    state.ingesting = false; state.ingestAbort = null; $("addPapersBtn").classList.remove("busy");
+    state.ingesting = false; state.ingestAbort = null; state.ingestMinimized = false;
+    $("addPapersBtn").classList.remove("busy"); $("uploadMin").hidden = true; hidePill();
     toast("Upload cancelled — its data was removed.");
     loadLibrary();
+  }
+
+  // ---------- minimized indexing pill (keep indexing in the background while you chat) ----------
+  function setIngestStage(label) {
+    state.ingestStage = label || state.ingestStage;
+    const el = $("ingestPillStage"); if (el) el.textContent = state.ingestStage || "";
+  }
+  function showPill() { const p = $("ingestPill"); if (!p) return; p.hidden = false; requestAnimationFrame(() => p.classList.add("show")); }
+  function hidePill() {
+    clearTimeout(_pillT);
+    const p = $("ingestPill"); if (!p) return;
+    p.classList.remove("show");
+    setTimeout(() => { if (!p.classList.contains("show")) p.hidden = true; }, 300);
+  }
+  function minimizeUpload() {
+    if (!state.ingesting) return;
+    state.ingestMinimized = true;
+    $("uploadOverlay").classList.remove("open");
+    const p = $("ingestPill"); if (p) { p.classList.remove("done", "error"); p.disabled = false; }
+    $("ingestPillTitle").textContent = "Indexing…";
+    setIngestStage(state.ingestStage);
+    showPill();
+  }
+  function restoreUpload() {
+    state.ingestMinimized = false;
+    hidePill();
+    $("uploadOverlay").classList.add("open");
+  }
+  function showPillResult(ok, cancelled) {
+    const p = $("ingestPill"); if (!p) return;
+    clearTimeout(_pillT);
+    p.classList.toggle("done", !!ok && !cancelled);
+    p.classList.toggle("error", !ok || !!cancelled);
+    p.disabled = !!ok && !cancelled;                    // success just fades; warning/cancel reopens the log
+    $("ingestPillTitle").textContent = cancelled ? "Indexing cancelled" : (ok ? "Paper indexed and ready" : "Indexing finished with warnings");
+    $("ingestPillStage").textContent = (ok && !cancelled) ? "Added to your library" : "Tap to view the log";
+    showPill();
+    _pillT = setTimeout(hidePill, 5000);                // pop in on the side, disappear after 5s
   }
 
   // ---------- model picker ----------
@@ -1393,6 +1475,8 @@
     $("dropzone").addEventListener("dragleave", () => $("dropzone").classList.remove("drag"));
     $("dropzone").addEventListener("drop", (e) => { e.preventDefault(); $("dropzone").classList.remove("drag"); handleFiles(e.dataTransfer.files); });
     $("uploadClose").addEventListener("click", closeUpload);
+    $("uploadMin").addEventListener("click", minimizeUpload);          // ─ : keep indexing in the background
+    $("ingestPill").addEventListener("click", restoreUpload);          // reopen the modal from the pill
     $("upDone").addEventListener("click", () => { if (!state.ingesting) $("uploadOverlay").classList.remove("open"); });
 
     $("modelBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleModelMenu(); });

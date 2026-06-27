@@ -272,6 +272,10 @@ html.light .modal-overlay{background:rgba(20,20,22,0.30);}
 .m-close{margin-left:auto;width:32px;height:32px;flex:none;border-radius:10px;display:grid;place-items:center;cursor:pointer;color:var(--text-mid);background:var(--glass-bg-3);border:1px solid var(--glass-brd);transition:background .2s,color .2s;}
 .m-close:hover{color:var(--text-strong);}
 .m-close svg{width:16px;height:16px;}
+.m-min{margin-left:auto;width:32px;height:32px;flex:none;border-radius:10px;display:grid;place-items:center;cursor:pointer;color:var(--text-mid);background:var(--glass-bg-3);border:1px solid var(--glass-brd);transition:background .2s,color .2s;}
+.m-min:hover{color:var(--text-strong);} .m-min svg{width:16px;height:16px;}
+.m-min[hidden]{display:none;}            /* author display:grid would otherwise beat the [hidden] attr */
+#uploadModal .m-close{margin-left:0;}   /* minimize takes the left-auto; close sits beside it (head gap) */
 .dropzone{border:1.5px dashed var(--glass-brd-2);border-radius:16px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;margin-bottom:16px;}
 .dropzone:hover,.dropzone.drag{border-color:var(--text-faint);background:var(--glass-bg-3);}
 .dropzone svg{width:30px;height:30px;color:var(--text-mid);margin-bottom:9px;}
@@ -320,12 +324,28 @@ html.light .modal-overlay{background:rgba(20,20,22,0.30);}
 .lib-mini svg{width:14px;height:14px;}
 .lib-empty{text-align:center;padding:34px 16px;font-size:12.5px;color:var(--text-faint);line-height:1.6;}
 .lib-banner{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;color:#d4a017;background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.4);border-radius:11px;padding:9px 12px;margin-bottom:9px;}
+.lib-banner-acts{display:flex;align-items:center;gap:7px;flex:none;}
 .lib-banner button{font:inherit;font-size:11.5px;font-weight:600;color:var(--danger);background:transparent;border:1px solid var(--glass-brd);border-radius:8px;padding:5px 11px;cursor:pointer;white-space:nowrap;}
+.lib-banner button:disabled{opacity:.6;cursor:default;}
+.lib-banner button.go{color:#0a0a0b;background:#d4a017;border-color:#d4a017;}
 
 .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);z-index:200;padding:11px 16px;border-radius:13px;background:var(--menu-bg);border:1px solid var(--glass-brd-2);box-shadow:var(--shadow);font-size:12.5px;color:var(--text-strong);opacity:0;visibility:hidden;transition:opacity .25s,transform .25s,visibility .25s;display:flex;align-items:center;gap:10px;max-width:min(440px,90vw);}
 .toast.show{opacity:1;visibility:visible;transform:translateX(-50%) translateY(0);}
 .toast svg{width:15px;height:15px;flex:none;color:var(--text-mid);}
 .toast.error{border-color:var(--danger);} .toast.error svg{color:var(--danger);}
+
+/* Minimized indexing pill (bottom-right): live stage while you keep chatting; 5s "done" popup on finish */
+.ingest-pill{position:fixed;bottom:26px;right:26px;z-index:170;display:flex;align-items:center;gap:10px;padding:11px 15px;border-radius:13px;cursor:pointer;background:var(--menu-bg);border:1px solid var(--glass-brd-2);box-shadow:var(--shadow);color:var(--text-strong);font:inherit;font-size:12.5px;text-align:left;opacity:0;visibility:hidden;transform:translateY(20px);transition:opacity .25s,transform .25s,visibility .25s;max-width:min(340px,82vw);}
+.ingest-pill.show{opacity:1;visibility:visible;transform:translateY(0);}
+.ingest-pill:hover{border-color:var(--text-faint);}
+.ingest-pill .ip-text{display:flex;flex-direction:column;line-height:1.3;min-width:0;}
+.ingest-pill .ip-title{font-weight:600;}
+.ingest-pill .ip-stage{font-size:11px;color:var(--text-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ingest-pill .ip-check{width:16px;height:16px;flex:none;color:#22c55e;display:none;}
+.ingest-pill.done{cursor:default;border-color:rgba(34,197,94,0.45);} .ingest-pill.done .ip-check{display:block;}
+.ingest-pill.done .spin,.ingest-pill.error .spin{display:none;}
+.ingest-pill.error{border-color:var(--danger);}
+.ingest-pill[hidden]{display:none;}      /* author display:flex would otherwise beat the [hidden] attr */
 
 /* ===== Coding-task answer ===== */
 @keyframes spin{to{transform:rotate(360deg);}}

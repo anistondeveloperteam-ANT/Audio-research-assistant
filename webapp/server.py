@@ -494,6 +494,28 @@ def remove_incomplete_papers():
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+@app.post("/api/papers/embed-pending")
+def embed_pending():
+    """Finish half-done papers: embed parsed-but-unembedded chunks (in-process GPU) then migrate +
+    turbovec, WITHOUT re-parsing. Streams progress like /api/ingest. Claims the single ingest slot and
+    refuses if an indexing run is already in progress (prevents concurrent GPU embeds)."""
+    started = ingest.begin_ingest([])
+
+    def gen():
+        if not started:
+            yield json.dumps({"type": "error",
+                              "message": "An indexing run is already in progress — please wait for it "
+                                         "to finish before embedding."}) + "\n"
+            return
+        try:
+            for event in ingest.stream_embed_pending():
+                yield json.dumps(event) + "\n"
+        except Exception as exc:
+            yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
 # ----------------------------------------------------------------------
 # LLM model selection
 # ----------------------------------------------------------------------
@@ -520,10 +542,17 @@ async def upload(files: list[UploadFile] = File(...)):
 
 @app.post("/api/ingest")
 def run_ingest(body: dict = Body(default={})):
-    # Record which just-uploaded files this run covers, so a cancel removes exactly those.
-    ingest.begin_ingest((body or {}).get("filenames") or [])
+    # Claim the single ingest slot (records which just-uploaded files this run covers, so a cancel
+    # removes exactly those). False => an ingest is already running; refuse to start a concurrent one
+    # (concurrent runs hammer the LLM/DB at once and crawl — the cause of earlier slowness).
+    started = ingest.begin_ingest((body or {}).get("filenames") or [])
 
     def gen():
+        if not started:
+            yield json.dumps({"type": "error",
+                              "message": "An indexing run is already in progress — please wait for it "
+                                         "to finish (or cancel it) before adding more."}) + "\n"
+            return
         try:
             for event in ingest.stream_ingest():
                 yield json.dumps(event) + "\n"
