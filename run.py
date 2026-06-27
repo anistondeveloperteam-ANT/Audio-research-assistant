@@ -55,8 +55,22 @@ except Exception:
 # ----------------------------------------------------------------------
 # Port helpers -- so a leftover server can never block startup again
 # ----------------------------------------------------------------------
+def _bind_host(lan: bool, share: bool) -> str:
+    """The host uvicorn will ACTUALLY bind to. `--lan`/`--share` expose the app on every
+    interface (0.0.0.0); otherwise it is localhost-only. The port pre-flight MUST probe
+    this same host — otherwise a leftover server on 0.0.0.0 slips past a 127.0.0.1-only
+    check (Windows lets a 127.0.0.1 probe bind even while 0.0.0.0 is held) and uvicorn then
+    dies with '[Errno 10048] only one usage of each socket address' right after startup."""
+    return "0.0.0.0" if (lan or share) else "127.0.0.1"
+
+
 def port_in_use(port: int, host: str = "127.0.0.1") -> bool:
-    """True if something is already listening on host:port."""
+    """True if `host:port` can't be bound right now (something is already using it).
+
+    This is a PLAIN bind — exactly what uvicorn/asyncio does on Windows (no SO_REUSEADDR,
+    no SO_EXCLUSIVEADDRUSE), so the probe's verdict matches the real listener's. What makes
+    a leftover server detectable is probing the SAME host uvicorn will bind (see `_bind_host`
+    / `ensure_port_free`): a leftover on 0.0.0.0 is only seen when we probe 0.0.0.0 too."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.5)
         try:
@@ -131,11 +145,12 @@ def _kill(pid: int) -> None:
         pass
 
 
-def ensure_port_free(port: int) -> bool:
-    """Make sure `port` is free. If a leftover Python server holds it, stop that
-    process. Returns True if the port is (now) free, False if we couldn't clear
-    it safely."""
-    if not port_in_use(port):
+def ensure_port_free(port: int, host: str = "127.0.0.1") -> bool:
+    """Make sure `port` is free ON THE HOST uvicorn will bind. If a leftover Python server
+    holds it, stop that process. Returns True if the port is (now) free, False if we
+    couldn't clear it safely. `host` must match the eventual uvicorn bind (0.0.0.0 for
+    --lan/--share) so a wildcard leftover is actually detected."""
+    if not port_in_use(port, host):
         return True
 
     pids = _pids_on_port(port)
@@ -159,7 +174,7 @@ def ensure_port_free(port: int) -> bool:
         _kill(p)
 
     for _ in range(24):                      # wait up to ~6s for the OS to release it
-        if not port_in_use(port):
+        if not port_in_use(port, host):
             print(f"  Port {port} is free now.")
             return True
         time.sleep(0.25)
@@ -325,8 +340,13 @@ def main() -> int:
                         help="Bind to your whole network so other devices here can reach it.")
     args = parser.parse_args()
 
+    # The host uvicorn will bind — probe THIS host for a leftover server (0.0.0.0 for
+    # --lan/--share), so a stale wildcard server is detected instead of slipping past a
+    # localhost-only check and crashing uvicorn with "[Errno 10048]".
+    host = _bind_host(args.lan, args.share)
+
     if not args.no_free_port:
-        if not ensure_port_free(args.port):
+        if not ensure_port_free(args.port, host):
             return 1
 
     if args.share:
@@ -340,7 +360,7 @@ def main() -> int:
             print("\nStopped.")
             return 0
 
-    host = "0.0.0.0" if args.lan else "127.0.0.1"
+    # `host` was computed above (and already drove the port pre-flight) — reuse it.
     if args.lan:
         print(f"Starting on your network → http://{_local_ip()}:{args.port}  (other devices on this Wi-Fi)")
         print("  (Windows may ask to allow it through the firewall — choose Allow.)")

@@ -42,7 +42,7 @@ pypdf==6.11.0
 # --- Chat model client (openai SDK powers OpenRouter; Ollama uses HTTP/requests) ---
 openai==1.109.1
 
-# --- Google Gemini (embeddings: EMBEDDING_PROVIDER=google) ---
+# --- Google Gemini (chat model: GEMINI_API_KEY; embeddings are local bge, not Gemini) ---
 google-genai==1.75.0
 
 # --- HTTP + external search (Ollama calls, web/GitHub/PDF retrieval) ---

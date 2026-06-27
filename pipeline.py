@@ -22,6 +22,7 @@ database are actually there before doing any work.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -41,6 +42,16 @@ FULL_STAGES = [
 ]
 INCREMENTAL_MODULE = "backend.ingestion.incremental_index"
 TURBOVEC_STAGE = ("Build turbovec vector cache", "backend.retrieval.turbovec_index", ["build"])
+
+# Re-embed the WHOLE corpus with the current embedding model (run after changing EMBEDDING_MODEL/DIM,
+# e.g. 768 -> 1024). Resets the VECTOR column at the new dimension, clears old vectors, re-embeds every
+# chunk, and migrates into the native VECTOR column. The papers are NOT re-parsed (text is unchanged).
+REEMBED_STAGES = [
+    ("Reset embeddings (drop+recreate VECTOR column, clear old vectors)",
+     "backend.database.reset_embeddings", []),
+    ("Embed chunks",                     "backend.ingestion.embed_chunks", []),
+    ("Migrate into Oracle vector index", "backend.database.vector_migration", []),
+]
 
 
 # ----------------------------------------------------------------------
@@ -106,15 +117,13 @@ def show_status() -> int:
     except Exception:
         print("turbovec cache       : unavailable")
 
-    # Compute device — shows whether the GPU (e.g. an RTX 3050) is actually used. The reranker
-    # always runs here; embeddings only when EMBEDDING_PROVIDER=local (else they're cloud).
+    # Compute device — shows whether the GPU (e.g. an RTX 3050) is actually used. Both the local
+    # bge embedder and the reranker run here (embeddings are always local now).
     try:
         import torch
         from backend.common.device import resolve_device
-        from backend.common.embeddings import provider as embed_provider
         gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none"
-        embed_dev = resolve_device("EMBEDDING_DEVICE") if embed_provider() == "local" else "cloud"
-        print(f"Compute device       : GPU={gpu}; embeddings={embed_dev}, "
+        print(f"Compute device       : GPU={gpu}; embeddings={resolve_device('EMBEDDING_DEVICE')}, "
               f"reranker={resolve_device('RERANKER_DEVICE')}")
     except Exception:
         pass
@@ -165,7 +174,9 @@ def run_stage(label: str, module: str, extra_args=None) -> int:
     print(f">> {label}")
     print("   (" + " ".join(["python", "-m", module] + extra_args) + ")")
     print("=" * 70, flush=True)
-    return subprocess.call(cmd, cwd=str(ROOT))
+    # Force the child's stdout/stderr to UTF-8 so Unicode in logs (→, ⚠, …) never crashes with
+    # UnicodeEncodeError on a Windows cp1252 console.
+    return subprocess.call(cmd, cwd=str(ROOT), env={**os.environ, "PYTHONIOENCODING": "utf-8"})
 
 
 # ----------------------------------------------------------------------
@@ -255,6 +266,11 @@ def main() -> int:
                              "re-ingested cleanly. Add --delete-files to also delete the PDFs.")
     parser.add_argument("--delete-files", action="store_true",
                         help="With --remove-incomplete: also delete the PDF files (then upload again).")
+    parser.add_argument("--reembed", action="store_true",
+                        help="Re-embed the ENTIRE corpus with the current embedding model: drop + "
+                             "recreate the VECTOR column at EMBEDDING_DIM, clear old vectors, re-embed "
+                             "every chunk, and rebuild the index. Run after changing EMBEDDING_MODEL/DIM "
+                             "(e.g. switching to bge-large-en-v1.5, 768 -> 1024). Papers are not re-parsed.")
     args = parser.parse_args()
 
     if args.status:
@@ -289,10 +305,12 @@ def main() -> int:
     if not preflight(args.incremental):
         return 1
 
-    stages = (
-        [("Incremental index (changed PDFs only)", INCREMENTAL_MODULE, [])]
-        if args.incremental else list(FULL_STAGES)
-    )
+    if args.reembed:
+        stages = list(REEMBED_STAGES)
+    elif args.incremental:
+        stages = [("Incremental index (changed PDFs only)", INCREMENTAL_MODULE, [])]
+    else:
+        stages = list(FULL_STAGES)
     if turbovec_stage_enabled():
         stages.append(TURBOVEC_STAGE)
 
