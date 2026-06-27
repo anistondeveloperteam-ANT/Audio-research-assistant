@@ -25,6 +25,7 @@ Most "chat with AI" tools answer from the model's memory and hope it's right. **
 And it **[gets better the more you use it](#-it-gets-smarter-every-day)** — learning from its own corrections, the answers you regenerate to, and its own measured quality, all in the background so it never costs you a moment of latency.
 
 > [!NOTE]
+> **New here? Start with the [📘 Complete System Guide](docs/SYSTEM_GUIDE.md)** — every technology, both core workflows (add a paper · ask a question) drawn step‑by‑step, and an honest comparison with Claude / ChatGPT / DeepSeek.
 > **Deep dive:** [🧭 The Complete Pipeline Guide](docs/PIPELINE_GUIDE.md) — every stage from question to verified answer, diagram-first (route → retrieve → grade → relevance-gate → verify → independent-check → cite), PDF-ready. See also [📊 How It Works](docs/HOW_IT_WORKS.md) for accuracy/latency numbers.
 
 ---
@@ -32,7 +33,7 @@ And it **[gets better the more you use it](#-it-gets-smarter-every-day)** — le
 ## 🚀 Quick start
 
 ```bash
-git clone https://github.com/ianjan10/research-assistant
+git clone <your-repo-url> research-assistant
 cd research-assistant
 
 python -m venv .venv
@@ -204,7 +205,7 @@ When a question needs a program, it doesn't just print code — it **runs** it. 
 <details>
 <summary><b>📄 Use your own documents</b></summary>
 
-Click **Add papers** in the sidebar to upload PDFs; they're parsed → chunked → embedded and searched alongside the web on every question. The library modal shows what's indexed (and flags PDFs that are on disk but not yet embedded).
+Click **Add papers** in the sidebar to upload PDFs; they're parsed → chunked → embedded and searched alongside the web on every question. Parsing is **fast and GPU‑free** — PyMuPDF extracts text in ~0.1 s/paper and its built‑in `find_tables()` emits clean `|grid|` tables (no ML model). Embedding runs on the GPU with the local **bge‑large** model — free, offline, no quota. The library modal shows what's indexed and, for any PDF left half‑done (parsed but not embedded), offers **Finish embedding** (complete it in place — no re‑upload) as well as Remove.
 
 ```bash
 python pipeline.py --corpus-report     # papers, chunks, topic coverage, gaps, duplicates
@@ -216,7 +217,7 @@ See [docs/INGESTION_CHECKLIST.md](docs/INGESTION_CHECKLIST.md).
 <details>
 <summary><b>🧠 Contextual Retrieval</b> — chunks that know where they came from</summary>
 
-At indexing time an LLM writes **one context sentence** per chunk (a technique [from Anthropic](https://www.anthropic.com/news/contextual-retrieval)), stored only inside the search index — what you read in citations is always the original chunk. It improves recall (measured +4.9% rel. recall@10 on this repo's 3‑paper benchmark; larger libraries benefit more), with **no query‑time latency** (the work is cached at indexing). Falls back Gemini → Mistral → plain chunks so indexing never breaks. Toggle: `CONTEXTUAL_CHUNKS=true|false`.
+Every chunk is embedded with a short **"paper title · section" header** prepended (a technique [from Anthropic](https://www.anthropic.com/news/contextual-retrieval)) so a bare passage still knows where it came from — better recall with **no query‑time latency** (the header is added at indexing; what you read in citations is always the original chunk). This header is **always on** and needs no LLM. Optionally (`CONTEXTUAL_CHUNKS=true`, off by default) an LLM also writes one situating sentence per chunk, falling back Gemini → Mistral → plain so indexing never breaks.
 </details>
 
 <details>
@@ -317,7 +318,7 @@ flowchart TD
 | **`backend/maintenance/`** | One‑shot factory reset (wipe all local data) | `factory_reset.py` |
 | **`tests/`** | Offline tests — Docker / LLM / network mocked | `test_*.py` |
 
-> 🧭 Deeper dives ([full docs index](docs/README.md)): **[docs/PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md)** (the complete diagram-first pipeline guide, PDF-ready) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (architecture + code map) · [docs/TECH_STACK.md](docs/TECH_STACK.md) (technology) · [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) + [docs/MEASUREMENT.md](docs/MEASUREMENT.md) (measured accuracy/latency) · [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md).
+> 🧭 Deeper dives ([full docs index](docs/README.md)): **[docs/SYSTEM_GUIDE.md](docs/SYSTEM_GUIDE.md)** (the visual, plain‑English guide — tech, both workflows, platform comparison) · **[docs/PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md)** (the complete diagram-first pipeline guide, PDF-ready) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (architecture + code map) · [docs/TECH_STACK.md](docs/TECH_STACK.md) (technology) · [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) + [docs/MEASUREMENT.md](docs/MEASUREMENT.md) (measured accuracy/latency) · [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md).
 
 ---
 

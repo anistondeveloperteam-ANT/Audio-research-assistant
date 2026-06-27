@@ -66,7 +66,7 @@ flowchart TB
 | **Reranker / embeddings** | sentence‑transformers | 5.5.0 | cross‑encoder reranker (+ local embedder option) |
 | | transformers | 4.57.6 | model backbone |
 | | **PyTorch (CUDA)** | 2.7.1+cu126 | **GPU inference** for the reranker (fp16) |
-| **Embeddings (default)** | google‑genai | 1.75.0 | Gemini query/doc embeddings (`EMBEDDING_PROVIDER=google`) |
+| **Embeddings** | sentence‑transformers (`bge-large-en-v1.5`) | — | Local 1024‑d query/doc embeddings on the GPU (fp16, CPU fallback) |
 | **Vector DB** | Oracle 23ai (`oracledb`) | 4.0.0 | `VECTOR` columns + `VECTOR_DISTANCE` search |
 | | **turbovec** | 0.7.0 | compressed (4‑bit) local vector index (`VECTOR_BACKEND=turbovec`) |
 | **PDF parsing** | docling · PyMuPDF · pypdf | 2.93 / 1.27 / 6.11 | layout/table‑aware parse + fast fallback |
@@ -308,7 +308,7 @@ flowchart LR
 ## 12. GPU acceleration
 
 - `backend/common/device.py :: resolve_device` → `cuda` when available (`DEVICE`/`RERANKER_DEVICE`/`EMBEDDING_DEVICE=auto`).
-- **Reranker** (`bge-reranker-v2-m3`) loads on the GPU in **fp16** (`RERANKER_FP16`) — ~2× faster, half VRAM (~1.5 GB, fits a 6 GB card). Embeddings are **Gemini** by default (API); set `EMBEDDING_PROVIDER=local` to run a local `bge` embedder on the GPU too (requires a matching re‑index).
+- **Reranker** (`bge-reranker-v2-m3`) loads on the GPU in **fp16** (`RERANKER_FP16`) — ~2× faster, half VRAM (~1.5 GB, fits a 6 GB card). **Embeddings** run the same way: a local **`bge-large-en-v1.5`** (1024‑d) embedder on the GPU in fp16 with an automatic CPU fallback — no API, no quota. Changing `EMBEDDING_MODEL` needs a matching re‑index (`python pipeline.py --reembed`).
 - **Startup pre‑warm** (`hybrid_retrieve.warmup`, FastAPI `lifespan`, background thread) pays the ~14 s model load + CUDA init **once**, so the first user query is fast.
 - Measured: retrieval **p50 ~10 s → ~3.2 s**, **p95 ~19.5 s → ~4.1 s** (the CPU reranker's 5–37 s variance is gone). CPU fallback is automatic.
 

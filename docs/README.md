@@ -4,8 +4,11 @@ Start with the root [README](../README.md) for the overview and quick start. The
 each has one clear purpose (no overlapping rewrites).
 
 ## How it works
+- **[SYSTEM_GUIDE.md](SYSTEM_GUIDE.md)** — the visual, plain‑English guide: every technology, both core
+  workflows (add a paper · ask a question) drawn step‑by‑step, and an honest comparison with Claude /
+  ChatGPT / DeepSeek. **New here? Start here.**
 - **[PIPELINE_GUIDE.md](PIPELINE_GUIDE.md)** — the complete, diagram-first walkthrough of how a question
-  becomes a verified, cited answer (and how a coding task becomes tested code). PDF-ready. **Start here.**
+  becomes a verified, cited answer (and how a coding task becomes tested code). PDF-ready.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system architecture, components, and the code map.
 - [TECH_STACK.md](TECH_STACK.md) — the technology behind each piece and why it was chosen.
 

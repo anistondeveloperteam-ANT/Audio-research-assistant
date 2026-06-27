@@ -73,7 +73,7 @@ with progress, light/dark theme.
 | 🟢 **sentence‑transformers** | 5.5.0 | High‑level wrapper for embedding + cross‑encoder models | Loads & runs the **cross‑encoder reranker** (and the optional local embedder) |
 | 🟢 **transformers** | 4.57.6 | Hugging Face model backbone | The model architecture under sentence‑transformers |
 | 🟢 **BAAI/bge‑reranker‑v2‑m3** | model | A **cross‑encoder reranker** | Re‑orders search hits by true query↔document relevance — the key accuracy step. Runs on GPU **fp16** (`RERANKER_FP16=true`), pre‑warmed at startup |
-| 🔵 **BAAI/bge‑base‑en‑v1.5** | model | A local embedding model | Only when `EMBEDDING_PROVIDER=local` (default is Gemini) — would run on the GPU |
+| 🟢 **BAAI/bge‑large‑en‑v1.5** | model | The local embedding model (1024‑d) | **The only** embedder — turns chunks + queries into vectors on the GPU (fp16, CPU fallback). Asymmetric: a query instruction is prepended to queries only |
 | 🟢 **CUDA / NVIDIA GPU** | (driver) | GPU compute | Auto‑detected (`DEVICE=auto`); reranker runs here. No GPU → automatic CPU fallback |
 
 > **Why fp16 + pre‑warm:** half precision makes the reranker ~2× faster at half the VRAM (fits a
@@ -126,8 +126,8 @@ Code: `backend/memory/store.py` (the single SQLite interface), `backend/database
 
 | Tool | Version | What it is | Role here |
 |---|---|---|---|
-| 🟢 **google‑genai** | 1.75.0 | Google's Gemini SDK | Default embeddings (`EMBEDDING_PROVIDER=google`) — turns text into 768‑dim vectors for indexing + queries |
-| 🔵 **local bge embedder** | (via sentence‑transformers) | On‑device embeddings | Alternative when `EMBEDDING_PROVIDER=local` (runs on GPU; needs a matching re‑index) |
+| 🟢 **google‑genai** | 1.75.0 | Google's Gemini SDK | Chat model client (`GEMINI_API_KEY`). NOT used for embeddings anymore — those are local bge |
+| 🟢 **local bge embedder** | `bge-large-en-v1.5` via sentence‑transformers | On‑device embeddings | The only embedder — 1024‑d vectors for indexing + queries on the GPU (needs a matching re‑index when the model changes) |
 
 ---
 
