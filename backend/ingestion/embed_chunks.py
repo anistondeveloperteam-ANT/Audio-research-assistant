@@ -8,7 +8,6 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-warnings.filterwarnings("ignore")
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
@@ -20,15 +19,11 @@ import oracledb
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-from backend.common.embeddings import (
-    embed_documents, provider_label, provider, format_retrieval_document,
-    EmbeddingQuotaError,
-)
+from backend.common.embeddings import embed_documents, provider_label
 
 load_dotenv()
 
-# How many chunks to pull from the DB per loop (the embedding provider may
-# sub-batch further internally).
+# How many chunks to pull + embed per DB-commit batch (the model sub-batches further internally).
 BATCH_SIZE = int(os.getenv("EMBED_DB_BATCH", "16"))
 
 
@@ -40,95 +35,98 @@ def connect():
     )
 
 
-def main():
-    print("Embedding provider:", provider_label())
+def _read(value):
+    if value is None:
+        return ""
+    return value.read() if hasattr(value, "read") else str(value)
 
+
+def _embed_text(title: str, section: str, context: str, chunk: str) -> str:
+    """The text we EMBED for a chunk (NOT what users see). A 'contextual chunk header' — the paper
+    title + section name — is prepended so the chunk's vector reflects WHERE it sits in the document,
+    which sharply improves retrieval recall at ZERO cost (no LLM call, instant). Any LLM situating
+    sentence (`context`) is included too when present. The stored chunk_text shown in citations is
+    unchanged. This is what makes ingestion fast AND accurate without the per-chunk LLM step."""
+    head = " | ".join(p for p in (title.strip(), section.strip())
+                      if p and p.strip().lower() not in ("", "unknown"))
+    return "\n".join(p for p in (head, context.strip(), chunk) if p)
+
+
+def embed_pending_chunks(progress=None, should_cancel=None):
+    """Embed every chunk whose embedding IS NULL **in the current process**, reusing the warm bge
+    model — no subprocess, no second model load. (A fresh model-loading subprocess is what OOM-
+    crashes a small GPU/box: VRAM -> 0xC0000005, system commit -> WinError 1455. Reusing the
+    already-loaded model avoids both.)
+
+    `progress(done, total)` is called after each committed DB-batch; `should_cancel()` (optional)
+    is polled between batches to stop early. Returns {'embedded': n, 'total': m, 'cancelled': bool}.
+    Idempotent (only NULL chunks), so it can be called repeatedly to embed papers incrementally as
+    each one finishes parsing — which is how the web UI overlaps parsing (CPU) with embedding (GPU).
+    """
     conn = connect()
     cur = conn.cursor()
-
-    # Pull metadata alongside the text so document embeddings can be enriched
-    # (title / section / audio concepts) — improves retrieval matching.
-    cur.execute("""
-        SELECT c.id, c.chunk_text, c.context_text, c.section_name, c.audio_concepts, p.title
-        FROM chunks c
-        JOIN papers p ON p.id = c.paper_id
-        WHERE c.embedding IS NULL
-        ORDER BY c.id
-    """)
-    rows = cur.fetchall()
-    print(f"Chunks needing embeddings: {len(rows)}")
-
-    if not rows:
-        print("All chunks already have embeddings.")
-        cur.close()
-        conn.close()
-        return
-
-    start = time.time()
-    enrich = provider() == "google"   # only Gemini gets the metadata-formatted docs
-
-    def _read(value):
-        if value is None:
-            return ""
-        return value.read() if hasattr(value, "read") else str(value)
-
     try:
-        for i in tqdm(range(0, len(rows), BATCH_SIZE), desc="Embedding chunks"):
+        cur.execute(
+            "SELECT c.id, c.chunk_text, c.context_text, c.section_name, p.title "
+            "FROM chunks c JOIN papers p ON p.id = c.paper_id "
+            "WHERE c.embedding IS NULL ORDER BY c.id"
+        )
+        rows = cur.fetchall()
+        total = len(rows)
+        if total == 0:
+            return {"embedded": 0, "total": 0, "cancelled": False}
+
+        done = 0
+        for i in range(0, total, BATCH_SIZE):
+            if should_cancel is not None and should_cancel():
+                return {"embedded": done, "total": total, "cancelled": True}
             batch = rows[i:i + BATCH_SIZE]
-            ids = [row[0] for row in batch]
-
-            texts = []
-            for row in batch:
-                text = _read(row[1])
-                context = _read(row[2]).strip()
-                # Contextual Retrieval: prepend the situating sentence to what we EMBED (better recall).
-                # The stored chunk_text shown to users is unchanged.
-                body = (context + "\n" + text) if context else text
-                if enrich:
-                    section = _read(row[3])
-                    concepts_raw = _read(row[4])
-                    try:
-                        concepts = json.loads(concepts_raw) if concepts_raw else None
-                    except Exception:
-                        concepts = concepts_raw or None
-                    title = row[5]
-                    texts.append(format_retrieval_document(
-                        title=title, section=section, concepts=concepts, text=body))
-                else:
-                    texts.append(body)
-
+            ids = [r[0] for r in batch]
+            # Embed with a contextual chunk header (title + section [+ LLM context]); the stored
+            # chunk_text is untouched, so citations still show the original text.
+            texts = [_embed_text(_read(r[4]), _read(r[3]), _read(r[2]).strip(), _read(r[1]))
+                     for r in batch]
             embeddings = embed_documents(texts)
-
             for chunk_id, emb in zip(ids, embeddings):
-                emb_json = json.dumps([float(x) for x in emb])
                 cur.execute(
                     "UPDATE chunks SET embedding = :embedding WHERE id = :chunk_id",
-                    {"embedding": emb_json, "chunk_id": chunk_id},
+                    {"embedding": json.dumps([float(x) for x in emb]), "chunk_id": chunk_id},
                 )
-            conn.commit()   # commit per DB-batch so a mid-run quota failure keeps progress
-    except EmbeddingQuotaError as exc:
-        conn.commit()
-        cur.execute("SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL")
-        done = cur.fetchone()[0]
+            conn.commit()                     # per-batch commit -> progress survives an interruption
+            done += len(batch)
+            if progress is not None:
+                progress(done, total)
+        return {"embedded": done, "total": total, "cancelled": False}
+    finally:
         cur.close()
         conn.close()
-        print(f"\n✗ Embedding stopped — {exc}")
-        print(f"  Progress saved: {done} chunk(s) embedded so far; re-run to resume the rest.")
-        raise SystemExit(1)
 
-    elapsed = time.time() - start
 
-    cur.execute("SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL")
-    embedded_count = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(*) FROM chunks")
-    total_count = cur.fetchone()[0]
+def main():
+    """CLI / pipeline entry point — embeds all pending chunks in THIS process. Used by
+    `pipeline.py`, where no server is running to compete for the GPU, so loading the model here is
+    fine. (The web UI does NOT spawn this; it calls embed_pending_chunks in the warm server.)"""
+    warnings.filterwarnings("ignore")     # quiet the CLI run only (not when imported by the server)
+    print("Embedding provider:", provider_label())
+    start = time.time()
+    bar = {"p": None}
 
+    def _progress(done, total):
+        if bar["p"] is None:
+            bar["p"] = tqdm(total=total, desc="Embedding chunks")
+        bar["p"].n = done
+        bar["p"].refresh()
+
+    result = embed_pending_chunks(progress=_progress)
+    if bar["p"] is not None:
+        bar["p"].close()
+
+    if result["total"] == 0:
+        print("All chunks already have embeddings.")
+        return
     print("\nEmbedding summary:")
-    print(f"Embedded chunks: {embedded_count}/{total_count}")
-    print(f"Time taken: {elapsed:.2f} seconds")
-
-    cur.close()
-    conn.close()
+    print(f"Embedded chunks: {result['embedded']}/{result['total']}")
+    print(f"Time taken: {time.time() - start:.2f} seconds")
 
 
 if __name__ == "__main__":

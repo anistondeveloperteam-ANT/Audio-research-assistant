@@ -167,11 +167,13 @@ def docling_device() -> str:
 
 
 def docling_enabled() -> bool:
-    """Docling (the heavy ML layout/table parser) is opt-OUT. On a low-memory host its native
-    models can OOM / segfault the whole ingest process (a crash Python cannot catch), so set
-    ENABLE_DOCLING=false to skip it and use the lightweight PyMuPDF text path — which never crashes
-    and still indexes the text (tables/layout enrichment is the only thing lost). Default on."""
-    return (os.getenv("ENABLE_DOCLING", "true") or "true").strip().lower() not in ("0", "false", "no", "off")
+    """Docling (the heavy ML layout/table parser) is opt-IN — DEFAULT OFF. On a CPU-only host it is the
+    dominant ingest cost (~60-90 s/paper of native ML inference, and it can crawl/segfault on complex
+    PDFs), for marginal benefit here (it rarely extracts tables; the fast PyMuPDF text path already
+    indexes every page's text — including metric numbers — so retrieval is largely unaffected). Turn it
+    on with ENABLE_DOCLING=true ONLY when you need clean table row/column structure for a specific
+    table-critical paper; even then it runs conditionally (table-rich papers only)."""
+    return (os.getenv("ENABLE_DOCLING", "false") or "false").strip().lower() in ("1", "true", "yes", "on")
 
 
 def docling_min_free_mb() -> int:
@@ -182,6 +184,77 @@ def docling_min_free_mb() -> int:
         return max(0, int(os.getenv("DOCLING_MIN_FREE_MB", "1500")))
     except (TypeError, ValueError):
         return 1500
+
+
+def docling_conditional() -> bool:
+    """When true (default), Docling runs ONLY on table-rich PDFs — its payoff is clean table row/column
+    structure, so prose-only papers skip the heavy parse and use the fast PyMuPDF text (big speed win,
+    no quality loss where there are no tables). Set DOCLING_CONDITIONAL=false to run Docling on every
+    PDF (memory permitting); ENABLE_DOCLING=false disables it entirely."""
+    return (os.getenv("DOCLING_CONDITIONAL", "true") or "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def docling_table_trigger() -> int:
+    """Minimum table-richness score (see _table_richness) for conditional Docling to run. Default 6
+    ≈ two distinct result tables (or one table + a few pipe rows). Lower = run Docling on more papers
+    (more thorough, slower); raise = run on fewer (faster). Tune via DOCLING_TABLE_TRIGGER."""
+    try:
+        return max(0, int(os.getenv("DOCLING_TABLE_TRIGGER", "6")))
+    except (TypeError, ValueError):
+        return 6
+
+
+def _table_richness(pages) -> int:
+    """A cheap score of how table-heavy the PyMuPDF text looks, computed BEFORE the expensive Docling
+    pass. Driven by the two signals that actually discriminate result tables from prose (metric words
+    like 'snr'/'accuracy' appear in nearly every paper, so they are NOT used): the count of DISTINCT
+    'Table N' references (weighted) plus pipe-delimited rows."""
+    text = "\n".join((p.get("text") or "") for p in (pages or [])).lower()
+    if not text:
+        return 0
+    distinct_tables = len(set(re.findall(r"\btable\s+(\d+)", text)))   # distinct "Table N" numbers
+    pipe_rows = text.count("|") // 4                                   # pipe-delimited table rows
+    return distinct_tables * 3 + pipe_rows
+
+
+def pymupdf_tables_enabled() -> bool:
+    """Extract clean tables with PyMuPDF's built-in find_tables() (heuristic line/whitespace detection,
+    NO ML, NO GPU, ~1 s/paper) so tables index as proper |grid| markdown even with Docling off. Default
+    ON. Set ENABLE_PYMUPDF_TABLES=false to skip table extraction entirely."""
+    return (os.getenv("ENABLE_PYMUPDF_TABLES", "true") or "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def extract_pymupdf_tables(pdf_path: Path) -> list:
+    """Tables as clean markdown grids via fitz.Page.find_tables() — fast, no ML/GPU. Returns a list of
+    markdown table strings (only real multi-cell grids are kept). Fail-soft: any error -> []. NOTE: the
+    markdown is only .strip()'d (NOT clean_text'd) so the row newlines survive into the chunk."""
+    out: list = []
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return out
+    try:
+        for page in doc:
+            finder = getattr(page, "find_tables", None)
+            if not callable(finder):
+                break                                       # PyMuPDF too old -> no-op
+            try:
+                tables = finder().tables
+            except Exception:
+                continue
+            for tb in tables:
+                try:
+                    md = (tb.to_markdown() or "").strip()
+                except Exception:
+                    continue
+                if md and md.count("|") >= 4:               # a real grid (>= 2 cols x a couple rows)
+                    out.append(md)
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    return out
 
 
 def _available_memory_mb() -> int:
@@ -214,16 +287,22 @@ def _available_memory_mb() -> int:
     return 1 << 20                                       # ~1e6 MB -> "plenty" when undetectable
 
 
-def _should_run_docling():
-    """(run: bool, reason: str) — whether to enrich this PDF with Docling. Skipped (PyMuPDF text
-    only) when Docling is disabled or free memory is below the safety floor, so its native code can
-    never OOM / segfault the ingest process."""
+def _should_run_docling(pages=None):
+    """(run: bool, reason: str) — whether to enrich this PDF with Docling. Skipped (PyMuPDF text only)
+    when Docling is disabled, free memory is below the safety floor (so its native code can never OOM /
+    segfault the ingest process), or — in conditional mode (default) — the PyMuPDF text shows no sign
+    of tables, since Docling's payoff is clean table structure. `pages` omitted = no conditional gate."""
     if not docling_enabled():
         return False, "ENABLE_DOCLING=false"
     free = _available_memory_mb()
     need = docling_min_free_mb()
     if need and free < need:
         return False, f"low memory ({free} MB free < {need} MB needed)"
+    if pages is not None and docling_conditional():
+        score = _table_richness(pages)
+        trigger = docling_table_trigger()
+        if score < trigger:
+            return False, f"no tables detected (conditional Docling: score {score} < {trigger})"
     return True, ""
 
 
@@ -388,7 +467,7 @@ def parse_pdf(pdf_path: Path):
     # Docling enriches with layout/tables but its native models can OOM / segfault on a low-memory
     # host (an uncatchable crash). Skip it when memory is low or it is disabled — PyMuPDF text alone
     # still indexes the document and never crashes.
-    run_docling, why = _should_run_docling()
+    run_docling, why = _should_run_docling(pages)
     if run_docling:
         docling = _docling_safe(pdf_path)
     else:
@@ -397,6 +476,15 @@ def parse_pdf(pdf_path: Path):
     raw_markdown = (docling or {}).get("raw_markdown", "")
     tables = (docling or {}).get("tables", [])
     equations = (docling or {}).get("equations", [])
+
+    # Fast clean tables WITHOUT Docling: when Docling didn't supply tables, extract proper |grid|
+    # tables via PyMuPDF's built-in find_tables (heuristic, no ML/GPU, ~1-4 s/paper). Run on EVERY
+    # paper — find_tables is the detector itself, so a text-based pre-gate would miss tables that
+    # aren't referenced as "Table N". Each grid becomes a clean "Table" chunk.
+    if not tables and pymupdf_tables_enabled():
+        tables = extract_pymupdf_tables(pdf_path)
+        if tables:
+            print(f"  Extracted {len(tables)} clean table(s) via PyMuPDF find_tables (fast, no ML).")
 
     # Auto OCR — text-poor pages only, CPU only, opt-in via ENABLE_OCR.
     poor = _pages_needing_ocr(pages)

@@ -16,6 +16,20 @@ load_dotenv()
 PAPERS_DIR = Path("data/papers")
 
 
+def _force_utf8_stdio() -> None:
+    """Make stdout/stderr emit UTF-8 (replacing un-encodable chars) so Unicode in our logs (→, ⚠, …)
+    never raises UnicodeEncodeError on a Windows cp1252 pipe — which otherwise aborts the whole parse
+    when a PDF is skipped. Belt-and-suspenders to the PYTHONIOENCODING the web/pipeline spawners set."""
+    import sys
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
 def full_document_text(parsed: dict) -> str:
     """The parsed document's text, used as context for the situating sentence."""
     if parsed.get("raw_markdown"):
@@ -174,6 +188,7 @@ def remove_incomplete_papers(delete_files: bool = False) -> list:
 
 
 def main():
+    _force_utf8_stdio()
     # Hide the GPU from THIS parse process so Docling never attempts it (no std::bad_alloc, no
     # retries). Done inside main() — NOT at import — so merely importing this module (e.g. from a
     # test or the app) never disables the GPU the reranker/embedder use at query time. Embedding is
@@ -234,6 +249,16 @@ def main():
             for w in coverage_warnings(pdf_path.name, parsed):
                 print(f"  {w}")
                 overall_warnings.append(w)
+        except oracledb.IntegrityError:
+            # Same content already in the DB (UQ_PAPERS_FILE_HASH) — a duplicate, not an error.
+            # (paper_exists() normally skips these first; this also covers a duplicate within the
+            # same batch / a row added by a concurrent run.) Skip cleanly; don't warn or abort.
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            print(f"Skipping already ingested (duplicate content): {pdf_path.name}")
+            continue
         except Exception as exc:        # incl. MemoryError — never abort the batch on one PDF
             try:
                 conn.rollback()

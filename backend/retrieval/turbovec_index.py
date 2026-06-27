@@ -51,6 +51,7 @@ class BuildStats:
     bit_width: int
     rebuilt: bool
     seconds: float
+    incremental: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -61,6 +62,7 @@ class BuildStats:
             "embedding_dim": self.embedding_dim,
             "bit_width": self.bit_width,
             "rebuilt": self.rebuilt,
+            "incremental": self.incremental,
             "seconds": round(self.seconds, 3),
         }
 
@@ -317,6 +319,137 @@ def _flush_batch(index: Any, ids: Sequence[int], vectors: Sequence[Sequence[floa
     index.add_with_ids(arr, id_arr)
 
 
+def _incremental_add_cutoff(
+    existing_manifest: Optional[Mapping[str, Any]],
+    signature: Mapping[str, Any],
+    in_range_count: int,
+    in_range_sum: int,
+) -> Optional[int]:
+    """Decide whether the index can be updated by ADDING only new chunks instead of a full rebuild.
+
+    Returns the chunk-id cutoff (add chunks with id > cutoff) when the corpus PURELY GREW since the
+    last build, else None (caller does a full rebuild). Pure + decidable, so it is unit-testable.
+
+    Safe only when: same model / dim / bit-width; the corpus has more chunks with a higher max id; and
+    NOTHING in the old id range changed — proven by `in_range_count`/`in_range_sum` (the COUNT and
+    SUM(id) of CURRENT embedded chunks with id <= the old max id) matching the old signature. Chunk ids
+    are monotonic IDENTITY values, so a matching count+sum over a fixed range means an identical set —
+    no deletion or re-embed — and the chunks with id > old_max are exactly the new additions."""
+    if not existing_manifest:
+        return None
+    old = existing_manifest.get("source_signature") or {}
+    for k in ("bit_width", "embedding_provider", "embedding_model", "embedding_dim_env"):
+        if old.get(k) != signature.get(k):
+            return None                                # different model/quantization -> re-quantize all
+    try:
+        old_count = int(old.get("chunk_count") or 0)
+        old_max = int(old.get("max_chunk_id") or 0)
+        old_sum = int(old.get("id_sum") or 0)
+        new_count = int(signature.get("chunk_count") or 0)
+        new_max = int(signature.get("max_chunk_id") or 0)
+        emb_dim = int(existing_manifest.get("embedding_dim") or 0)
+    except (TypeError, ValueError):
+        return None
+    if old_count <= 0 or emb_dim <= 0:
+        return None
+    if new_count <= old_count or new_max <= old_max:
+        return None                                    # nothing added, or the corpus shrank
+    if int(in_range_count) != old_count or int(in_range_sum) != old_sum:
+        return None                                    # old id range changed (deletion/re-embed) -> rebuild
+    return old_max
+
+
+def _build_incremental(conn, path, mpath, existing_manifest, signature, prepare, started) -> Optional[BuildStats]:
+    """Add ONLY the chunks newer than the last build to the existing index (O(new chunks), not O(corpus)).
+    Returns BuildStats on success, or None to fall back to a full rebuild. Any failure -> None (safe)."""
+    old_max = int((existing_manifest.get("source_signature") or {}).get("max_chunk_id") or 0)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT COUNT(*), COALESCE(SUM(id), 0) FROM chunks "
+            "WHERE embedding IS NOT NULL AND id <= :m", {"m": old_max})
+        in_count, in_sum = cur.fetchone()
+    except Exception:
+        return None
+    finally:
+        cur.close()
+
+    cutoff = _incremental_add_cutoff(existing_manifest, signature, int(in_count or 0), int(in_sum or 0))
+    if cutoff is None:
+        return None
+
+    try:
+        IdMapIndex = _load_id_map_class()
+        idx = IdMapIndex.load(str(path))
+        expected_dim = int(existing_manifest.get("embedding_dim") or 0)
+        added = 0
+        skipped = 0
+        pending_ids: List[int] = []
+        pending_vectors: List[List[float]] = []
+        batch_size = build_batch_size()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL AND id > :m ORDER BY id",
+                {"m": cutoff})
+            while True:
+                rows = cur.fetchmany(batch_size)
+                if not rows:
+                    break
+                for chunk_id, raw in rows:
+                    vec = parse_embedding(read_lob(raw), expected_dim)
+                    if vec is None:
+                        skipped += 1
+                        continue
+                    pending_ids.append(int(chunk_id))
+                    pending_vectors.append(vec)
+                if len(pending_ids) >= batch_size:
+                    _flush_batch(idx, pending_ids, pending_vectors)
+                    added += len(pending_ids)
+                    pending_ids, pending_vectors = [], []
+        finally:
+            cur.close()
+        if pending_ids:
+            _flush_batch(idx, pending_ids, pending_vectors)
+            added += len(pending_ids)
+        if added <= 0:
+            return None                                # nothing valid to add -> let full rebuild decide
+
+        if prepare:
+            idx.prepare()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        idx.write(str(tmp_path))
+        tmp_path.replace(path)
+
+        manifest = {
+            "schema_version": 1,
+            "source": "oracle_chunks_embedding",
+            "built_at": datetime.now(timezone.utc).isoformat(),
+            "source_signature": signature,
+            "vector_count": int(existing_manifest.get("vector_count") or 0) + added,
+            "skipped_count": int(existing_manifest.get("skipped_count") or 0) + skipped,
+            "embedding_dim": expected_dim,
+            "bit_width": bit_width(),
+            "turbovec_version": _turbovec_version(),
+        }
+        write_manifest(manifest, path)
+        clear_cache()
+        return BuildStats(
+            index_path=path,
+            manifest_path=mpath,
+            vector_count=manifest["vector_count"],
+            skipped_count=manifest["skipped_count"],
+            embedding_dim=expected_dim,
+            bit_width=bit_width(),
+            rebuilt=False,
+            seconds=time.time() - started,
+            incremental=True,
+        )
+    except Exception:
+        return None                                    # any incremental failure -> safe full rebuild
+
+
 def build_index(*, force: bool = False, prepare: bool = True) -> BuildStats:
     started = time.time()
     path = index_path()
@@ -346,6 +479,14 @@ def build_index(*, force: bool = False, prepare: bool = True) -> BuildStats:
 
         if int(signature.get("chunk_count") or 0) <= 0:
             raise TurbovecUnavailable("No chunk embeddings were found in Oracle.")
+
+        # Fast path: if the corpus only GREW (new papers added, none removed), add just the new chunks'
+        # vectors to the existing index — O(new chunks) instead of re-quantizing the WHOLE corpus every
+        # add. Falls through to a full rebuild on any mismatch/failure (deletion, model change, error).
+        if not force and path.exists() and existing_manifest:
+            incremental = _build_incremental(conn, path, mpath, existing_manifest, signature, prepare, started)
+            if incremental is not None:
+                return incremental
 
         idx = IdMapIndex(bit_width=bit_width())
         expected_dim: Optional[int] = None
@@ -638,7 +779,7 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if command == "build":
         stats = build_index(force=bool(args.force), prepare=not bool(args.no_prepare))
-        action = "rebuilt" if stats.rebuilt else "already valid"
+        action = "rebuilt" if stats.rebuilt else ("incrementally updated" if stats.incremental else "already valid")
         print(f"turbovec cache {action}:")
         for key, value in stats.to_dict().items():
             print(f"  {key}: {value}")
