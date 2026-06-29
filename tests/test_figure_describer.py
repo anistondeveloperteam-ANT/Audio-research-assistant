@@ -65,14 +65,17 @@ def test_describe_builds_vision_message_and_is_failsafe():
     class _FakeVision:
         def __init__(self):
             self.messages = None
+            self.kwargs = None
 
         def stream_chat(self, messages, system="", **k):
             self.messages = messages
+            self.kwargs = k
             return ["The chart shows a downward loss curve."]
 
     fp = _FakeVision()
     out = fd._describe(fp, "Figure 1: loss vs epochs", b"PNGDATA")
     assert out == "The chart shows a downward loss curve."
+    assert fp.kwargs.get("timeout", 0) >= 5            # a hard timeout is passed (anti-hang guard)
     content = fp.messages[0]["content"]
     kinds = {part["type"] for part in content}
     assert kinds == {"text", "image_url"}

@@ -147,14 +147,15 @@ class OpenAIProvider(LLMProvider):
         ]
 
     def stream_chat(self, messages, system="", max_tokens=2048, temperature=0.3,
-                    yield_reasoning=False):
+                    yield_reasoning=False, timeout=None):
         """Yield answer content as strings. When `yield_reasoning=True`, also yields
         the model's hidden reasoning/'thinking' as {"reasoning": "..."} dicts (for
-        reasoning models that expose it) so the UI can show it."""
+        reasoning models that expose it) so the UI can show it. `timeout` (seconds) caps the request so
+        a stalled response can't hang the caller indefinitely; None = the client default."""
         import openai
 
-        client = (openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
-                  if self.base_url else openai.OpenAI(api_key=self.api_key))
+        client = (openai.OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=timeout)
+                  if self.base_url else openai.OpenAI(api_key=self.api_key, timeout=timeout))
         msgs: List[Dict[str, str]] = []
         if system:
             msgs.append({"role": "system", "content": system})

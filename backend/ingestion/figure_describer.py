@@ -59,6 +59,15 @@ def _render_max_px() -> int:
         return 1100
 
 
+def _describe_timeout() -> float:
+    """Hard per-figure timeout (seconds) for the vision call, so one stalled request can't hang the
+    whole ingest (the failure mode this guards against). The figure is skipped on timeout."""
+    try:
+        return max(5.0, float(os.getenv("FIGURE_DESCRIBE_TIMEOUT", "45")))
+    except (TypeError, ValueError):
+        return 45.0
+
+
 def _figure_captions(parsed: Dict[str, Any]) -> List[Dict[str, Any]]:
     """[{page, num, caption}] for each distinct 'Figure N: ...' caption found in the parsed pages."""
     seen = set()
@@ -104,7 +113,8 @@ def _describe(provider: Any, caption: str, png: bytes) -> str:
     }]
     try:
         parts: List[str] = []
-        for tok in provider.stream_chat(messages, system=_SYSTEM, max_tokens=300, temperature=0.0):
+        for tok in provider.stream_chat(messages, system=_SYSTEM, max_tokens=300, temperature=0.0,
+                                        timeout=_describe_timeout()):
             if isinstance(tok, str):
                 parts.append(tok)
         return " ".join("".join(parts).split()).strip()
