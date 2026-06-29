@@ -44,7 +44,7 @@ def test_figure_chunks_happy_path(monkeypatch):
     monkeypatch.setenv("ENABLE_FIGURE_UNDERSTANDING", "true")
     monkeypatch.setenv("FIGURE_CACHE", "false")                  # don't touch the real cache file
     monkeypatch.setattr(fd, "_vision_provider", lambda: object())
-    monkeypatch.setattr(fd, "_render_page_png", lambda path, page, px: b"\x89PNG-bytes")
+    monkeypatch.setattr(fd, "_render_page_png", lambda path, page, px, num=None: b"\x89PNG-bytes")
     monkeypatch.setattr(fd, "_describe",
                         lambda prov, cap, ref, png: "It shows loss falling from 2.1 to 0.4 over 50 epochs.")
     chunks = fd.figure_chunks(Path("x.pdf"), _PARSED)
@@ -58,7 +58,7 @@ def test_figure_chunks_skips_unrenderable(monkeypatch):
     monkeypatch.setenv("ENABLE_FIGURE_UNDERSTANDING", "true")
     monkeypatch.setenv("FIGURE_CACHE", "false")
     monkeypatch.setattr(fd, "_vision_provider", lambda: object())
-    monkeypatch.setattr(fd, "_render_page_png", lambda path, page, px: None)   # render fails
+    monkeypatch.setattr(fd, "_render_page_png", lambda path, page, px, num=None: None)   # render fails
     monkeypatch.setattr(fd, "_describe", lambda prov, cap, ref, png: "desc")
     assert fd.figure_chunks(Path("x.pdf"), _PARSED) == []
 
@@ -74,7 +74,7 @@ def test_figure_chunks_uses_cache_and_skips_the_llm(monkeypatch):
     monkeypatch.setenv("ENABLE_FIGURE_UNDERSTANDING", "true")
     monkeypatch.setenv("FIGURE_CACHE", "true")
     monkeypatch.setattr(fd, "_vision_provider", lambda: object())
-    monkeypatch.setattr(fd, "_render_page_png", lambda path, page, px: b"\x89PNG-bytes")
+    monkeypatch.setattr(fd, "_render_page_png", lambda path, page, px, num=None: b"\x89PNG-bytes")
     caps = fd._figure_captions(_PARSED)
     cache = {fd._cache_key(b"\x89PNG-bytes", c["caption"]): f"cached desc for fig {c['num']}" for c in caps}
     monkeypatch.setattr(fd, "_load_cache", lambda: cache)

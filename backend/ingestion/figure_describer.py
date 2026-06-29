@@ -143,16 +143,61 @@ def _reference_text(parsed: Dict[str, Any], num: str, limit: int = _REFERENCE_CH
     return " ".join(out)[:limit]
 
 
-def _render_page_png(pdf_path: Path, page_no: int, max_px: int) -> Optional[bytes]:
-    """Render one page (1-indexed) to PNG bytes, scaled so the longest side is ~max_px. None on error."""
+def _figure_region(page, num: str):
+    """Bounding box of the figure for 'Figure N' — the visual content ABOVE its caption (the norm),
+    found from the page's block layout (pdffigures2-style, no ML). Returns a fitz.Rect, or None when it
+    can't be located confidently so the caller renders the whole page (fail-safe: never a wrong crop)."""
+    import fitz
+    try:
+        blocks = page.get_text("dict").get("blocks", [])
+    except Exception:
+        return None
+    capre = re.compile(rf"^\s*(?:figure|fig)\.?\s*{re.escape(str(num))}\b", re.I)
+    cap = None
+    for b in blocks:
+        if b.get("type") != 0:                              # 0 = text block
+            continue
+        txt = "".join(s.get("text", "") for ln in b.get("lines", []) for s in ln.get("spans", []))
+        if capre.match(txt.strip()):
+            cap = fitz.Rect(b["bbox"])
+            break
+    if cap is None:                                         # caption not its own block (flattened) -> whole page
+        return None
+    ph = page.rect.height
+    vis = [fitz.Rect(b["bbox"]) for b in blocks if b.get("type") == 1]   # embedded images
+    try:
+        for dr in page.get_drawings():                      # vector graphics (plots/diagrams)
+            r = dr.get("rect")
+            if r and r.width > 24 and r.height > 24:
+                vis.append(fitz.Rect(r))
+    except Exception:
+        pass
+    above = [r for r in vis if r.y1 <= cap.y0 + 4 and 0 < (cap.y0 - r.y0) < ph * 0.78
+             and r.height > 30 and r.width > 40]
+    if not above:
+        return None
+    x0 = min(r.x0 for r in above)
+    y0 = min(r.y0 for r in above)
+    x1 = max(r.x1 for r in above)
+    fig = fitz.Rect(x0, y0, x1, cap.y1) + (-8, -8, 8, 8)    # include the caption + small padding
+    if fig.width < page.rect.width * 0.15 or fig.height < ph * 0.08:
+        return None                                         # implausibly small -> whole page
+    return fig & page.rect
+
+
+def _render_page_png(pdf_path: Path, page_no: int, max_px: int, num: Optional[str] = None) -> Optional[bytes]:
+    """Render the figure to PNG, scaled so the longest side is ~max_px. When `num` is given, CROP to the
+    figure's region for a clean focused image (falls back to the whole page if the region isn't found
+    confidently). None on error."""
     try:
         import fitz
         doc = fitz.open(pdf_path)
         try:
             page = doc[page_no - 1]
-            longest = max(page.rect.width, page.rect.height, 1.0)
-            scale = min(max_px / longest, 2.0)
-            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale))
+            clip = _figure_region(page, num) if num is not None else None
+            box = clip or page.rect
+            scale = min(max_px / max(box.width, box.height, 1.0), 2.0)
+            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip)
             return pix.tobytes("png")
         finally:
             doc.close()
@@ -233,7 +278,7 @@ def figure_chunks(pdf_path: Path, parsed: Dict[str, Any]) -> List[Dict[str, Any]
     out: List[Dict[str, Any]] = []
     max_px = _render_max_px()
     for cap in captions:
-        png = _render_page_png(Path(pdf_path), cap["page"], max_px)
+        png = _render_page_png(Path(pdf_path), cap["page"], max_px, cap["num"])
         if not png:
             continue
         key = _cache_key(png, cap["caption"])
