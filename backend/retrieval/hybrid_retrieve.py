@@ -64,7 +64,10 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-base")
+# Default to the strong v2-m3 cross-encoder (the model actually shipped/on disk). The old default
+# "bge-reranker-base" was removed, so without this a missing RERANKER_MODEL in .env would fail to load
+# and silently degrade retrieval to the weak lexical fallback.
+RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 RRF_K = int(os.getenv("RRF_K", "60"))
 MMR_LAMBDA = float(os.getenv("MMR_LAMBDA", "0.7"))
