@@ -1,19 +1,20 @@
 """figure_describer.py — production figure understanding (ENABLE_FIGURE_UNDERSTANDING, default OFF).
 
-A text-only RAG can't read charts/figures, only their captions. When enabled, each figure is rendered
-and described by a MULTIMODAL LLM (FIGURE_MODEL, e.g. gemini-2.5-flash or pixtral-large-latest), and the
-description is stored as a searchable 'figure' chunk embedded like any text.
+A text-only RAG can't read charts/figures, only captions. When enabled, each figure is cropped to its
+region and described by a DEDICATED, SELF-HOSTED vision model — default Qwen2-VL-2B (native transformers,
+no remote-code fragility, ~4.8 GB VRAM so it fits a 6 GB card, free, no API/quota). The description is
+stored as a searchable 'figure' chunk and embedded like any text.
 
-Built for cost + quality (premium-production):
-  - DESCRIBE-ONCE CACHE: descriptions are cached on disk keyed by a content hash of (rendered image +
-    caption). A figure is sent to the LLM at most ONCE, ever — re-ingests / re-indexes reuse the cache
-    for $0. This is what makes the recurring cost go away (the call is paid once, not every run).
-  - GROUNDED PROMPT: the model gets the image PLUS the caption PLUS the paper's own sentences that
-    reference that figure, so the description is accurate and doesn't invent values.
-  - RATE-LIMIT RESILIENT: per-figure timeout + retry-with-backoff on 429, so a run reaches full coverage
-    instead of silently skipping figures.
-  - FAIL-SAFE + BOUNDED: any unrecoverable error skips that figure (paper still indexes); capped per
-    paper; never raises into ingestion.
+Pipeline (premium-production, all local + free):
+  - CROP to the figure region (PyMuPDF block layout, pdffigures2-style) -> a clean focused image.
+  - DESCRIBE-ONCE CACHE: cached on disk by content hash of (cropped image + caption); each figure hits
+    the model at most ONCE ever, so re-ingests / re-indexes are free.
+  - GROUNDED PROMPT: the model gets the image + caption + the paper's own sentences about that figure.
+  - FAIL-SAFE: model can't load (e.g. GPU busy) / any error -> that figure is skipped (paper still
+    indexes). Run figure description as a batch job when the GPU is free (the cache makes it one-time).
+
+`FIGURE_BACKEND=local` (default) uses the local VLM; `=llm` uses a cloud multimodal provider
+(FIGURE_MODEL) for those who prefer it. Both share the crop + cache + grounding.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -46,12 +48,12 @@ def enabled() -> bool:
         "1", "true", "yes", "on")
 
 
+def _backend() -> str:
+    return (os.getenv("FIGURE_BACKEND", "local") or "local").strip().lower()
+
+
 def _cache_enabled() -> bool:
     return (os.getenv("FIGURE_CACHE", "true") or "true").strip().lower() not in ("0", "false", "no", "off")
-
-
-def _model() -> str:
-    return (os.getenv("FIGURE_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash").strip()
 
 
 def _max_figures() -> int:
@@ -68,8 +70,32 @@ def _render_max_px() -> int:
         return 1100
 
 
+# ---- local VLM (default backend) ----
+def _vlm_model_id() -> str:
+    return (os.getenv("FIGURE_VLM_MODEL", "Qwen/Qwen2-VL-2B-Instruct") or "Qwen/Qwen2-VL-2B-Instruct").strip()
+
+
+def _vlm_max_pixels() -> int:
+    """Cap on vision tokens (px) — bounds VRAM so a 2B VLM fits a 6 GB card."""
+    try:
+        return max(64 * 28 * 28, int(os.getenv("FIGURE_VLM_MAX_PIXELS", str(900 * 28 * 28))))
+    except (TypeError, ValueError):
+        return 900 * 28 * 28
+
+
+def _vlm_max_tokens() -> int:
+    try:
+        return max(64, int(os.getenv("FIGURE_VLM_MAX_TOKENS", "220")))
+    except (TypeError, ValueError):
+        return 220
+
+
+# ---- cloud LLM (optional backend) ----
+def _model() -> str:
+    return (os.getenv("FIGURE_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash").strip()
+
+
 def _describe_timeout() -> float:
-    """Hard per-attempt timeout (s) so one stalled request can't hang ingest."""
     try:
         return max(5.0, float(os.getenv("FIGURE_DESCRIBE_TIMEOUT", "45")))
     except (TypeError, ValueError):
@@ -77,7 +103,6 @@ def _describe_timeout() -> float:
 
 
 def _max_retries() -> int:
-    """Retries on a rate-limit (429) before giving up on a figure (skipped, retried on a later run)."""
     try:
         return max(0, int(os.getenv("FIGURE_DESCRIBE_RETRIES", "4")))
     except (TypeError, ValueError):
@@ -85,7 +110,7 @@ def _max_retries() -> int:
 
 
 # ---------------------------------------------------------------------------
-# Describe-once cache (disk)
+# Describe-once cache
 # ---------------------------------------------------------------------------
 def _cache_key(png: bytes, caption: str) -> str:
     h = hashlib.sha256()
@@ -111,11 +136,9 @@ def _save_cache(cache: Dict[str, str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Captions, reference text, rendering
+# Captions, reference text, region crop, render
 # ---------------------------------------------------------------------------
 def _figure_captions(parsed: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """[{page, num, caption}] for each distinct 'Figure N: ...' caption (scans full page text, so it
-    survives PyMuPDF flattening the caption into a paragraph line)."""
     seen = set()
     out: List[Dict[str, Any]] = []
     for p in parsed.get("pages", []):
@@ -131,7 +154,6 @@ def _figure_captions(parsed: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _reference_text(parsed: Dict[str, Any], num: str, limit: int = _REFERENCE_CHARS) -> str:
-    """The paper's own sentences that mention 'Figure N' — authoritative context to ground the model."""
     pat = re.compile(rf"\b(?:figure|fig)\.?\s*{re.escape(num)}\b", re.I)
     out: List[str] = []
     for p in parsed.get("pages", []):
@@ -144,9 +166,8 @@ def _reference_text(parsed: Dict[str, Any], num: str, limit: int = _REFERENCE_CH
 
 
 def _figure_region(page, num: str):
-    """Bounding box of the figure for 'Figure N' — the visual content ABOVE its caption (the norm),
-    found from the page's block layout (pdffigures2-style, no ML). Returns a fitz.Rect, or None when it
-    can't be located confidently so the caller renders the whole page (fail-safe: never a wrong crop)."""
+    """Bounding box of the figure for 'Figure N' (visual content above its caption), from the page's
+    block layout. None when it can't be located confidently (caller renders the whole page)."""
     import fitz
     try:
         blocks = page.get_text("dict").get("blocks", [])
@@ -155,18 +176,18 @@ def _figure_region(page, num: str):
     capre = re.compile(rf"^\s*(?:figure|fig)\.?\s*{re.escape(str(num))}\b", re.I)
     cap = None
     for b in blocks:
-        if b.get("type") != 0:                              # 0 = text block
+        if b.get("type") != 0:
             continue
         txt = "".join(s.get("text", "") for ln in b.get("lines", []) for s in ln.get("spans", []))
         if capre.match(txt.strip()):
             cap = fitz.Rect(b["bbox"])
             break
-    if cap is None:                                         # caption not its own block (flattened) -> whole page
+    if cap is None:
         return None
     ph = page.rect.height
-    vis = [fitz.Rect(b["bbox"]) for b in blocks if b.get("type") == 1]   # embedded images
+    vis = [fitz.Rect(b["bbox"]) for b in blocks if b.get("type") == 1]
     try:
-        for dr in page.get_drawings():                      # vector graphics (plots/diagrams)
+        for dr in page.get_drawings():
             r = dr.get("rect")
             if r and r.width > 24 and r.height > 24:
                 vis.append(fitz.Rect(r))
@@ -179,16 +200,13 @@ def _figure_region(page, num: str):
     x0 = min(r.x0 for r in above)
     y0 = min(r.y0 for r in above)
     x1 = max(r.x1 for r in above)
-    fig = fitz.Rect(x0, y0, x1, cap.y1) + (-8, -8, 8, 8)    # include the caption + small padding
+    fig = fitz.Rect(x0, y0, x1, cap.y1) + (-8, -8, 8, 8)
     if fig.width < page.rect.width * 0.15 or fig.height < ph * 0.08:
-        return None                                         # implausibly small -> whole page
+        return None
     return fig & page.rect
 
 
 def _render_page_png(pdf_path: Path, page_no: int, max_px: int, num: Optional[str] = None) -> Optional[bytes]:
-    """Render the figure to PNG, scaled so the longest side is ~max_px. When `num` is given, CROP to the
-    figure's region for a clean focused image (falls back to the whole page if the region isn't found
-    confidently). None on error."""
     try:
         import fitz
         doc = fitz.open(pdf_path)
@@ -206,7 +224,72 @@ def _render_page_png(pdf_path: Path, page_no: int, max_px: int, num: Optional[st
 
 
 # ---------------------------------------------------------------------------
-# Vision describe (grounded + retrying)
+# Prompt
+# ---------------------------------------------------------------------------
+def _build_prompt(caption: str, reference: str) -> str:
+    p = f"Caption: {caption}\n" if caption else ""
+    if reference:
+        p += f"What the paper's text says about this figure: {reference}\n"
+    p += ("Describe the figure this caption refers to: what it shows, the axes/variables, the main trend "
+          "or comparison, and any specific values. Be concise and factual; do not invent values.")
+    return p
+
+
+# ---------------------------------------------------------------------------
+# Backend: local VLM (Qwen2-VL by default)
+# ---------------------------------------------------------------------------
+_VLM = None
+_VLM_TRIED = False
+_VLM_LOCK = threading.Lock()
+
+
+def _local_vlm():
+    """Load the local vision model ONCE (cached). Returns (model, processor, device) or None on failure
+    (e.g. GPU out of memory because the server holds it) so the caller fails safe."""
+    global _VLM, _VLM_TRIED
+    with _VLM_LOCK:
+        if _VLM_TRIED:
+            return _VLM
+        _VLM_TRIED = True
+        try:
+            import torch
+            from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+            dev = "cuda" if torch.cuda.is_available() else "cpu"
+            dtype = torch.float16 if dev == "cuda" else torch.float32
+            model = Qwen2VLForConditionalGeneration.from_pretrained(_vlm_model_id(), torch_dtype=dtype).to(dev).eval()
+            proc = AutoProcessor.from_pretrained(_vlm_model_id(),
+                                                 min_pixels=256 * 28 * 28, max_pixels=_vlm_max_pixels())
+            _VLM = (model, proc, dev)
+        except Exception:
+            _VLM = None
+        return _VLM
+
+
+def _describe_local(caption: str, reference: str, png: bytes) -> str:
+    """Describe a figure with the local VLM. '' on any error (fail-safe)."""
+    vlm = _local_vlm()
+    if vlm is None:
+        return ""
+    model, proc, dev = vlm
+    try:
+        import io
+        import torch
+        from PIL import Image
+        img = Image.open(io.BytesIO(png)).convert("RGB")
+        messages = [{"role": "user", "content": [{"type": "image"},
+                                                 {"type": "text", "text": _SYSTEM + "\n\n" + _build_prompt(caption, reference)}]}]
+        text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = proc(text=[text], images=[img], padding=True, return_tensors="pt").to(dev)
+        with torch.no_grad():
+            out = model.generate(**inputs, max_new_tokens=_vlm_max_tokens(), do_sample=False)
+        gen = [o[len(i):] for i, o in zip(inputs.input_ids, out)]
+        return " ".join(proc.batch_decode(gen, skip_special_tokens=True)[0].split()).strip()
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Backend: cloud LLM (optional, FIGURE_BACKEND=llm)
 # ---------------------------------------------------------------------------
 def _is_rate_limit(exc: Exception) -> bool:
     msg = str(exc).lower()
@@ -214,18 +297,12 @@ def _is_rate_limit(exc: Exception) -> bool:
             or "429" in msg or "rate limit" in msg or "quota" in msg or "resource_exhausted" in msg)
 
 
-def _describe(provider: Any, caption: str, reference: str, png: bytes) -> str:
-    """Describe the figure from the image + caption + the paper's reference sentences. Retries on a
-    rate-limit with backoff; '' on timeout / non-retryable error / exhausted retries (fail-safe)."""
+def _describe_llm(provider: Any, caption: str, reference: str, png: bytes) -> str:
     b64 = base64.b64encode(png).decode("ascii")
-    prompt = f"Caption: {caption}\n"
-    if reference:
-        prompt += f"What the paper's text says about this figure: {reference}\n"
-    prompt += "Describe the figure this caption refers to."
     messages = [{
         "role": "user",
         "content": [
-            {"type": "text", "text": prompt},
+            {"type": "text", "text": _build_prompt(caption, reference)},
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
         ],
     }]
@@ -248,7 +325,6 @@ def _describe(provider: Any, caption: str, reference: str, png: bytes) -> str:
 
 
 def _vision_provider():
-    """A multimodal provider for FIGURE_MODEL, or None if unavailable (no key / text-only model)."""
     try:
         from backend.llm.streaming_provider import get_provider
         provider = get_provider(_model())
@@ -259,16 +335,20 @@ def _vision_provider():
     return provider
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 def figure_chunks(pdf_path: Path, parsed: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Describe each figure (cache-first, grounded) and return them as 'figure' chunks. Returns [] when
-    disabled / no vision provider / no figures / on any error — never raises."""
+    """Describe each figure (crop -> cache-first -> local VLM, grounded) and return 'figure' chunks.
+    Returns [] when disabled / backend unavailable / no figures / on any error — never raises."""
     if not enabled():
         return []
     captions = _figure_captions(parsed)[:_max_figures()]
     if not captions:
         return []
-    provider = _vision_provider()
-    if provider is None:
+    backend = _backend()
+    provider = _vision_provider() if backend == "llm" else None
+    if backend == "llm" and provider is None:
         return []
     from backend.ingestion.document_chunker import make_chunk
 
@@ -283,9 +363,12 @@ def figure_chunks(pdf_path: Path, parsed: Dict[str, Any]) -> List[Dict[str, Any]
             continue
         key = _cache_key(png, cap["caption"])
         desc = cache.get(key) if _cache_enabled() else None
-        if not desc:                                       # cache miss -> the (paid) LLM call, once
+        if not desc:
             reference = _reference_text(parsed, cap["num"])
-            desc = _describe(provider, cap["caption"], reference, png)
+            if backend == "llm":
+                desc = _describe_llm(provider, cap["caption"], reference, png)
+            else:
+                desc = _describe_local(cap["caption"], reference, png)
             if desc and _cache_enabled():
                 cache[key] = desc
                 dirty = True
