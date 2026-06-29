@@ -10,6 +10,7 @@ from tqdm import tqdm
 from backend.ingestion.pdf_parser import parse_pdf, force_cpu_parsing
 from backend.ingestion.document_chunker import chunk_parsed_document
 from backend.ingestion.contextualizer import contextualize_chunks
+from backend.ingestion.figure_describer import figure_chunks
 
 load_dotenv()
 
@@ -225,6 +226,10 @@ def main():
             parsed = parse_pdf(pdf_path)
             parse_secs = time.time() - t0
             chunks = chunk_parsed_document(parsed)
+
+            # Figure understanding (opt-in): describe each figure with the multimodal LLM and add the
+            # descriptions as searchable 'figure' chunks. [] when disabled / no vision provider / error.
+            chunks = chunks + figure_chunks(pdf_path, parsed)
 
             # Contextual Retrieval: one situating sentence per chunk (cached; "" if disabled/LLM fails).
             contexts = contextualize_chunks(full_document_text(parsed), chunks)
