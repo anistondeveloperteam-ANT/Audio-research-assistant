@@ -49,6 +49,9 @@ CHUNK_MAX_CHARS = int(os.getenv("CHUNK_MAX_CHARS", "1800"))
 CHUNK_OVERLAP_SENTENCES = int(os.getenv("CHUNK_OVERLAP_SENTENCES", "2"))
 MIN_SENTENCE_CHARS = int(os.getenv("MIN_SENTENCE_CHARS", "10"))
 MIN_CHUNK_CHARS = int(os.getenv("MIN_CHUNK_CHARS", "150"))
+# bge-large embeds at most ~512 tokens (~2000 chars); a bigger table chunk gets silently truncated, so
+# the tail of a large table never enters the vector. Split long tables into header-preserving row groups.
+TABLE_CHUNK_MAX_CHARS = int(os.getenv("TABLE_CHUNK_MAX_CHARS", "1600"))
 
 
 SECTION_PATTERNS = [
@@ -183,31 +186,38 @@ def detect_concepts(text: str):
 
 
 def has_equation(text: str) -> int:
-    low = text.lower()
-    markers = [
-        "=", "argmin", "arg max", "\\sum", "\\frac", "\\int", "\\prod",
-        "covariance", "matrix", "vector", "subject to", "constraint",
-        "trace", "inverse", "hermitian", "transpose", "eigen",
-    ]
-    if re.search(r"\(\d+(\.\d+)?\)\s*$", text, re.MULTILINE):
+    """A real equation — a numbered equation tag like '(3)' at a line end, or LaTeX/math operators.
+    NOT the mere presence of '=' or common words like 'matrix'/'vector', which appear throughout prose
+    and previously over-tagged ordinary text as equations."""
+    if re.search(r"\(\d+(?:\.\d+)?\)\s*$", text, re.MULTILINE):
         return 1
-    return int(any(m.lower() in low for m in markers))
+    low = text.lower()
+    math_markers = ["\\sum", "\\frac", "\\int", "\\prod", "\\nabla", "\\partial",
+                    "\\alpha", "\\beta", "\\theta", "argmin", "arg min", "argmax", "arg max"]
+    return int(any(m in low for m in math_markers))
 
 
 def has_table(text: str) -> int:
-    if "|" in text and text.count("|") >= 4:
+    """A real table — a pipe/markdown grid or a numeric tabular block — NOT merely the word 'table' or
+    a metric name (PESQ/SNR/…) mentioned in prose, which previously tagged ~1/3 of ALL chunks as tables
+    and made the retrieval chunk-type boost misfire."""
+    if text.count("|") >= 8:                       # markdown/pipe grid: >= ~2 rows x several columns
         return 1
-    low = text.lower()
-    markers = ["table", "dataset", "pesq", "stoi", "sdr", "snr",
-               "latency", "macs", "parameters", "flops"]
-    return int(any(m in low for m in markers))
+    numeric_rows = sum(1 for ln in text.splitlines()
+                       if len(ln) < 120 and len(re.findall(r"\b\d+(?:\.\d+)?\b", ln)) >= 4)
+    return 1 if numeric_rows >= 3 else 0           # a dense numeric block (results grid as text)
 
 
 def has_algorithm(text: str) -> int:
+    """A real algorithm/pseudocode block — an 'Algorithm N' header, the word 'pseudocode', or paired
+    Input:/Output: markers. NOT common words like 'training'/'inference'/'procedure' in prose. (Genuine
+    'Algorithm N:' blocks are also force-tagged separately by extract_algorithm_blocks.)"""
     low = text.lower()
-    markers = ["algorithm", "input:", "output:", "initialize",
-               "training", "inference", "step ", "procedure"]
-    return int(any(m in low for m in markers))
+    if re.search(r"\balgorithm\s+\d+", low):
+        return 1
+    if "pseudocode" in low:
+        return 1
+    return int("input:" in low and "output:" in low)
 
 
 def classify_chunk(text: str):
@@ -391,6 +401,36 @@ def extract_algorithm_blocks(text: str, page_start: int, page_end: int, parser: 
     return blocks
 
 
+def _split_markdown_table(md: str, max_chars: int = TABLE_CHUNK_MAX_CHARS) -> list:
+    """Split a long markdown table into row groups that each fit the embedder's window, repeating the
+    header row(s) in every group so each piece stays self-describing. Short tables pass through as one."""
+    md = (md or "").strip()
+    if len(md) <= max_chars:
+        return [md] if md else []
+    lines = md.split("\n")
+    header, body_start = [], 0
+    if lines and "|" in lines[0]:
+        header.append(lines[0])
+        body_start = 1
+        # a markdown separator row is only |, -, :, space -> keep it as part of the header
+        if len(lines) > 1 and set(lines[1].replace("|", "").replace("-", "").replace(":", "").strip()) == set():
+            header.append(lines[1])
+            body_start = 2
+    head_len = sum(len(line) + 1 for line in header)
+    groups, cur, cur_len = [], list(header), head_len
+    for line in lines[body_start:]:
+        if len(line) > max_chars:                   # a single giant row can't be split by rows
+            line = line[:max_chars]                 # hard-cap it so no chunk exceeds the embed window
+        if cur_len + len(line) + 1 > max_chars and len(cur) > len(header):
+            groups.append("\n".join(cur))
+            cur, cur_len = list(header), head_len
+        cur.append(line)
+        cur_len += len(line) + 1
+    if len(cur) > len(header):
+        groups.append("\n".join(cur))
+    return groups or [md]
+
+
 # ======================================================================
 # Main entry point
 # ======================================================================
@@ -449,9 +489,11 @@ def chunk_parsed_document(parsed):
         if section_buffer:
             flush()
 
-    # Parser-level extracted tables / equations (kept from original)
+    # Parser-level extracted tables / equations (kept from original). Long tables are split into
+    # header-preserving row groups so each piece fits the embedder's window (no silent truncation).
     for table in parsed.get("tables", []):
-        all_chunks.append(make_chunk(table, "Table", 1, page_count, parser=parser))
+        for part in _split_markdown_table(table):
+            all_chunks.append(make_chunk(part, "Table", 1, page_count, parser=parser))
     for equation in parsed.get("equations", []):
         all_chunks.append(make_chunk(equation, "Equation", 1, page_count, parser=parser))
 
