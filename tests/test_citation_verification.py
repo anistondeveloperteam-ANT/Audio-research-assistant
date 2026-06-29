@@ -22,6 +22,16 @@ def _enable(monkeypatch):
     monkeypatch.setenv("CITATION_VERIFICATION", "true")     # conftest disables it suite-wide
 
 
+def test_has_fabricated_flags_only_fabricated_removals():
+    # A FABRICATED (provably-bogus) cited source means a hallucinated reference -> answer is NOT verified.
+    assert cv.has_fabricated([(3, "fabricated")]) is True
+    assert cv.has_fabricated([(2, "misattributed"), (5, "fabricated")]) is True
+    # Misattributed-only (source exists, content sound, wrong citation dropped) does NOT flip verified.
+    assert cv.has_fabricated([(2, "misattributed")]) is False
+    assert cv.has_fabricated([]) is False
+    assert cv.has_fabricated(None) is False
+
+
 class _Provider:
     """Fake LLM support-judge: returns a fixed {"supported": [[claim_no, source_no], ...]} verdict."""
     is_available = True

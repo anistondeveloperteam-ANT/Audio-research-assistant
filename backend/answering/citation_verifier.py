@@ -68,6 +68,15 @@ def enabled() -> bool:
     return os.getenv("CITATION_VERIFICATION", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
+def has_fabricated(removed: List[Tuple[int, str]]) -> bool:
+    """True if the gate removed a FABRICATED citation (a provably-bogus DOI/arXiv id that a definitive
+    index lookup failed). A fabricated source is hard evidence of a hallucinated reference, so an answer
+    that cited one must NOT be labeled or cached as 'verified' — even if the holistic verifier passed it
+    before the gate ran. (Misattributed removals are softer: the source exists, the content was judged
+    sound, only the wrong citation was dropped — those do not flip the verified status.)"""
+    return any(reason == "fabricated" for _n, reason in (removed or []))
+
+
 def _lookup_workers() -> int:
     try:
         return max(1, min(8, int(os.getenv("CITATION_LOOKUP_WORKERS", "4"))))

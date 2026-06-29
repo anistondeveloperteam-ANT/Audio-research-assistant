@@ -1137,6 +1137,12 @@
         const span = document.createElement("span"); span.textContent = ev.message || "Low confidence."; w.appendChild(span);
         h.md.insertAdjacentElement("afterend", w); break;
       }
+      case "citation_warning": {
+        const n = (ev.removed || []).length, reasons = ev.reasons || [];
+        if (reasons.includes("fabricated")) toast("Removed a citation to a source that couldn't be verified to exist.", "warn");
+        else if (n) toast(`Removed ${n} citation${n === 1 ? "" : "s"} that didn't support the claim.`, "warn");
+        break;
+      }
       case "done": if (ev.cached) { h._cached = true; h._cachedPct = ev.similarity || 0; } break;
     }
   }

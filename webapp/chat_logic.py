@@ -2334,10 +2334,11 @@ def stream_chat_events(
         # drives the source panel AND what is saved + cached below, so a wrong citation never reaches the
         # user even on a cache replay.
         answer, _cv_removed = _citeverify.verify_citations(provider, answer=answer, sources=sources)
+        _cv_fabricated = _citeverify.has_fabricated(_cv_removed)
         if _cv_removed:
             logger.info("citation gate dropped %d citation(s): %s", len(_cv_removed), _cv_removed)
             yield {"type": "citation_warning", "removed": sorted({n for n, _ in _cv_removed}),
-                   "n_sources": full_n}
+                   "reasons": sorted({reason for _n, reason in _cv_removed}), "n_sources": full_n}
         # Show only the sources that JUSTIFY the answer (the ones it cited): a maths question no
         # longer lists biology hits the search happened to return. Kept sources keep their original
         # number so [n] still resolves; falls back to all when nothing was cited.
@@ -2352,6 +2353,11 @@ def stream_chat_events(
         # exception, the agentic answer passed verification AND its code didn't fail, and
         # the answer wasn't rewritten post-verification. Cache the clean body (no footers).
         dep_verified = (not agentic_loop_enabled()) or (verification_passed(verdict) and not loop_run_failed)
+        # The holistic verifier ran BEFORE the citation gate, so its verdict is stale if the gate then
+        # removed a FABRICATED (provably-bogus) cited source — a hallucinated reference. Such an answer
+        # must not be labeled or cached as 'verified', regardless of the pre-gate score.
+        if _cv_fabricated:
+            dep_verified = False
         # SELF-CONSISTENT != VERIFIED: confirm by an INDEPENDENT route (re-derive + unit / magnitude /
         # limiting-case sanity) before trusting or caching as verified. A disagreement -> honest confidence.
         ind_check: Dict[str, Any] = {"agrees": None}
