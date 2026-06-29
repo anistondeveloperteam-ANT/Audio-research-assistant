@@ -35,9 +35,13 @@ oracledb==4.0.0
 turbovec==0.7.0
 
 # --- PDF reading / parsing ---
-docling==2.93.0          # primary parser (best quality: layout, tables, structure)
-PyMuPDF==1.27.2.3        # fast fallback parser
+docling==2.93.0          # heavy ML parser (opt-in: ENABLE_DOCLING=true); PyMuPDF is the default
+PyMuPDF==1.27.2.3        # default parser: fast text + find_tables() clean tables (no ML/GPU)
 pypdf==6.11.0
+
+# --- Optional semantic chunking (SEMANTIC_CHUNKER=true): topic-coherent chunk boundaries ---
+chonkie==1.6.8           # SemanticChunker; Model2Vec embedder is CPU-only (no GPU, no torch inference)
+model2vec==0.8.2         # tiny static embeddings used by the semantic chunker
 
 # --- Chat model client (openai SDK powers OpenRouter; Ollama uses HTTP/requests) ---
 openai==1.109.1

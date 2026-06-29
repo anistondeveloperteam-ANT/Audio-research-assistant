@@ -41,6 +41,8 @@ import os
 import re
 from dotenv import load_dotenv
 
+from backend.ingestion.semantic_chunker import semantic_split
+
 load_dotenv()
 
 CHUNK_MAX_CHARS = int(os.getenv("CHUNK_MAX_CHARS", "1800"))
@@ -234,6 +236,15 @@ def make_chunk(text, section, page_start, page_end, parser="unknown"):
 
 
 def chunk_text(text: str, section="Unknown", page_start=1, page_end=1, parser="unknown"):
+    # Topic-coherent split (SEMANTIC_CHUNKER=true) — boundaries follow meaning, not a fixed char
+    # budget. Returns None when off/unavailable, so we fall through to the legacy packer below.
+    segments = semantic_split(text)
+    if segments:
+        out = [make_chunk(seg, section, page_start, page_end, parser)
+               for seg in segments if len(seg) >= MIN_CHUNK_CHARS]
+        if out:
+            return out
+
     sentences = split_sentences(text)
     chunks = []
     current = []
