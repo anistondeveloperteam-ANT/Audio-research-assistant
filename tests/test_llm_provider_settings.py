@@ -26,6 +26,17 @@ def test_each_catalog_model_routes_to_its_own_base():
     assert route_model("gpt-5.5")[0] == "https://api.openai.com/v1"
 
 
+def test_unlisted_models_route_by_vendor_prefix():
+    # Pixtral (Mistral's VISION model, used for figure understanding) isn't in the catalog, but must
+    # hit the Mistral endpoint -- not fall through to OpenAI as it did before.
+    assert route_model("pixtral-large-latest")[0] == "https://api.mistral.ai/v1"
+    assert route_model("pixtral-12b-latest")[0] == "https://api.mistral.ai/v1"
+    assert route_model("ministral-8b-latest")[0] == "https://api.mistral.ai/v1"
+    # gemini-prefixed unknown -> gemini; a truly unknown model still falls back to openai
+    assert route_model("gemini-9-ultra")[0].startswith("https://generativelanguage.googleapis.com")
+    assert route_model("some-unknown-model")[0] == "https://api.openai.com/v1"
+
+
 def test_get_provider_is_openai(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENAI_MODEL", "gemini-2.5-flash")

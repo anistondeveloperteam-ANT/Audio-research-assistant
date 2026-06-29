@@ -56,8 +56,15 @@ def route_model(model: str):
     endpoint + key by the model's provider in CATALOG (with a sensible fallback)."""
     m = (model or "").strip()
     prov = _MODEL_PROVIDER.get(m)
-    if prov is None:                       # unlisted model: best-effort guess
-        prov = "gemini" if m.lower().startswith("gemini") else "openai"
+    if prov is None:                       # unlisted model: route by vendor prefix
+        ml = m.lower()
+        if ml.startswith("gemini"):
+            prov = "gemini"
+        elif ml.startswith(("pixtral", "mistral", "codestral", "ministral", "magistral",
+                             "open-mistral", "open-mixtral")):
+            prov = "mistral"               # incl. Pixtral (Mistral's VISION model) for figure understanding
+        else:
+            prov = "openai"
     base, key_env = PROVIDERS[prov]
     key = os.getenv(key_env, "")
     if prov == "gemini" and not key:
