@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -329,6 +330,67 @@ def _run_named_tunnel(cf: str, token: str, uv: "subprocess.Popen") -> int:
 
 
 # ----------------------------------------------------------------------
+# Server launch -- isolated from a stray startup Ctrl+C
+# ----------------------------------------------------------------------
+# A spurious console Ctrl+C delivered in the first moments after launch was tearing the freshly
+# started server down on its own ("Application startup complete" -> "Shutting down" with nothing
+# typed) -- e.g. when PowerShell drops into a ">>" continuation and Ctrl+C is used to escape it, the
+# signal reaches the just-started uvicorn. We launch uvicorn in its OWN process group so the
+# console's Ctrl+C never reaches it, and ignore a single stray Ctrl+C in this wrapper during a short
+# grace window. A deliberate Ctrl+C a moment later still stops the server cleanly.
+STARTUP_GRACE_SECONDS = 3.0
+
+
+def _run_server(cmd: list[str], cwd: str) -> int:
+    """Run uvicorn as a child isolated from a stray startup Ctrl+C, keeping Ctrl+C-to-stop working."""
+    popen_kwargs: dict = {"cwd": cwd}
+    if os.name == "nt":
+        # New process group: the console's CTRL_C_EVENT is NOT delivered to the child, so a stray
+        # startup Ctrl+C can't shut uvicorn down. We stop it explicitly with CTRL_BREAK_EVENT, which
+        # uvicorn handles (SIGBREAK) as a graceful shutdown.
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True  # detach from the terminal's signal group
+
+    proc = subprocess.Popen(cmd, **popen_kwargs)
+    started = time.monotonic()
+    ignored_stray = False
+
+    def _stop() -> None:
+        try:
+            if os.name == "nt":
+                proc.send_signal(signal.CTRL_BREAK_EVENT)  # -> uvicorn graceful shutdown (SIGBREAK)
+            else:
+                proc.terminate()
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    while True:
+        try:
+            return proc.wait()
+        except KeyboardInterrupt:
+            if not ignored_stray and (time.monotonic() - started) < STARTUP_GRACE_SECONDS:
+                ignored_stray = True
+                print("  (ignored a stray Ctrl+C during startup -- the server is still running; "
+                      "press Ctrl+C to stop)")
+                continue
+            print("\nStopping the server...")
+            _stop()
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            print("Stopped.")
+            return 0
+
+
+# ----------------------------------------------------------------------
 def main() -> int:
     parser = argparse.ArgumentParser(description="Launch the Research Assistant web app.")
     parser.add_argument("--port", type=int, default=8600, help="Server port (default: 8600).")
@@ -369,12 +431,10 @@ def main() -> int:
 
     cmd = [sys.executable, "-m", "uvicorn", "webapp.server:app",
            "--host", host, "--port", str(args.port)]
-    # Run from the project root so `import backend.*` / `import webapp.*` resolve.
-    try:
-        return subprocess.call(cmd, cwd=str(ROOT))
-    except KeyboardInterrupt:
-        print("\nStopped.")
-        return 0
+    # Run from the project root so `import backend.*` / `import webapp.*` resolve. _run_server isolates
+    # uvicorn from a stray startup Ctrl+C (the "starts then immediately stops" bug) yet still stops
+    # cleanly on a real Ctrl+C.
+    return _run_server(cmd, str(ROOT))
 
 
 if __name__ == "__main__":

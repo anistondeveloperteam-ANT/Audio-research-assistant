@@ -143,7 +143,9 @@ def _stub_launch(monkeypatch):
     captured = {}
     monkeypatch.setattr(run, "ensure_port_free",
                         lambda port, host="127.0.0.1": captured.__setitem__("preflight_host", host) or True)
-    monkeypatch.setattr(run.subprocess, "call",
+    # main() launches uvicorn via _run_server (which isolates the child + handles a stray Ctrl+C);
+    # stub it so the test stops before a real server spawns and we can inspect the uvicorn argv.
+    monkeypatch.setattr(run, "_run_server",
                         lambda cmd, cwd=None: captured.__setitem__("cmd", cmd) or 0)
     monkeypatch.setattr(run, "_local_ip", lambda: "192.168.1.23")
     return captured
@@ -172,7 +174,7 @@ def test_main_returns_1_and_never_launches_when_port_unfree(monkeypatch):
     'startup complete' immediately followed by 'application shutdown'."""
     launched = []
     monkeypatch.setattr(run, "ensure_port_free", lambda port, host="127.0.0.1": False)
-    monkeypatch.setattr(run.subprocess, "call", lambda cmd, cwd=None: launched.append(cmd) or 0)
+    monkeypatch.setattr(run, "_run_server", lambda cmd, cwd=None: launched.append(cmd) or 0)
     monkeypatch.setattr(sys, "argv", ["run.py", "--lan"])
 
     assert run.main() == 1
