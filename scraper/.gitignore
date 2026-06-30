@@ -1,3 +1,0 @@
-# Downloaded PDFs are large and machine-local; keep the folder, ignore its contents.
-downloads/*
-!downloads/.gitkeep

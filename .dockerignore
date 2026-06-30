@@ -1,0 +1,66 @@
+# .dockerignore -- keep dev cruft, secrets, and machine-local data OUT of the deployed image.
+# Mirrors .gitignore intent but for `docker build`. The running web app needs only:
+#   backend/  webapp/  run.py  pipeline.py  requirements.txt  (deps installed at build time)
+# Everything below is excluded so the image stays small and never bakes in secrets or local data.
+
+# ---- Git / CI ----
+.git
+.gitignore
+.gitattributes
+.github
+
+# ---- Python caches / build artifacts ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ---- Virtual environments (deps come from requirements.txt during the build) ----
+.venv/
+venv/
+env/
+
+# ---- Secrets: provide via runtime env / mounted secrets, NEVER bake into the image ----
+.env
+.env.*
+!.env.example
+
+# ---- Machine-local / runtime data: mount as a volume, do not ship in the image ----
+data/
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+conversations.db
+
+# ---- Dev-only tooling & tests (not used by the running web app) ----
+tests/
+scraper/
+scripts/
+.deepeval/
+.deepeval*
+.vscode/
+.claude/
+
+# ---- Docs (not needed at runtime); keep README in the image ----
+docs/
+*.md
+!README.md
+
+# ---- Editor / OS noise ----
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- Local backups / archives ----
+backups/
+archive/
+*.zip
+*.bak

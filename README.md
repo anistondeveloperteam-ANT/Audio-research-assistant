@@ -316,6 +316,8 @@ flowchart TD
 | **`backend/memory/`** | Conversations, facts, answer cache (SQLite) | `store.py` |
 | **`backend/auth/`** | Accounts, Google OAuth, password‑reset email | `users.py` |
 | **`backend/maintenance/`** | One‑shot factory reset (wipe all local data) | `factory_reset.py` |
+| **`backend/database/`** | Oracle schema/user setup + admin (create · migrate · status · reset) | `create_schema.py` · [docs/DEVELOP.md](docs/DEVELOP.md) |
+| **`scripts/`** | Operator CLIs — accounts, memory export/import, diagnostics | [docs/DEVELOP.md](docs/DEVELOP.md) |
 | **`tests/`** | Offline tests — Docker / LLM / network mocked | `test_*.py` |
 
 > 🧭 Deeper dives ([full docs index](docs/README.md)): **[docs/SYSTEM_GUIDE.md](docs/SYSTEM_GUIDE.md)** (the visual, plain‑English guide — tech, both workflows, platform comparison) · **[docs/PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md)** (the complete diagram-first pipeline guide, PDF-ready) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (architecture + code map) · [docs/TECH_STACK.md](docs/TECH_STACK.md) (technology) · [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) + [docs/MEASUREMENT.md](docs/MEASUREMENT.md) (measured accuracy/latency) · [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md).

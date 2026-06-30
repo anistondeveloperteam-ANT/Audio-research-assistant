@@ -2104,7 +2104,7 @@ def stream_chat_events(
                            "and revise the answer..."}
                     esc_items, esc_warnings, _esc_timed = _gather_pass(
                         queries, _gather_external_items,
-                        lambda i, qq: (_external_top_k() if i == 0 else _deep_subquery_top_k()),
+                        lambda i, _q: (_external_top_k() if i == 0 else _deep_subquery_top_k()),
                         trace=trace, span_name="external_search",
                         timeout=_rc.request_float("EXTERNAL_GATHER_TIMEOUT", 30.0) + 8.0)
                     for w in esc_warnings:
