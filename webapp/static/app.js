@@ -1406,25 +1406,11 @@
         const row = document.createElement("div");
         row.className = "model-opt" + (o.model === cur.model ? " sel" : "") + (o.available ? "" : " na");
         row.setAttribute("role", "option");
+        row.dataset.model = o.model;
         row.innerHTML = `<span>${esc(o.name || o.model)}${o.vendor ? `<small>${esc(o.vendor)}</small>` : ""}</span><svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>`;
         row.addEventListener("click", () => selectModel(o));
         menu.appendChild(row);
       });
-      // "Use any model" — type any model id (e.g. gemini-2.5-pro, gpt-5.5, pixtral-large-latest,
-      // an Ollama model). The backend routes it by vendor prefix and carries it per request.
-      const custom = document.createElement("div");
-      custom.className = "model-opt model-custom";
-      custom.innerHTML = `<input id="customModelInput" type="text" spellcheck="false" autocomplete="off" placeholder="Use any model id…"><button id="customModelGo" type="button">Use</button>`;
-      custom.addEventListener("click", (e) => e.stopPropagation());
-      const useCustom = () => {
-        const id = ($("customModelInput").value || "").trim();
-        if (id) selectModel({ provider: "openai", model: id, name: id, vendor: "Custom" });
-      };
-      custom.querySelector("#customModelGo").addEventListener("click", useCustom);
-      custom.querySelector("#customModelInput").addEventListener("keydown", (e) => {
-        if (e.key === "Enter") { e.preventDefault(); useCustom(); }
-      });
-      menu.appendChild(custom);
       _currentModel = cur.model || "";
       setModelText(curLabel || (cur.provider + " · " + cur.model), curVendor || cur.provider || "");
     } catch { setModelText("unavailable", ""); }
@@ -1435,11 +1421,13 @@
     try {
       const res = await api.setModel(o.provider, o.model);
       if (res.error) { toast(res.error, "error"); return; }
-      _currentModel = o.model;
+      _currentModel = o.model;                          // carried per request -> this is the live model
       setModelText(o.name || o.model, o.vendor || o.label || o.provider || "");
-      $("modelMenu").querySelectorAll(".model-opt").forEach((el) => el.classList.remove("sel"));
+      // Move the checkmark in place. We do NOT re-fetch /api/models: set_model persists to .env but
+      // (by design, for per-request concurrency) does not touch os.environ, so a refetch would read
+      // the stale boot default and snap the selection back. The picker tracks the client's choice.
+      $("modelMenu").querySelectorAll(".model-opt").forEach((el) => el.classList.toggle("sel", el.dataset.model === o.model));
       toast("Model switched to " + (res.model || o.model));
-      loadModels();
     } catch { toast("Could not switch model.", "error"); }
   }
 
