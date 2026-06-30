@@ -266,14 +266,16 @@ def _local_vlm():
 
 
 def _describe_local(caption: str, reference: str, png: bytes) -> str:
-    """Describe a figure with the local VLM. '' on any error (fail-safe)."""
+    """Describe a figure with the local VLM. '' on any error (fail-safe). Frees CUDA memory after EVERY
+    figure (success or failure) so memory can't accumulate across a long batch and degrade later figures
+    — the cause of caption-rich papers getting no descriptions mid-run."""
     vlm = _local_vlm()
     if vlm is None:
         return ""
     model, proc, dev = vlm
+    import torch                                            # before try so `finally` can clear the cache
     try:
         import io
-        import torch
         from PIL import Image
         img = Image.open(io.BytesIO(png)).convert("RGB")
         messages = [{"role": "user", "content": [{"type": "image"},
@@ -286,6 +288,12 @@ def _describe_local(caption: str, reference: str, png: bytes) -> str:
         return " ".join(proc.batch_decode(gen, skip_special_tokens=True)[0].split()).strip()
     except Exception:
         return ""
+    finally:
+        try:
+            if dev == "cuda":
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
