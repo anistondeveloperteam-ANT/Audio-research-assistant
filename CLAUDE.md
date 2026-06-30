@@ -1,4 +1,4 @@
-# CLAUDE.md — Audio Research Assistant
+# CLAUDE.md — Research Assistant
 
 ## Project
 Python 3.11 RAG research assistant. FastAPI + Uvicorn web app (`webapp/`), backend logic in `backend/`, tests in `tests/`. Local PDF RAG (Oracle 23ai vectors), external search (web/arXiv/Semantic Scholar/Wikipedia/patents/GitHub), agentic answering with citations, code agent with Docker sandbox.

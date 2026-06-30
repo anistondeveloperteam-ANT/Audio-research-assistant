@@ -63,7 +63,7 @@ def gather() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     papers = [{"id": r[0], "title": _read(r[1]).strip(), "page_count": r[2] or 0,
                "chunk_count": r[3] or 0} for r in cur.fetchall()]
     cur.execute(
-        "SELECT c.paper_id, c.chunk_type, c.section_name, c.audio_concepts, c.chunk_text "
+        "SELECT c.paper_id, c.chunk_type, c.section_name, c.concept_tags, c.chunk_text "
         "FROM chunks c")
     chunks = [{"paper_id": r[0], "chunk_type": (r[1] or "text"),
                "section": _read(r[2]).strip() or "Unknown",

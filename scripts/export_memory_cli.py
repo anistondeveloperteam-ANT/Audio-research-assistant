@@ -5,7 +5,7 @@ Usage:
     python scripts/export_memory_cli.py [--out OUTPUT_FILE]
 
 Defaults:
-    Output to data/exports/audiolab_memory_YYYYMMDD_HHMMSS.tar.gz
+    Output to data/exports/research_memory_YYYYMMDD_HHMMSS.tar.gz
     Includes .env (masked) and eval reports.
 """
 
@@ -25,11 +25,11 @@ from backend.memory.memory_backup import cli_export
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Export AudioLab AI memory (sessions + facts) to a portable .tar.gz bundle."
+        description="Export Research Assistant memory (sessions + facts) to a portable .tar.gz bundle."
     )
     parser.add_argument(
         "--out", type=str, default=None,
-        help="Output path (default: data/exports/audiolab_memory_<timestamp>.tar.gz)"
+        help="Output path (default: data/exports/research_memory_<timestamp>.tar.gz)"
     )
     args = parser.parse_args()
 

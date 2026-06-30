@@ -1,5 +1,5 @@
 """
-memory_backup.py  --  AudioLab AI memory export/import
+memory_backup.py  --  Research Assistant memory export/import
 
 A portable, defensive backup system for the memory.db SQLite database
 plus optional auxiliary files (.env config, eval reports).
@@ -46,7 +46,9 @@ from typing import Any, Dict, List, Optional
 # ----------------------------------------------------------------------
 
 EXPORT_SCHEMA_VERSION = 1
-EXPORT_FILE_MAGIC = "audiolab-ai-memory-export"
+EXPORT_FILE_MAGIC = "research-assistant-memory-export"
+# Older bundles used this magic; still accepted on import for backward compatibility.
+LEGACY_FILE_MAGIC = "audiolab-ai-memory-export"
 
 # Pattern: SECRET_KEY=value or API_KEY=value etc. anything that looks
 # like a secret gets masked.
@@ -65,7 +67,7 @@ class ExportSummary:
     """What's inside an export. Returned by export_memory() and
     by inspect_export() before an import."""
     schema_version: int = EXPORT_SCHEMA_VERSION
-    audiolab_version: str = "Phase 2 -- Batch 15"
+    app_version: str = "Phase 2 -- Batch 15"
     exported_at: str = ""
     exported_at_unix: float = 0.0
     n_sessions: int = 0
@@ -229,7 +231,7 @@ def export_memory(
                     env_text = _mask_env(env_text)
                 # Preamble warning
                 preamble = (
-                    "# AudioLab AI memory export -- .env (MASKED)\n"
+                    "# Research Assistant memory export -- .env (MASKED)\n"
                     "# Secret values (API keys, tokens, passwords) have been\n"
                     "# replaced with <MASKED>. Fill them in again after restore.\n"
                     "#\n"
@@ -338,12 +340,12 @@ def inspect_export(bundle_path: Path) -> Dict[str, Any]:
 
     if manifest is None:
         raise ValueError(
-            "Bundle is missing manifest.json -- not an AudioLab AI export"
+            "Bundle is missing manifest.json -- not a Research Assistant memory export"
         )
-    if manifest.get("magic") != EXPORT_FILE_MAGIC:
+    if manifest.get("magic") not in (EXPORT_FILE_MAGIC, LEGACY_FILE_MAGIC):
         raise ValueError(
             f"Bundle magic mismatch (got {manifest.get('magic')!r}). "
-            "Not an AudioLab AI export."
+            "Not a Research Assistant memory export."
         )
     bundle_version = manifest.get("schema_version", 0)
     if bundle_version > EXPORT_SCHEMA_VERSION:
@@ -584,7 +586,7 @@ def cli_export(project_root: Path, output_path: Optional[Path] = None) -> Path:
         ts = time.strftime("%Y%m%d_%H%M%S")
         export_dir = project_root / "data" / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
-        output_path = export_dir / f"audiolab_memory_{ts}.tar.gz"
+        output_path = export_dir / f"research_memory_{ts}.tar.gz"
 
     summary = export_memory(
         memory_db_path=memory_db,

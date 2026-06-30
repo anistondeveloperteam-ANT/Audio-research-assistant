@@ -1,25 +1,20 @@
 """
-hyde_generator.py  --  Batch 3 (Smart Query Layer)
+hyde_generator.py  --  local HyDE-style query expansion (no LLM, no API calls).
 
-Local HyDE-style query expansion. No LLM, no API calls.
+HyDE (Hypothetical Document Embeddings, Gao et al. 2022) is a retrieval technique:
+generate a hypothetical answer, embed THAT, then do vector search. Retrieval
+embeddings work best on document-vs-document similarity, so turning the question
+into a passage that LOOKS like an answer improves recall.
 
-HyDE (Hypothetical Document Embeddings, Gao et al. 2022) is a retrieval
-technique: generate a hypothetical answer with an LLM, embed THAT, then
-do vector search. The intuition is that retrieval embeddings work best
-on document-vs-document similarity, not question-vs-document. By turning
-the question into a passage that LOOKS like an answer, vector search
-sees better recall.
+We approximate it with a domain-neutral template, no LLM. Given a question:
+  1. Detect intent (best_method / compare / how_to / metrics / ...).
+  2. Fill a generic "answer-shaped" template (no field-specific vocabulary).
+  3. Append any uppercase acronyms found, then the original question (preserves
+     the exact-term signal the user actually typed).
 
-We approximate this with template + lexicon expansion. Given a question:
-  1. Detect intent (best_method / compare / how_to / metrics / ...)
-  2. Detect topic (beamforming / dereverberation / AEC / ...)
-  3. Fill an intent template with topic-specific filler vocabulary
-  4. Append the original question at the end (preserves exact-term signal)
-
-The result is a doc-like string passed to vector_search instead of the
-raw question. The embedding model sees terms like "MVDR, LCMV, and
-frequency-invariant beamforming" in addition to whatever the user typed,
-which dramatically improves recall on broadly-phrased questions.
+The result is a doc-like string passed to vector_search instead of the raw
+question. It is deliberately domain-agnostic -- the specific signal comes from
+the user's own words and acronyms, not from a hardcoded topic lexicon.
 
 Tunable via env var ENABLE_HYDE (default: true).
 """
@@ -30,131 +25,65 @@ import re
 from typing import List, Tuple
 
 
-# Intent templates -- each describes the kind of paragraph a paper
-# would have about this question type.
+# Intent templates -- each describes the shape of a paragraph that would answer
+# this kind of question. Domain-neutral: no field-specific terms.
 INTENT_TEMPLATES = {
     "best_method": (
-        "This work compares {topic_terms} methods. We evaluate {algos} "
-        "using {metrics} on standard datasets. We discuss assumptions, "
-        "strengths, weaknesses, and practical recommendations."
+        "Methods for {topic_terms} are compared here. We evaluate {algos} using "
+        "{metrics} on standard datasets and discuss assumptions, strengths, "
+        "weaknesses, and practical recommendations."
     ),
     "compare": (
-        "We compare {algos} with respect to {metrics}. Each algorithm "
-        "has distinct assumptions about {assumptions}. Results show "
-        "tradeoffs between performance and complexity."
+        "We compare {algos} with respect to {metrics}. Each makes distinct "
+        "assumptions about {assumptions}, with tradeoffs between performance and cost."
     ),
     "how_to": (
-        "The proposed approach for {topic_terms} consists of the "
-        "following steps. First, {step1}. Then, {step2}. Finally, "
-        "the output is evaluated using {metrics}."
+        "An approach to {topic_terms} typically proceeds in steps. First, {step1}. "
+        "Then, {step2}. Finally, the output is evaluated using {metrics}."
     ),
     "limitations": (
-        "While {algos} achieve strong performance, they have several "
-        "limitations: sensitivity to {weakness1}, computational cost "
-        "for {weakness2}, and degradation under {weakness3}."
+        "While {algos} perform well, they have limitations: sensitivity to "
+        "{weakness1}, the cost of {weakness2}, and degradation under {weakness3}."
     ),
     "metrics": (
-        "We evaluate {algos} using {metrics}. Higher PESQ and STOI "
-        "indicate better speech quality. SDR and SI-SDR measure "
-        "signal-level fidelity. Latency and complexity matter for "
-        "real-time deployment."
+        "We evaluate {algos} using {metrics}, reporting accuracy and efficiency "
+        "and discussing which measures matter in practice."
     ),
     "implementation": (
-        "Implementation of {topic_terms} requires attention to "
-        "{assumptions}. Real-time constraints demand low latency and "
-        "bounded complexity. We use {algos} and report {metrics}."
+        "Implementing solutions for {topic_terms} requires attention to "
+        "{assumptions}. Practical constraints demand efficiency and bounded "
+        "complexity. We use {algos} and report {metrics}."
     ),
     "summary": (
-        "{topic_terms} addresses improving speech quality. We review "
-        "{algos} and discuss their key contributions, results, and "
-        "limitations."
+        "This reviews {topic_terms}. We survey {algos} and discuss key "
+        "contributions, results, and limitations."
     ),
     "definition": (
-        "{topic_terms} is a signal-processing technique for speech "
-        "and audio. It relies on {assumptions} and is typically "
-        "implemented using {algos}. Common evaluation uses {metrics}."
+        "{topic_terms} relies on {assumptions} and is typically realized using "
+        "{algos}. It is commonly evaluated with {metrics}."
     ),
     "general": (
-        "{topic_terms} involves {algos}. Typical assumptions include "
+        "Work on {topic_terms} involves {algos}. Typical assumptions include "
         "{assumptions}. Performance is measured using {metrics}."
     ),
 }
 
 
-# Topic-specific filler vocabulary. Drawn from common audio DSP papers.
-TOPIC_FILLERS = {
-    "beamforming": {
-        "algos": "MVDR, LCMV, GSC, and frequency-invariant beamforming",
-        "assumptions": "stationary noise, known steering vector, far-field source",
-        "metrics": "directivity index, SNR improvement, SI-SDR, PESQ",
-        "weakness1": "steering vector mismatch",
-        "weakness2": "large arrays",
-        "weakness3": "moving sources",
-    },
-    "noise suppression": {
-        "algos": "spectral subtraction, Wiener filtering, RNNoise, DeepFilterNet, DNN-based denoising",
-        "assumptions": "additive noise model, short-time stationarity",
-        "metrics": "PESQ, STOI, SI-SDR, SNR improvement",
-        "weakness1": "non-stationary noise",
-        "weakness2": "low-SNR conditions",
-        "weakness3": "speech distortion",
-    },
-    "dereverberation": {
-        "algos": "WPE, weighted prediction error, deep filtering, neural dereverberation",
-        "assumptions": "linear convolution, time-invariant room",
-        "metrics": "PESQ, STOI, SRMR, cepstral distance",
-        "weakness1": "moving sources",
-        "weakness2": "very long T60",
-        "weakness3": "reverberation tail estimation",
-    },
-    "acoustic echo cancellation": {
-        "algos": "NLMS, RLS, Kalman, deep AEC models",
-        "assumptions": "linear echo path, known reference signal",
-        "metrics": "ERLE, PESQ during double-talk",
-        "weakness1": "double-talk",
-        "weakness2": "nonlinear distortion",
-        "weakness3": "long echo paths",
-    },
-    "doa": {
-        "algos": "MUSIC, ESPRIT, SRP-PHAT, neural DOA estimators",
-        "assumptions": "narrowband or wideband signal model, known array geometry",
-        "metrics": "RMSE in degrees, angular resolution",
-        "weakness1": "low SNR",
-        "weakness2": "coherent sources",
-        "weakness3": "reverberation",
-    },
-    "speech enhancement": {
-        "algos": "spectral masking, Wiener filtering, DNN, RNN, and Transformer-based models",
-        "assumptions": "additive noise, short-time stationarity, speaker generalization",
-        "metrics": "PESQ, STOI, SI-SDR, MOS",
-        "weakness1": "unseen noise types",
-        "weakness2": "speaker mismatch",
-        "weakness3": "low-resource deployment",
-    },
-    "default": {
-        "algos": "various signal-processing and deep-learning methods",
-        "assumptions": "standard audio-processing assumptions",
-        "metrics": "PESQ, STOI, SDR, SNR",
-        "weakness1": "out-of-distribution data",
-        "weakness2": "high complexity",
-        "weakness3": "real-time constraints",
-    },
+# Generic, field-neutral filler vocabulary. The specific signal comes from the
+# user's question text + acronyms (appended in hyde_expand), not from here.
+GENERIC_FILLERS = {
+    "algos": "established and recent methods",
+    "assumptions": "standard modeling assumptions",
+    "metrics": "standard quantitative metrics",
+    "weakness1": "out-of-distribution data",
+    "weakness2": "high computational complexity",
+    "weakness3": "limited or noisy data",
 }
 
 
-_TOPIC_TRIGGERS: List[Tuple[str, List[str]]] = [
-    ("beamforming",                ["beamforming", "beamformer", "mvdr", "lcmv", "gsc", "steering vector"]),
-    ("doa",                        ["direction of arrival", "doa", "music algorithm", "esprit", "srp-phat", "source localization"]),
-    ("dereverberation",            ["dereverberation", "wpe", "reverberation", "room acoustic", "rir"]),
-    ("acoustic echo cancellation", ["acoustic echo", "aec", "echo cancellation", "double-talk"]),
-    ("noise suppression",          ["noise suppression", "noise reduction", "denoising", "denoise", "deepfilternet", "rnnoise"]),
-    ("speech enhancement",         ["speech enhancement", "speech quality", "intelligibility", "voice quality"]),
-]
-
-
 def detect_intent(question: str) -> str:
-    """Classify the question into a coarse intent route so HyDE can
-    generate a hypothetical answer in the right style."""
+    """Classify the question into a coarse intent route so HyDE can generate a
+    hypothetical answer in the right style."""
     q = " " + (question or "").lower() + " "
     if any(x in q for x in [" best ", " suitable ", " recommend ", "which method", "which algorithm"]):
         return "best_method"
@@ -176,12 +105,10 @@ def detect_intent(question: str) -> str:
 
 
 def detect_topic(question: str) -> Tuple[str, str]:
-    """Return (filler_key, human-readable topic terms)."""
-    q = (question or "").lower()
-    for key, triggers in _TOPIC_TRIGGERS:
-        if any(t in q for t in triggers):
-            return key, key
-    return "default", "audio signal processing"
+    """Domain-neutral placeholder. HyDE no longer injects field-specific vocabulary;
+    the user's own terms and acronyms carry the specific signal. Returns a generic
+    (key, topic_terms) pair."""
+    return "default", "this subject"
 
 
 def hyde_expand(question: str) -> str:
@@ -197,12 +124,12 @@ def hyde_expand(question: str) -> str:
 
     try:
         intent = detect_intent(question)
-        topic_key, topic_terms = detect_topic(question)
+        _topic_key, topic_terms = detect_topic(question)
 
-        fillers = dict(TOPIC_FILLERS.get(topic_key, TOPIC_FILLERS["default"]))
+        fillers = dict(GENERIC_FILLERS)
         fillers["topic_terms"] = topic_terms
-        fillers["step1"] = "the input audio signal is preprocessed and analyzed"
-        fillers["step2"] = "the algorithm produces the enhanced output"
+        fillers["step1"] = "the inputs are prepared and analyzed"
+        fillers["step2"] = "the method produces its output"
 
         template = INTENT_TEMPLATES.get(intent, INTENT_TEMPLATES["general"])
         try:
@@ -223,9 +150,8 @@ def hyde_expand(question: str) -> str:
 
 def hyde_queries(question: str) -> List[str]:
     """
-    Convenience: return both the original question AND the HyDE
-    expansion as a list. Useful for callers that want to run two
-    vector searches and fuse them.
+    Convenience: return both the original question AND the HyDE expansion as a
+    list. Useful for callers that want to run two vector searches and fuse them.
     """
     out = [question]
     expanded = hyde_expand(question)

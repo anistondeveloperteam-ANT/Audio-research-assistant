@@ -32,10 +32,10 @@ for row in cur.fetchall():
 
 print("\nTop chunk concept samples:")
 cur.execute("""
-    SELECT p.title, c.section_name, c.chunk_type, c.audio_concepts
+    SELECT p.title, c.section_name, c.chunk_type, c.concept_tags
     FROM chunks c
     JOIN papers p ON p.id = c.paper_id
-    WHERE c.audio_concepts IS NOT NULL
+    WHERE c.concept_tags IS NOT NULL
     FETCH FIRST 10 ROWS ONLY
 """)
 

@@ -56,7 +56,7 @@ CREATE TABLE chunks (
     has_equation NUMBER DEFAULT 0,
     has_algorithm NUMBER DEFAULT 0,
     has_table NUMBER DEFAULT 0,
-    audio_concepts CLOB,
+    concept_tags CLOB,
     embedding CLOB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_chunks_paper FOREIGN KEY (paper_id) REFERENCES papers(id)
@@ -65,6 +65,19 @@ CREATE TABLE chunks (
 
 # Upgrade existing databases created before Contextual Retrieval: add context_text.
 run("ALTER TABLE chunks ADD (context_text CLOB)", "chunks.context_text")
+
+# Rename the legacy 'audio_concepts' column to the domain-neutral 'concept_tags' -- this is a
+# general research assistant, not audio-specific. Idempotent: a no-op on a fresh database (the
+# column is created as concept_tags above) or on an already-migrated one.
+try:
+    cur.execute("ALTER TABLE chunks RENAME COLUMN audio_concepts TO concept_tags")
+    print("OK: renamed chunks.audio_concepts -> concept_tags")
+except Exception as e:
+    # ORA-00904: column not found (fresh / already migrated) · ORA-00942: table not there yet.
+    if "ORA-00904" in str(e) or "ORA-00942" in str(e):
+        print("Already migrated: chunks.concept_tags")
+    else:
+        raise
 
 run("""
 CREATE TABLE concepts (
@@ -100,7 +113,7 @@ conn.commit()
 cur.execute("SELECT table_name FROM user_tables ORDER BY table_name")
 tables = [row[0] for row in cur.fetchall()]
 
-print("\nTables in AUDIO_RAG schema:")
+print("\nTables in the schema:")
 for table in tables:
     print("-", table)
 

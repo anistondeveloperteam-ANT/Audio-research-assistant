@@ -30,7 +30,7 @@ from backend.memory.memory_backup import cli_import
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Import an AudioLab AI memory bundle into this installation."
+        description="Import a Research Assistant memory bundle into this installation."
     )
     parser.add_argument(
         "bundle",

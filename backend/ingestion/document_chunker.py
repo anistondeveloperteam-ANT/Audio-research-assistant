@@ -14,7 +14,7 @@ Only THIS file changes in Batch 4. The improvements:
 
   H9.3 extract_figure_captions() finds 'Figure N: ...', 'Fig. N: ...',
        'Table N: ...' captions and makes them their own chunks. In
-       audio DSP papers these captions pack method names AND specific
+       research papers these captions often pack method names AND specific
        metric values, so they're high-signal evidence for retrieval.
 
   H9.4 extract_algorithm_blocks() preserves 'Algorithm N: ...' blocks
@@ -25,8 +25,8 @@ Only THIS file changes in Batch 4. The improvements:
        MIN_CHUNK_CHARS:    200 -> 150
        Short technical statements like 'Set alpha = 0.5.' now survive.
 
-  AUDIO_CONCEPTS expanded with MUSIC / ESPRIT / SRP-PHAT / NLMS / RLS /
-  STFT / Mel / ERB / GRU / LSTM / U-Net / ERLE / SRMR and others.
+  KEY_CONCEPTS covers domain-neutral terms across ML, math/stats,
+  systems, and evaluation (general research, not field-specific).
 
 Backward compatible:
   - chunk dict schema unchanged (same keys)
@@ -92,41 +92,29 @@ SECTION_PATTERNS = [
 ]
 
 
-AUDIO_CONCEPTS = [
-    # Beamforming
-    "MVDR", "LCMV", "GSC", "DOA", "direction of arrival",
-    "beamforming", "beamformer", "steering vector", "covariance matrix",
-    "microphone array", "array processing", "spatial filter",
-    "linearly constrained minimum variance",
-    "minimum variance distortionless response",
-    "generalized sidelobe canceller", "blocking matrix",
-    # Speech enhancement / denoising
-    "speech enhancement", "noise suppression", "noise reduction",
-    "noise cancellation", "denoising", "spectral subtraction",
-    "Wiener filter", "Kalman filter",
-    # Dereverberation
-    "dereverberation", "WPE", "weighted prediction error",
-    "room impulse response", "late reverberation",
-    # AEC
-    "AEC", "acoustic echo cancellation", "double-talk",
-    "echo path", "NLMS", "RLS",
-    # DOA / localization
-    "MUSIC", "ESPRIT", "SRP-PHAT", "source localization",
-    # Models / architectures
-    "RNNoise", "DeepFilterNet", "DNN", "RNN", "CNN", "GRU", "LSTM",
-    "Transformer", "self-attention", "U-Net",
-    "deep filtering", "mask-based", "ideal ratio mask",
-    "complex mask", "complex spectral mapping",
-    # Metrics
-    "PESQ", "STOI", "ESTOI", "SI-SDR", "SDR", "SNR", "MOS",
-    "WER", "ERLE", "SRMR", "cepstral distance",
-    # Deployment / real-time
-    "real-time", "low-latency", "causal", "streaming",
-    "embedded", "low power", "low complexity",
-    # Signal / audio fundamentals
-    "STFT", "short-time Fourier transform", "spectrogram",
-    "magnitude spectrum", "phase spectrum",
-    "ERB scale", "Mel scale", "Bark scale", "filterbank",
+# Domain-neutral technical terms used to tag chunks with the high-signal "concepts" they
+# mention (stored in the chunks.concept_tags column, weighted in keyword/BM25 search). General
+# across research domains -- ML, math/stats, systems, and evaluation -- not tied to any field.
+KEY_CONCEPTS = [
+    # Machine learning / models
+    "neural network", "deep learning", "transformer", "self-attention", "attention",
+    "convolutional", "CNN", "RNN", "LSTM", "GRU", "encoder", "decoder", "embedding",
+    "fine-tuning", "pretraining", "transfer learning", "reinforcement learning",
+    "supervised", "unsupervised", "self-supervised", "diffusion model", "GAN",
+    # Training / optimization
+    "gradient descent", "backpropagation", "optimizer", "learning rate",
+    "regularization", "dropout", "batch normalization", "loss function",
+    "cross-entropy", "overfitting", "hyperparameter",
+    # Math / statistics
+    "probability", "distribution", "Bayesian", "variance", "covariance matrix",
+    "eigenvalue", "matrix", "vector", "optimization", "convex", "gradient",
+    "regression", "classification", "clustering", "dimensionality reduction", "PCA",
+    # Methods / systems
+    "algorithm", "complexity", "heuristic", "approximation", "parallel",
+    "distributed", "scalability", "latency", "throughput", "cache",
+    # Evaluation
+    "benchmark", "baseline", "ablation", "accuracy", "precision", "recall",
+    "cross-validation", "dataset", "ground truth", "state-of-the-art", "evaluation metric",
 ]
 
 
@@ -179,7 +167,7 @@ def split_sentences(text: str):
 def detect_concepts(text: str):
     low = text.lower()
     found = []
-    for concept in AUDIO_CONCEPTS:
+    for concept in KEY_CONCEPTS:
         if concept.lower() in low:
             found.append(concept)
     return sorted(set(found))

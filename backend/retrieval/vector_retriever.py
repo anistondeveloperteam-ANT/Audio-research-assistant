@@ -86,7 +86,7 @@ def _oracle_vector_search(query_vector, top_k: int = 10):
             c.chunk_type,
             c.page_start,
             c.page_end,
-            c.audio_concepts,
+            c.concept_tags,
             VECTOR_DISTANCE(c.embedding_vec, TO_VECTOR(:qvec), COSINE) AS distance
         FROM chunks c
         JOIN papers p ON p.id = c.paper_id

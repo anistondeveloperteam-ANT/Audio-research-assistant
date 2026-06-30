@@ -110,7 +110,7 @@ def generate(provider, question: str, mode: str, top_k: int,
         system = SYSTEM_PROMPT
     else:
         user_msg = question
-        system = "You are an expert in audio signal processing. Answer precisely."
+        system = "You are an expert research assistant. Answer precisely."
 
     t0 = time.time()
     parts: List[str] = []

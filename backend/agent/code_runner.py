@@ -27,7 +27,7 @@ from typing import List
 # Our sandbox image bakes in the scientific stack (numpy/scipy/...) so generated
 # simulations run under --network none. Built once on first use (see
 # ensure_sandbox_image). Override with AGENT_DOCKER_IMAGE to pin your own image.
-SANDBOX_TAG = "audio-research-sandbox:latest"
+SANDBOX_TAG = "research-sandbox:latest"
 _SANDBOX_DOCKERFILE = Path(__file__).resolve().parent / "sandbox.Dockerfile"
 
 # Tunable via .env (sensible, safe defaults).

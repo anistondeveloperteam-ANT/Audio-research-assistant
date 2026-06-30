@@ -138,7 +138,7 @@ def result_text(result: Dict[str, Any]) -> str:
         result.get("section"),
         result.get("section_name"),
         result.get("concepts"),
-        result.get("audio_concepts"),
+        result.get("concept_tags"),
         result.get("chunk_type"),
         result.get("type"),
         result.get("text"),
@@ -258,7 +258,7 @@ def source_summary(result: Dict[str, Any]) -> Dict[str, Any]:
         "section": result.get("section") or result.get("section_name"),
         "pages": [result.get("page_start"), result.get("page_end")],
         "chunk_type": result.get("chunk_type") or result.get("type"),
-        "concepts": result.get("concepts") or result.get("audio_concepts"),
+        "concepts": result.get("concepts") or result.get("concept_tags"),
         "hybrid_score": safe_number(result.get("hybrid_score")),
         "rerank_score": safe_number(result.get("rerank_score")),
         "preview": str(result.get("text") or result.get("chunk_text") or "")[:500],
@@ -335,7 +335,7 @@ def run_single_pass(retriever,
     }
 
     if not quiet:
-        head = f"AUDIO RAG RETRIEVAL EVALUATION{(' [' + label + ']') if label else ''}"
+        head = f"RAG RETRIEVAL EVALUATION{(' [' + label + ']') if label else ''}"
         print("=" * 100)
         print(head)
         print("=" * 100)
@@ -656,7 +656,7 @@ def run_mode_comparison(retriever,
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Audio RAG retrieval evaluator with IR metrics.",
+        description="RAG retrieval evaluator with IR metrics.",
     )
     parser.add_argument("--top-k", type=int, default=10,
                         help="How many results to retrieve per question (default 10).")

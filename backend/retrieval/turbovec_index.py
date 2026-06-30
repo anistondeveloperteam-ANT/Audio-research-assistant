@@ -630,7 +630,7 @@ def fetch_chunks_by_ids(ids: Sequence[int]) -> Dict[int, Dict[str, Any]]:
                     c.chunk_type,
                     c.page_start,
                     c.page_end,
-                    c.audio_concepts
+                    c.concept_tags
                 FROM chunks c
                 JOIN papers p ON p.id = c.paper_id
                 WHERE c.id IN ({placeholders})

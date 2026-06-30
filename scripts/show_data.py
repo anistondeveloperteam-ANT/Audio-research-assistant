@@ -220,9 +220,9 @@ if oracle_ok:
     except Exception as exc:
         print(f"WARN: {exc}")
 
-    section("6. TOP 20 AUDIO CONCEPTS")
+    section("6. TOP 20 CONCEPT TAGS")
     try:
-        cur.execute("SELECT audio_concepts FROM chunks WHERE audio_concepts IS NOT NULL")
+        cur.execute("SELECT concept_tags FROM chunks WHERE concept_tags IS NOT NULL")
         counter: Counter = Counter()
         for (raw,) in cur.fetchall():
             txt = str(read_lob(raw))
@@ -241,7 +241,7 @@ if oracle_ok:
             for concept, cnt in counter.most_common(20):
                 print(f"   {concept:32}  {cnt}")
         else:
-            print("   (no audio_concepts populated)")
+            print("   (no concept_tags populated)")
     except Exception as exc:
         print(f"WARN: {exc}")
 
@@ -249,7 +249,7 @@ if oracle_ok:
     try:
         cur.execute("""
             SELECT c.id, p.title, c.section_name, c.chunk_type,
-                   c.page_start, c.page_end, c.audio_concepts, c.chunk_text
+                   c.page_start, c.page_end, c.concept_tags, c.chunk_text
             FROM chunks c
             JOIN papers p ON p.id = c.paper_id
             ORDER BY c.id

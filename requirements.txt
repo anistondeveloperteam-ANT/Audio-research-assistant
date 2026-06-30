@@ -1,5 +1,5 @@
 # ======================================================================
-# Audio Research Assistant - Python dependencies
+# Research Assistant - Python dependencies
 # Pinned to the versions verified working in the project's .venv.
 # Python 3.11+ recommended.
 #

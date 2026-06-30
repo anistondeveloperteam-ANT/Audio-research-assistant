@@ -94,12 +94,12 @@ def insert_chunk(cur, paper_id, chunk_index, chunk, context_text=""):
         INSERT INTO chunks (
             paper_id, section_name, chunk_index, chunk_text, context_text, chunk_type,
             page_start, page_end, has_equation, has_algorithm,
-            has_table, audio_concepts
+            has_table, concept_tags
         )
         VALUES (
             :paper_id, :section_name, :chunk_index, :chunk_text, :context_text, :chunk_type,
             :page_start, :page_end, :has_equation, :has_algorithm,
-            :has_table, :audio_concepts
+            :has_table, :concept_tags
         )
         """,
         {
@@ -114,7 +114,7 @@ def insert_chunk(cur, paper_id, chunk_index, chunk, context_text=""):
             "has_equation": chunk["has_equation"],
             "has_algorithm": chunk["has_algorithm"],
             "has_table": chunk["has_table"],
-            "audio_concepts": ", ".join(chunk["concepts"]),
+            "concept_tags": ", ".join(chunk["concepts"]),
         },
     )
 
