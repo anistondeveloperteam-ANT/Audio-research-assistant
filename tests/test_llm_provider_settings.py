@@ -126,3 +126,36 @@ def test_dropdown_marks_missing_keys(monkeypatch):
     by_id = {o["model"]: o for o in settings.list_models()["options"]}
     assert by_id["gemini-2.5-flash"]["available"] is True
     assert by_id["codestral-latest"]["available"] is False   # no Mistral key
+
+
+def test_dropdown_surfaces_a_custom_active_model(monkeypatch):
+    # "Use any model": a model the user typed that is NOT in the catalog must still appear in the
+    # picker (at the top, marked Custom) so it shows as the active selection.
+    monkeypatch.setenv("OPENAI_MODEL", "gemini-2.5-pro")
+    data = settings.list_models()
+    assert data["current"]["model"] == "gemini-2.5-pro"
+    top = data["options"][0]
+    assert top["model"] == "gemini-2.5-pro" and top["vendor"] == "Custom"
+    # the four catalog models are still listed below it
+    models = {o["model"] for o in data["options"]}
+    assert {"gemini-2.5-flash", "mistral-large-latest", "codestral-latest", "gpt-5.5"} <= models
+
+
+def test_set_model_accepts_any_model_and_routes_by_vendor(monkeypatch, tmp_path):
+    # The user can switch to ANY model id; set_model derives the endpoint/key by vendor prefix and
+    # persists to .env. Use a temp .env so we never touch the real one.
+    monkeypatch.setattr(settings, "ENV_PATH", tmp_path / ".env")
+    monkeypatch.setenv("MISTRAL_API_KEY", "m-key")
+    out = settings.set_model("openai", "pixtral-large-latest")   # unlisted Mistral vision model
+    assert out["model"] == "pixtral-large-latest"
+    written = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "OPENAI_MODEL=pixtral-large-latest" in written
+    assert "OPENAI_BASE_URL=https://api.mistral.ai/v1" in written
+    assert "OPENAI_API_KEY=m-key" in written
+
+
+def test_set_model_rejects_blank_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "ENV_PATH", tmp_path / ".env")
+    import pytest
+    with pytest.raises(ValueError):
+        settings.set_model("openai", "   ")

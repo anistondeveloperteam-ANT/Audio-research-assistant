@@ -1410,6 +1410,21 @@
         row.addEventListener("click", () => selectModel(o));
         menu.appendChild(row);
       });
+      // "Use any model" — type any model id (e.g. gemini-2.5-pro, gpt-5.5, pixtral-large-latest,
+      // an Ollama model). The backend routes it by vendor prefix and carries it per request.
+      const custom = document.createElement("div");
+      custom.className = "model-opt model-custom";
+      custom.innerHTML = `<input id="customModelInput" type="text" spellcheck="false" autocomplete="off" placeholder="Use any model id…"><button id="customModelGo" type="button">Use</button>`;
+      custom.addEventListener("click", (e) => e.stopPropagation());
+      const useCustom = () => {
+        const id = ($("customModelInput").value || "").trim();
+        if (id) selectModel({ provider: "openai", model: id, name: id, vendor: "Custom" });
+      };
+      custom.querySelector("#customModelGo").addEventListener("click", useCustom);
+      custom.querySelector("#customModelInput").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); useCustom(); }
+      });
+      menu.appendChild(custom);
       _currentModel = cur.model || "";
       setModelText(curLabel || (cur.provider + " · " + cur.model), curVendor || cur.provider || "");
     } catch { setModelText("unavailable", ""); }
